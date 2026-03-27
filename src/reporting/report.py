@@ -86,6 +86,17 @@ class ReportGenerator:
             "## Steps Taken",
             f"Total steps: {steps_taken}",
             "",
+            "## Step-by-Step",
+            "```\n"
+            + "\n".join(
+                f"{s['step']}. {s['action']['action_type']} "
+                f"{s['action']['actor']} -> {s['action'].get('target') or '-'} "
+                f"(tool={s['action'].get('tool') or '-'}) "
+                f"| success={s['observation']['success'] if s['observation'] else 'n/a'}"
+                for s in steps
+            )
+            + "\n```",
+            "",
             "## Allowed Actions",
             f"```\n{allowed_actions}\n```",
             "",

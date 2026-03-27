@@ -10,6 +10,13 @@ Objective: Demonstrate synthetic IAM privilege escalation path to sensitive buck
 ## Steps Taken
 Total steps: 3
 
+## Step-by-Step
+```
+1. ActionType.ENUMERATE analyst -> account (tool=iam_list_roles) | success=True
+2. ActionType.ASSUME_ROLE analyst -> AuditRole (tool=iam_passrole) | success=True
+3. ActionType.ACCESS_RESOURCE AuditRole -> sensitive_bucket (tool=s3_read_sensitive) | success=True
+```
+
 ## Allowed Actions
 ```
 [{'action_type': <ActionType.ENUMERATE: 'enumerate'>, 'actor': 'analyst', 'target': 'account', 'parameters': {'note': 'list_roles'}, 'technique': {'mitre_id': 'T1087.004', 'mitre_name': 'Account Discovery: Cloud Account', 'tactic': 'discovery', 'platform': 'AWS'}, 'tool': 'iam_list_roles'}, {'action_type': <ActionType.ASSUME_ROLE: 'assume_role'>, 'actor': 'analyst', 'target': 'AuditRole', 'parameters': {'note': 'attempt_role_assumption'}, 'technique': {'mitre_id': 'T1548', 'mitre_name': 'Abuse Elevation Control Mechanism', 'tactic': 'privilege-escalation', 'platform': 'AWS IAM'}, 'tool': 'iam_passrole'}, {'action_type': <ActionType.ACCESS_RESOURCE: 'access_resource'>, 'actor': 'AuditRole', 'target': 'sensitive_bucket', 'parameters': {'note': 'read_sensitive'}, 'technique': {'mitre_id': 'T1530', 'mitre_name': 'Data from Cloud Storage', 'tactic': 'collection', 'platform': 'S3'}, 'tool': 's3_read_sensitive'}]
