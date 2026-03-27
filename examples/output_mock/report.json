@@ -138,5 +138,10 @@
       "platform": "S3"
     }
   ],
+  "tool_chain": [
+    "iam_list_roles",
+    "iam_passrole",
+    "s3_read_sensitive"
+  ],
   "objective_met": true
 }

@@ -34,6 +34,11 @@ Total steps: 3
 [{'mitre_id': 'T1087.004', 'mitre_name': 'Account Discovery: Cloud Account', 'tactic': 'discovery', 'platform': 'AWS'}, {'mitre_id': 'T1548', 'mitre_name': 'Abuse Elevation Control Mechanism', 'tactic': 'privilege-escalation', 'platform': 'AWS IAM'}, {'mitre_id': 'T1530', 'mitre_name': 'Data from Cloud Storage', 'tactic': 'collection', 'platform': 'S3'}]
 ```
 
+## Tool Chain
+```
+['iam_list_roles', 'iam_passrole', 's3_read_sensitive']
+```
+
 ## Attack Graph (Mermaid)
 ```mermaid
 graph TD

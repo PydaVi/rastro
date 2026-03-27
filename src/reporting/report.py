@@ -23,6 +23,10 @@ class ReportGenerator:
         objective = snapshot.objective
         steps_taken = snapshot.steps_taken
         allowed_actions = [a.model_dump() for a in snapshot.actions_taken]
+        tool_chain = []
+        for action in snapshot.actions_taken:
+            if action.tool:
+                tool_chain.append(action.tool)
         mitre_techniques = []
         seen = set()
         for action in snapshot.actions_taken:
@@ -54,6 +58,7 @@ class ReportGenerator:
             "graph_summary": graph_summary,
             "attack_graph_mermaid": mermaid,
             "mitre_techniques": mitre_techniques,
+            "tool_chain": tool_chain,
             "objective_met": objective_met,
         }
 
@@ -83,6 +88,9 @@ class ReportGenerator:
             "",
             "## MITRE ATT&CK Mapping",
             "```\n" + str(mitre_techniques) + "\n```",
+            "",
+            "## Tool Chain",
+            "```\n" + str(tool_chain) + "\n```",
             "",
             "## Attack Graph (Mermaid)",
             "```mermaid",
