@@ -23,6 +23,18 @@ class ReportGenerator:
         objective = snapshot.objective
         steps_taken = snapshot.steps_taken
         allowed_actions = [a.model_dump() for a in snapshot.actions_taken]
+        steps = []
+        for idx, action in enumerate(snapshot.actions_taken):
+            observation = None
+            if idx < len(snapshot.observations):
+                observation = snapshot.observations[idx].model_dump()
+            steps.append(
+                {
+                    "step": idx + 1,
+                    "action": action.model_dump(),
+                    "observation": observation,
+                }
+            )
         tool_chain = []
         for action in snapshot.actions_taken:
             if action.tool:
@@ -52,6 +64,7 @@ class ReportGenerator:
             "objective": objective.model_dump(),
             "starting_conditions": initial_state,
             "steps_taken": steps_taken,
+            "steps": steps,
             "allowed_actions": allowed_actions,
             "blocked_actions": blocked_actions,
             "observations": observations,
