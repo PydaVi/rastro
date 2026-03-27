@@ -1,11 +1,14 @@
 graph TD
   identity_analyst["identity:analyst"]
+  resource_account["resource:account"]
   resource_AuditRole["resource:AuditRole"]
   identity_AuditRole["identity:AuditRole"]
   resource_sensitive_bucket["resource:sensitive_bucket"]
-  identity_analyst -->|"assume_role"| resource_AuditRole
+  identity_analyst -->|"enumerate"| resource_account
   linkStyle 0 stroke:#1b7f3b,stroke-width:2px;
-  identity_analyst -->|"assume_role"| identity_AuditRole
+  identity_analyst -->|"assume_role"| resource_AuditRole
   linkStyle 1 stroke:#1b7f3b,stroke-width:2px;
-  identity_AuditRole -->|"access_resource"| resource_sensitive_bucket
+  identity_analyst -->|"assume_role"| identity_AuditRole
   linkStyle 2 stroke:#1b7f3b,stroke-width:2px;
+  identity_AuditRole -->|"access_resource"| resource_sensitive_bucket
+  linkStyle 3 stroke:#1b7f3b,stroke-width:2px;

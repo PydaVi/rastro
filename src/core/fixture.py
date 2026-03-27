@@ -46,6 +46,7 @@ class Fixture:
                             if action_def.get("technique")
                             else None
                         ),
+                        tool=action_def.get("tool"),
                     )
                 )
         return actions

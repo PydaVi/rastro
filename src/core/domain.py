@@ -47,6 +47,7 @@ class Action(BaseModel):
     target: Optional[str] = None
     parameters: Dict[str, Any] = Field(default_factory=dict)
     technique: Technique | None = None
+    tool: Optional[str] = None
 
 
 class Decision(BaseModel):

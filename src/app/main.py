@@ -9,6 +9,7 @@ import typer
 from core.domain import Objective, Scope
 from core.state import StateManager
 from core.fixture import Fixture
+from core.tool_registry import ToolRegistry
 from planner import get_planner
 from planner.interface import Planner
 from execution.scope_enforcer import ScopeEnforcer
@@ -39,7 +40,17 @@ def run(
     objective = Objective.model_validate_json(objective_path.read_text())
     scope = Scope.model_validate_json(scope_path.read_text())
 
-    state = StateManager(objective=objective, scope=scope, fixture=fixture)
+    tool_registry = None
+    tools_path = Path("tools")
+    if tools_path.exists():
+        tool_registry = ToolRegistry.load(tools_path)
+
+    state = StateManager(
+        objective=objective,
+        scope=scope,
+        fixture=fixture,
+        tool_registry=tool_registry,
+    )
     planner_cfg = scope.planner
     backend = planner_cfg.backend if planner_cfg else "mock"
     planner_kwargs = {}

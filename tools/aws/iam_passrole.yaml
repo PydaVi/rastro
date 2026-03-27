@@ -1,0 +1,11 @@
+name: iam_passrole
+description: Attempt privilege escalation via AssumeRole
+phase: privilege-escalation
+mitre_id: T1548
+platform: AWS IAM
+preconditions:
+  - iam_roles_listed
+postconditions:
+  - audit_role_assumed
+implementation: tools/aws/iam_passrole.py
+safe_simulation: true

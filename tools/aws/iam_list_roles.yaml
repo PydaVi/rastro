@@ -1,0 +1,10 @@
+name: iam_list_roles
+description: Enumerate IAM roles in the account
+phase: discovery
+mitre_id: T1087.004
+platform: AWS
+preconditions: []
+postconditions:
+  - iam_roles_listed
+implementation: tools/aws/iam_list_roles.py
+safe_simulation: true

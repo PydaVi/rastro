@@ -18,7 +18,8 @@
               "mitre_name": "Account Discovery: Cloud Account",
               "tactic": "discovery",
               "platform": "AWS"
-            }
+            },
+            "tool": "iam_list_roles"
           },
           {
             "action_type": "assume_role",
@@ -31,13 +32,25 @@
               "mitre_name": "Abuse Elevation Control Mechanism",
               "tactic": "privilege-escalation",
               "platform": "AWS IAM"
-            }
+            },
+            "tool": "iam_passrole"
           }
         ]
       }
     }
   },
   "transitions": [
+    {
+      "action_type": "enumerate",
+      "actor": "analyst",
+      "target": "account",
+      "observation": {
+        "details": "Roles enumerated."
+      },
+      "add_flags": [
+        "iam_roles_listed"
+      ]
+    },
     {
       "action_type": "assume_role",
       "actor": "analyst",
@@ -46,6 +59,9 @@
         "granted_role": "AuditRole",
         "details": "AssumeRole succeeded."
       },
+      "add_flags": [
+        "audit_role_assumed"
+      ],
       "update_identities": {
         "analyst": {
           "available_actions": [
@@ -54,7 +70,14 @@
               "target": "account",
               "parameters": {
                 "note": "list_roles"
-              }
+              },
+              "technique": {
+                "mitre_id": "T1087.004",
+                "mitre_name": "Account Discovery: Cloud Account",
+                "tactic": "discovery",
+                "platform": "AWS"
+              },
+              "tool": "iam_list_roles"
             }
           ]
         },
@@ -71,7 +94,8 @@
                 "mitre_name": "Data from Cloud Storage",
                 "tactic": "collection",
                 "platform": "S3"
-              }
+              },
+              "tool": "s3_read_sensitive"
             }
           ]
         }

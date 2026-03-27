@@ -184,6 +184,8 @@ DONE WHEN:
 - Planner seleciona tools por pré-condições
 - Fixture sintético atualizado para refletir estrutura de tools
 
+Status: **completa**
+
 ---
 
 **Fase 1 completa quando:**

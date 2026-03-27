@@ -30,6 +30,7 @@ Scope Enforcer, Audit Logger, Attack Graph e Report Engine implementados.
 Claude) + MITRE ATT&CK mapping + Tool Registry declarativo.
 
 **MITRE mapping no MVP já está implementado** (techniques no fixture + relatório).
+**Tool Registry base já está implementado** (YAML + pré-condições).
 
 Ver [PLAN.md](PLAN.md) para roadmap completo.
 

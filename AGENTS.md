@@ -27,9 +27,9 @@ Não refatore o que já está funcionando sem razão explícita.
 1. Implementar `OllamaPlanner` em `src/planner/ollama_planner.py`
 2. Implementar `OpenAIPlanner` em `src/planner/openai_planner.py`
 3. Implementar `ClaudePlanner` em `src/planner/claude_planner.py`
-4. Adicionar `Technique` ao domain model para MITRE ATT&CK mapping
-5. Atualizar o Report Engine para incluir seção MITRE
-6. Formalizar Tool Registry com schema YAML
+4. Adicionar `Technique` ao domain model para MITRE ATT&CK mapping (**completo**)
+5. Atualizar o Report Engine para incluir seção MITRE (**completo**)
+6. Formalizar Tool Registry com schema YAML (**completo**)
 
 Consulte `PLAN.md` para o detalhamento completo de cada item.
 
