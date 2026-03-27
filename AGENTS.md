@@ -1,129 +1,167 @@
 # AGENTS.md
 
-## Purpose
+Este arquivo define o contrato de desenvolvimento para agentes de IA (Codex,
+Claude, ou qualquer outro) que trabalham neste repositório.
 
-This repository implements a controlled, auditable, LLM-assisted pentest agent.
-
-The goal is NOT to perform real offensive operations.
-The goal is to model and reason about attack paths in a safe, bounded, and explainable way.
-
-All agents (human or AI) must follow the constraints defined here.
+Leia este arquivo completamente antes de escrever qualquer linha de código.
 
 ---
 
-## Core Principles
+## O que é o Rastro
 
-1. **Control over autonomy**
-   - The agent must never act freely without validation.
-   - All actions must pass through validation layers.
+Rastro é um agente de red team autônomo para ambientes cloud e Linux.
+O objetivo é raciocinar sobre caminhos de comprometimento — não executar
+ataques reais.
 
-2. **Strict scope enforcement**
-   - Every action MUST be validated against the defined scope.
-   - No action may execute outside scope under any circumstance.
-
-3. **Safety first**
-   - No real offensive techniques in MVP.
-   - Only simulated or synthetic environments are allowed.
-   - No real cloud, network, or system access.
-
-4. **Auditability**
-   - Every decision must be logged.
-   - Every action must be traceable.
-   - Logs must be append-only.
-
-5. **Explainability**
-   - The system must always explain:
-     - why an action was chosen
-     - what it expects to achieve
-     - what changed after execution
-
-6. **Determinism (for MVP)**
-   - Behavior should be predictable and testable.
-   - Prefer deterministic logic where possible.
+É um projeto open source com pretensão de uso em pesquisa acadêmica e
+segurança defensiva. Isso tem implicações diretas nas decisões de design.
 
 ---
 
-## Allowed Actions (MVP)
+## Estado atual do projeto
 
-- Simulated enumeration
-- Simulated permission analysis
-- Synthetic privilege escalation steps
+**Fase 0 está completa.** O loop central funciona com fixture sintético.
+Não refatore o que já está funcionando sem razão explícita.
 
-All actions must:
-- operate only on local fixtures
-- be deterministic
-- not call external systems
+**Fase 1 está em progresso.** O trabalho atual é:
+1. Implementar `OllamaPlanner` em `src/planner/ollama_planner.py`
+2. Implementar `OpenAIPlanner` em `src/planner/openai_planner.py`
+3. Implementar `ClaudePlanner` em `src/planner/claude_planner.py`
+4. Adicionar `Technique` ao domain model para MITRE ATT&CK mapping
+5. Atualizar o Report Engine para incluir seção MITRE
+6. Formalizar Tool Registry com schema YAML
 
----
-
-## Forbidden Actions
-
-- Real network scanning
-- Real cloud API calls
-- Shell command execution outside controlled simulation
-- Exploitation of real systems
-- Any action that modifies real infrastructure
-
-If in doubt: DO NOT IMPLEMENT.
+Consulte `PLAN.md` para o detalhamento completo de cada item.
 
 ---
 
-## Architecture Constraints
+## Decisões de design já tomadas — não reverter
 
-- Planner must be abstracted (no hard dependency on a single LLM)
-- Scope Enforcer must validate ALL actions before execution
-- Executor must be isolated and safe
-- Attack Graph must be explicit and inspectable
-- Audit Logger must be append-only
+### 1. Nenhum vendor de LLM é obrigatório
+
+O backend de LLM é configurável. **Ollama é o padrão recomendado** —
+self-hosted, sem internet, sem custo.
+
+```
+src/planner/
+  interface.py           # contrato estável — NÃO MODIFICAR a assinatura
+  mock_planner.py        # determinístico — para testes, já funciona
+  ollama_planner.py      # padrão — self-hosted via Ollama
+  openai_planner.py      # OpenAI e qualquer API OpenAI-compatible
+  claude_planner.py      # Anthropic — opcional, não é o padrão
+```
+
+A factory `get_planner(backend="ollama", ...)` em `src/planner/__init__.py`
+é o ponto de entrada. O resto do código usa a interface `Planner` — nunca
+importa um planner concreto diretamente.
+
+**Não adicione dependência hard em nenhum provider de LLM.**
+Se precisar de um novo backend, crie um novo arquivo seguindo o mesmo padrão.
+
+### 2. A interface Planner é estável
+
+```python
+class Planner(ABC):
+    @abstractmethod
+    def decide(self, snapshot, available_actions: List[Action]) -> Decision:
+        ...
+```
+
+Não altere essa assinatura. Todos os backends implementam exatamente isso.
+
+### 3. Scope Enforcer é obrigatório e inviolável
+
+Toda ação passa pelo `ScopeEnforcer` antes de executar.
+Não existe bypass. Não existe modo de debug que pule essa camada.
+Não adicione flags como `--unsafe`, `--skip-scope`, ou similares.
+
+### 4. Audit Logger é append-only
+
+O log em `audit.jsonl` nunca é sobrescrito ou deletado durante um run.
+Não adicione lógica de rotação, limpeza ou truncamento automático.
+
+### 5. Testes não dependem de serviços externos
+
+A suite `pytest` roda sem AWS, sem Ollama, sem internet.
+LLM planners são testados com mocks que simulam respostas estruturadas.
+Se um teste precisar de serviço externo, ele vai para `tests/integration/`
+e é marcado com `@pytest.mark.integration` — nunca na suite padrão.
 
 ---
 
-## Development Guidelines
+## Estrutura do projeto
 
-- Keep implementations small and composable
-- Avoid overengineering
-- Prefer clarity over cleverness
-- Every module should have tests
-- No hidden side effects
+```
+src/
+  app/           — CLI e orquestração do loop principal
+  core/          — domain models, attack graph, audit, state, fixture
+  execution/     — scope enforcer, executor
+  planner/       — interface + backends (mock, ollama, openai, claude)
+  reporting/     — geração de relatório MD e JSON
 
----
-
-## Testing Rules
-
-- Tests must not require external services
-- All scenarios must run locally
-- Use synthetic fixtures only
-
----
-
-## When Extending the System
-
-Before adding any new capability, ask:
-
-1. Does this break scope enforcement?
-2. Does this reduce auditability?
-3. Does this introduce real-world risk?
-4. Is this necessary for the current MVP?
-
-If the answer is unclear: do not proceed.
+fixtures/        — ambientes sintéticos para testes
+tools/           — plugins YAML do Tool Registry (Fase 1)
+examples/        — exemplos de scope.yaml e objective.json
+tests/           — suite pytest sem dependências externas
+docs/            — arquitetura e ADRs
+```
 
 ---
 
-## Agent Behavior Guidelines (for Codex or other AI)
+## Regras de implementação
 
-- Do not expand scope beyond the MVP definition
-- Do not introduce real offensive capabilities
-- Do not remove safety or validation layers
-- Prefer minimal, safe implementations
-- Stop when the defined MVP is complete
+**Ao implementar um novo Planner backend:**
+- Implemente a interface `Planner` de `planner/interface.py`
+- O output do LLM deve ser JSON estruturado — nunca texto livre
+- Valide o schema retornado antes de construir um `Decision`
+- Se o LLM retornar ação inválida: fallback seguro + log, não exception
+- Dependências do backend (httpx, openai, anthropic) são imports tardios
+  dentro da classe — não no topo do módulo — para não quebrar quem não usa
+
+**Ao adicionar ao domain model (`src/core/domain.py`):**
+- Use Pydantic BaseModel
+- Campos novos são opcionais com default quando possível
+- Não quebre modelos que já existem — adicione, não substitua
+
+**Ao adicionar uma Tool ao Tool Registry:**
+- Crie o YAML em `tools/<plataforma>/<nome>.yaml`
+- Inclua: `mitre_id`, `preconditions`, `postconditions`, `safe_simulation`
+- A implementação Python vai em `tools/<plataforma>/<nome>.py`
+- Adicione fixture sintético correspondente para testes
+
+**Ao modificar o loop principal (`src/app/main.py`):**
+- O loop tem max_steps. Não remova esse limite.
+- A ordem é sempre: enumerate → plan → validate → execute → observe → graph
+- Não adicione lógica de negócio no app — ela pertence aos módulos de core
 
 ---
 
-## Definition of Done (MVP)
+## O que não fazer
 
-- Controlled execution loop works
-- Scope enforcement is active
-- All actions are logged
-- Attack graph is generated
-- Report is produced
-- All tests pass
+- Não implemente acesso real a AWS, Kubernetes, ou Linux ainda (Fase 2+)
+- Não adicione dependências de LLM como requisito obrigatório do projeto
+- Não remova o mock_planner — ele é necessário para a suite de testes
+- Não altere a interface `Planner` sem atualizar todos os backends
+- Não escreva testes que chamam APIs externas sem marcar como integration
+- Não adicione flags que bypassem o Scope Enforcer
+- Não faça commit de API keys, mesmo em exemplos
+
+---
+
+## Quando terminar uma tarefa
+
+Antes de considerar uma implementação completa, verifique:
+
+1. `pytest` passa sem erros e sem dependências externas
+2. O mock planner continua funcionando normalmente
+3. Nenhuma interface existente foi quebrada
+4. Se adicionou dependência nova, está em `pyproject.toml` como opcional
+5. O novo código tem ao menos um teste unitário
+
+---
+
+## Referências
+
+- `PLAN.md` — roadmap detalhado com critérios de conclusão por fase
+- `docs/architecture.md` — visão geral dos componentes
+- `docs/adr/` — decisões de arquitetura registradas

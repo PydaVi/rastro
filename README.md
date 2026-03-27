@@ -26,10 +26,41 @@ audit log: completo
 **Fase 0 completa.** Loop central funcionando com fixture sintético IAM.
 Scope Enforcer, Audit Logger, Attack Graph e Report Engine implementados.
 
-**Fase 1 em progresso.** LLM Planner real (Claude API) + MITRE ATT&CK mapping
-+ Tool Registry declarativo.
+**Fase 1 em progresso.** LLM Planner plugável (Ollama / OpenAI-compatible /
+Claude) + MITRE ATT&CK mapping + Tool Registry declarativo.
 
 Ver [PLAN.md](PLAN.md) para roadmap completo.
+
+---
+
+## Backend de LLM — sem vendor obrigatório
+
+Rastro é open source. Nenhuma API proprietária é requisito.
+
+O backend é configurável no `scope.yaml`. O padrão recomendado é
+**Ollama** — self-hosted, sem internet, sem custo, compatível com
+qualquer modelo local (Llama, Qwen, Mistral, Phi).
+
+Para ambientes sensíveis onde mandar contexto de ataque para uma API
+externa é inaceitável, Ollama local é a única opção que faz sentido
+operacionalmente.
+
+```yaml
+# scope.yaml
+planner:
+  backend: ollama             # ollama | openai | claude
+  model: llama3.1:8b
+  base_url: http://localhost:11434
+```
+
+Backends disponíveis:
+
+| Backend | Quando usar |
+|---------|-------------|
+| `ollama` | padrão — self-hosted, air-gapped, sem custo |
+| `openai` | OpenAI, Groq, Together AI, qualquer API OpenAI-compatible |
+| `claude` | Anthropic API — opcional |
+| `mock` | testes determinísticos sem LLM |
 
 ---
 
@@ -53,7 +84,7 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-Executar o demo com fixture sintético IAM:
+Executar com mock planner (sem LLM necessário):
 
 ```bash
 rastro run \
@@ -62,6 +93,17 @@ rastro run \
   --scope examples/scope.json \
   --out outputs \
   --max-steps 5
+```
+
+Executar com Ollama (requer `ollama serve` rodando localmente):
+
+```bash
+rastro run \
+  --fixture fixtures/iam_lab.json \
+  --objective examples/objective.json \
+  --scope examples/scope.json \
+  --planner ollama \
+  --out outputs
 ```
 
 Outputs gerados:
@@ -83,7 +125,7 @@ outputs/
 │                 RASTRO CORE                      │
 │                                                  │
 │  Planner ──────────────▶ Tool Executor           │
-│  (LLM / mock)           (scope-gated)            │
+│  (ollama/openai/mock)   (scope-gated)            │
 │      ▲                       │                   │
 │      │ estado                ▼                   │
 │  Attack Graph ◀──────── Tool Registry            │
@@ -96,8 +138,8 @@ outputs/
 ```
 
 **Planner** — orquestrador LLM com memória de sessão. Recebe o estado atual
-do grafo e decide qual ação executar em seguida. No MVP usa mock determinístico;
-Fase 1 substitui por Claude API com tool use.
+do grafo e decide qual ação executar em seguida. Backend configurável:
+Ollama (padrão), qualquer API OpenAI-compatible, ou Anthropic.
 
 **Tool Registry** — cada técnica ofensiva é um plugin YAML com nome, fase
 MITRE, pré-condições e pós-condições. O Planner seleciona tools por
@@ -142,7 +184,7 @@ do ambiente.
 | Fase | Objetivo | Status |
 |------|----------|--------|
 | 0 | Loop central + fixture sintético IAM | ✓ completa |
-| 1 | LLM Planner real + MITRE mapping + Tool Registry | em progresso |
+| 1 | LLM Planner plugável + MITRE mapping + Tool Registry | em progresso |
 | 2 | AWS real (conta de lab autorizada) | pendente |
 | 3 | Kubernetes attack paths | pendente |
 | 4 | Linux + ambiente híbrido | pendente |
@@ -152,16 +194,16 @@ do ambiente.
 
 ## Cobertura MITRE ATT&CK (planejada)
 
-| Técnica | ID | Fase | Alvo |
-|---------|-----|------|------|
-| Account Discovery | T1087.004 | Discovery | AWS IAM |
-| Permission Groups Discovery | T1069.003 | Discovery | IAM policies |
+| Técnica | ID | Fase | Plataforma |
+|---------|-----|------|------------|
+| Account Discovery | T1087.004 | Discovery | AWS |
+| Permission Groups Discovery | T1069.003 | Discovery | AWS |
 | Abuse Elevation Control — PassRole | T1548 | Priv. Escalation | AWS |
 | Create/Modify Cloud Credentials | T1098.001 | Persistence | AWS |
 | Valid Accounts — Cloud | T1078.004 | Initial Access | AWS |
-| Data from Cloud Storage | T1530 | Collection | S3 |
+| Data from Cloud Storage | T1530 | Collection | AWS |
 | Container Escape | T1611 | Priv. Escalation | Kubernetes |
-| Lateral Movement via SSM | T1021 | Lateral Movement | EC2 |
+| Lateral Movement via SSM | T1021 | Lateral Movement | AWS/Linux |
 
 ---
 
@@ -169,7 +211,7 @@ do ambiente.
 
 - **Python 3.12** — ecossistema de segurança ofensiva (boto3, impacket,
   kubernetes-client, nuclei-python)
-- **Claude API** — Planner LLM com tool use estruturado (Fase 1)
+- **Ollama** — LLM self-hosted padrão; qualquer modelo local compatível
 - **networkx** — attack graph em memória; Neo4j na v1.0
 - **pytest** — testes sem dependências externas
 

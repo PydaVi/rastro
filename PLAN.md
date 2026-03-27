@@ -19,7 +19,7 @@ executa, atualiza o attack graph, e produz relatório auditável.
 
 O que foi construído:
 - Loop bounded: `enumerate → plan → validate → execute → observe → graph`
-- Planner interface abstraída (mock determinístico no MVP, LLM na Fase 1)
+- Planner interface abstraída (mock determinístico no MVP, LLM plugável na Fase 1)
 - Scope Enforcer obrigatório — nenhuma ação executa sem validação
 - Audit Logger append-only JSONL
 - Attack Graph em networkx com export Mermaid
@@ -40,42 +40,94 @@ O que não foi construído ainda (intencionalmente):
 
 **Pré-requisito:** Fase 0 completa. ✓
 
-**Objetivo:** Substituir o mock planner por um agente LLM real usando Claude API
-com tool use. O agente passa a raciocinar sobre o estado do ataque em vez de
-seguir uma sequência determinística.
+**Objetivo:** Substituir o mock planner por um agente LLM real. O agente passa
+a raciocinar sobre o estado do ataque em vez de seguir uma sequência
+determinística.
 
-### 1.1 — Claude Planner
+### Decisão de design: nenhum vendor obrigatório
 
-Substituir `mock_planner.py` por implementação real mantendo a interface
-`Planner` intacta. O Planner LLM recebe:
+Rastro é open source. Depender de uma API proprietária como requisito cria
+barreira de entrada, gera custo para contribuidores, e viola o princípio de
+soberania operacional — especialmente relevante para uso em ambientes sensíveis
+onde mandar contexto de ataque para uma API externa é inaceitável.
 
-- Estado atual do attack graph
-- Ações disponíveis com pré-condições
-- Objetivo da sessão
-- Histórico de decisões anteriores
-
-E retorna uma `Decision` com:
-- Ação escolhida
-- Raciocínio explícito (campo `reason` já existe no domínio)
-- Confiança estimada
+O backend de LLM é configurável via `scope.yaml`. O padrão recomendado é
+**Ollama** (self-hosted, sem internet, sem custo). APIs externas são suportadas
+como opção, nunca como requisito.
 
 ```
-src/planner/claude_planner.py
+src/planner/
+  interface.py           # contrato estável — não muda
+  mock_planner.py        # determinístico — já existe, para testes
+  ollama_planner.py      # padrão recomendado — self-hosted
+  openai_planner.py      # compatível com qualquer API OpenAI-like
+  claude_planner.py      # Anthropic API — opcional
 ```
 
-Restrições:
-- Nenhuma ação executa sem passar pelo Scope Enforcer — independente do que o LLM decidir
-- Token usage e custo são logados no audit trail
-- O Planner nunca acessa ferramentas diretamente — só declara intenção
+Qualquer modelo rodando via Ollama funciona: Llama 3.1, Qwen2.5, Mistral,
+Phi-3. Para ambientes air-gapped ou pentests em infraestrutura sensível,
+Ollama local é a única opção que faz sentido operacionalmente.
 
-DONE WHEN:
-- `rastro run --planner claude` usa LLM real
-- Raciocínio do LLM aparece no relatório final
-- Mock planner continua funcionando para testes
+Configuração no `scope.yaml`:
+
+```yaml
+planner:
+  backend: ollama          # ollama | openai | claude
+  model: llama3.1:8b       # qualquer modelo suportado pelo backend
+  base_url: http://localhost:11434  # para ollama
+  # api_key: $ENV_VAR      # para backends externos — nunca hardcoded
+```
 
 ---
 
-### 1.2 — MITRE ATT&CK Mapping
+### 1.1 — Ollama Planner (padrão)
+
+Implementar `ollama_planner.py` usando a API REST do Ollama
+(`/api/chat` com `stream: false`). O Planner recebe:
+
+- Estado atual do attack graph serializado
+- Ações disponíveis com pré-condições
+- Objetivo da sessão
+- Histórico de decisões anteriores (últimos N steps)
+
+E retorna uma `Decision` com:
+- Ação escolhida (estruturada — não texto livre)
+- Raciocínio explícito no campo `reason`
+
+O output do LLM é JSON estruturado. O Planner valida o schema antes de
+retornar — se o LLM alucinar um formato inválido, o step é abortado com
+log de erro, não com execução de ação incorreta.
+
+DONE WHEN:
+- `rastro run --planner ollama` executa com Ollama local
+- Raciocínio do LLM aparece no audit log e no relatório
+- Mock planner continua funcionando para testes sem Ollama instalado
+
+---
+
+### 1.2 — OpenAI-compatible Planner
+
+Implementar `openai_planner.py` usando o SDK `openai` com `base_url`
+configurável. Funciona com: OpenAI, Groq, Together AI, Mistral API,
+e qualquer provider com API OpenAI-compatible.
+
+DONE WHEN:
+- `rastro run --planner openai` funciona com `OPENAI_API_KEY` no ambiente
+- Mesma interface, mesmo comportamento esperado do Ollama Planner
+
+---
+
+### 1.3 — Claude Planner (opcional)
+
+Implementar `claude_planner.py` para quem preferir usar Anthropic API.
+Não é o padrão, não é recomendado para ambientes sensíveis.
+
+DONE WHEN:
+- `rastro run --planner claude` funciona com `ANTHROPIC_API_KEY` no ambiente
+
+---
+
+### 1.4 — MITRE ATT&CK Mapping
 
 Cada técnica no Tool Registry precisa de mapeamento explícito para MITRE
 ATT&CK Cloud Matrix. Isso é o que dá credibilidade ao relatório e base para
@@ -101,7 +153,7 @@ DONE WHEN:
 
 ---
 
-### 1.3 — Tool Registry (base)
+### 1.5 — Tool Registry (base)
 
 Formalizar o conceito de Tool como plugin declarativo. Cada tool tem:
 
@@ -121,21 +173,23 @@ implementation: tools/aws/iam_passrole.py
 safe_simulation: true
 ```
 
-O Planner LLM usa pré/pós-condições para raciocinar sobre qual tool chamar —
-não prompt livre. Comportamento previsível e auditável.
+O Planner usa pré/pós-condições para raciocinar sobre qual tool chamar —
+não prompt livre. Comportamento previsível e auditável independente do
+backend de LLM.
 
 DONE WHEN:
 - 3 tools AWS declaradas em YAML com MITRE mapping
-- Planner LLM seleciona tools por pré-condições
+- Planner seleciona tools por pré-condições
 - Fixture sintético atualizado para refletir estrutura de tools
 
 ---
 
 **Fase 1 completa quando:**
-1. `rastro run --planner claude` executa com LLM real
-2. Relatório inclui raciocínio do agente + mapping MITRE
-3. Tool Registry tem estrutura YAML funcional
-4. Todos os testes da Fase 0 continuam passando
+1. `rastro run --planner ollama` executa com LLM local
+2. `rastro run --planner openai` executa com API externa
+3. Relatório inclui raciocínio do agente + mapping MITRE
+4. Tool Registry tem estrutura YAML funcional
+5. Todos os testes da Fase 0 continuam passando sem Ollama instalado
 
 ---
 
@@ -176,7 +230,7 @@ authorization_document: "docs/authorization.pdf"
 ```
 
 Sem `authorized_by` e `authorization_document`, o run não inicia.
-Sem isso no código — não no README.
+Isso está no código, não só aqui.
 
 ### Modo dry-run
 
@@ -185,7 +239,7 @@ O Planner raciocina, o grafo é construído, o relatório é gerado —
 mas o Executor retorna simulação em vez de chamar a AWS.
 
 DONE WHEN:
-- `rastro run --planner claude --target aws` opera em conta real de lab
+- `rastro run --planner ollama --target aws` opera em conta real de lab
 - Scope Enforcer bloqueia qualquer ação fora do `scope.yaml`
 - Modo `--dry-run` funcional
 - Relatório inclui evidências reais (ARNs, timestamps, respostas da API)
@@ -240,20 +294,22 @@ Objetivo de longo prazo.
 
 ## Princípios que guiam o desenvolvimento
 
-**Autorização é inegociável.** Nenhuma execução contra ambiente real acontece
-sem `scope.yaml` com campos de autorização preenchidos. Isso está no código,
-não só aqui.
+**Nenhum vendor obrigatório.** O backend de LLM é configurável. Ollama local
+é o padrão recomendado. APIs externas são opção, nunca requisito.
 
-**A interface do Planner é estável.** Mock, LLM, ou qualquer implementação
-futura plugam na mesma interface. O restante do pipeline não sabe qual está
-rodando.
+**Autorização é inegociável.** Nenhuma execução contra ambiente real acontece
+sem `scope.yaml` com campos de autorização preenchidos. Isso está no código.
+
+**A interface do Planner é estável.** Mock, Ollama, OpenAI, ou qualquer
+implementação futura plugam na mesma interface. O restante do pipeline não
+sabe qual está rodando.
 
 **Cada fase é publicável.** Resultados de cada fase geram material para paper
 ou post técnico. O projeto cresce em visibilidade junto com a base de código.
 
 **Testes sem dependências externas.** A suite roda localmente sem AWS, sem LLM,
-sem rede. Fixtures sintéticos cobrem o comportamento esperado. O LLM real é
-testado com mocks que simulam suas respostas.
+sem rede. O mock planner cobre o comportamento esperado. LLM real é testado
+com mocks que simulam respostas estruturadas.
 
-**Não expandir escopo antes de completar a fase atual.** Fase 1 não começa
-com código de Fase 2 misturado. Cada fase é entregue completa antes da próxima.
+**Não expandir escopo antes de completar a fase atual.** Cada fase é entregue
+completa antes da próxima começar.
