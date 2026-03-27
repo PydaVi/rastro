@@ -32,15 +32,16 @@ Total steps: 2
 ## Attack Graph (Mermaid)
 ```mermaid
 graph TD
-  "identity:analyst"["identity:analyst"]
-  "resource:AuditRole"["resource:AuditRole"]
-  "identity:AuditRole"["identity:AuditRole"]
-  "resource:sensitive_bucket"["resource:sensitive_bucket"]
-  "identity:analyst" -->|"assume_role"| "resource:AuditRole" :::success
-  "identity:analyst" -->|"assume_role"| "identity:AuditRole" :::success
-  "identity:AuditRole" -->|"access_resource"| "resource:sensitive_bucket" :::success
-classDef success stroke:#1b7f3b,stroke-width:2px;
-classDef blocked stroke:#b3261e,stroke-width:2px;
+  identity_analyst["identity:analyst"]
+  resource_AuditRole["resource:AuditRole"]
+  identity_AuditRole["identity:AuditRole"]
+  resource_sensitive_bucket["resource:sensitive_bucket"]
+  identity_analyst -->|"assume_role"| resource_AuditRole
+  linkStyle 0 stroke:#1b7f3b,stroke-width:2px;
+  identity_analyst -->|"assume_role"| identity_AuditRole
+  linkStyle 1 stroke:#1b7f3b,stroke-width:2px;
+  identity_AuditRole -->|"access_resource"| resource_sensitive_bucket
+  linkStyle 2 stroke:#1b7f3b,stroke-width:2px;
 ```
 
 ## Outcome

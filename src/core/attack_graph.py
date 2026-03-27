@@ -70,16 +70,26 @@ class AttackGraph:
         }
 
     def to_mermaid(self) -> str:
+        def node_id(raw: str) -> str:
+            return "".join(ch if ch.isalnum() else "_" for ch in raw)
+
         lines = ["graph TD"]
+        id_map: Dict[str, str] = {}
+
         for node in self.nodes.values():
+            safe_id = node_id(node.node_id)
+            id_map[node.node_id] = safe_id
             label = f"{node.node_type}:{node.metadata.get('name', node.node_id)}"
-            lines.append(f'  "{node.node_id}"["{label}"]')
-        for edge in self.edges:
+            lines.append(f'  {safe_id}["{label}"]')
+
+        for idx, edge in enumerate(self.edges):
             label = edge.action_type
-            style = ":::success" if edge.metadata.get("success") else ":::blocked"
-            lines.append(
-                f'  "{edge.source}" -->|"{label}"| "{edge.target}" {style}'
-            )
-        lines.append("classDef success stroke:#1b7f3b,stroke-width:2px;")
-        lines.append("classDef blocked stroke:#b3261e,stroke-width:2px;")
+            source = id_map.get(edge.source, node_id(edge.source))
+            target = id_map.get(edge.target, node_id(edge.target))
+            lines.append(f'  {source} -->|"{label}"| {target}')
+            if edge.metadata.get("success"):
+                lines.append(f"  linkStyle {idx} stroke:#1b7f3b,stroke-width:2px;")
+            else:
+                lines.append(f"  linkStyle {idx} stroke:#b3261e,stroke-width:2px;")
+
         return "\n".join(lines)

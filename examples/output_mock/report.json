@@ -68,6 +68,6 @@
     "node_count": 4,
     "edge_count": 3
   },
-  "attack_graph_mermaid": "graph TD\n  \"identity:analyst\"[\"identity:analyst\"]\n  \"resource:AuditRole\"[\"resource:AuditRole\"]\n  \"identity:AuditRole\"[\"identity:AuditRole\"]\n  \"resource:sensitive_bucket\"[\"resource:sensitive_bucket\"]\n  \"identity:analyst\" -->|\"assume_role\"| \"resource:AuditRole\" :::success\n  \"identity:analyst\" -->|\"assume_role\"| \"identity:AuditRole\" :::success\n  \"identity:AuditRole\" -->|\"access_resource\"| \"resource:sensitive_bucket\" :::success\nclassDef success stroke:#1b7f3b,stroke-width:2px;\nclassDef blocked stroke:#b3261e,stroke-width:2px;",
+  "attack_graph_mermaid": "graph TD\n  identity_analyst[\"identity:analyst\"]\n  resource_AuditRole[\"resource:AuditRole\"]\n  identity_AuditRole[\"identity:AuditRole\"]\n  resource_sensitive_bucket[\"resource:sensitive_bucket\"]\n  identity_analyst -->|\"assume_role\"| resource_AuditRole\n  linkStyle 0 stroke:#1b7f3b,stroke-width:2px;\n  identity_analyst -->|\"assume_role\"| identity_AuditRole\n  linkStyle 1 stroke:#1b7f3b,stroke-width:2px;\n  identity_AuditRole -->|\"access_resource\"| resource_sensitive_bucket\n  linkStyle 2 stroke:#1b7f3b,stroke-width:2px;",
   "objective_met": true
 }
