@@ -9,8 +9,8 @@ import typer
 from core.domain import Objective, Scope
 from core.state import StateManager
 from core.fixture import Fixture
+from planner import get_planner
 from planner.interface import Planner
-from planner.mock_planner import DeterministicPlanner
 from execution.scope_enforcer import ScopeEnforcer
 from execution.executor import Executor
 from core.attack_graph import AttackGraph
@@ -40,7 +40,7 @@ def run(
     scope = Scope.model_validate_json(scope_path.read_text())
 
     state = StateManager(objective=objective, scope=scope, fixture=fixture)
-    planner: Planner = DeterministicPlanner(seed=seed)
+    planner: Planner = get_planner(backend="mock", seed=seed)
     scope_enforcer = ScopeEnforcer(scope)
     executor = Executor(fixture)
     graph = AttackGraph()

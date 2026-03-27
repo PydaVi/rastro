@@ -22,7 +22,7 @@ O que foi construído:
 - Planner interface abstraída (mock determinístico no MVP, LLM plugável na Fase 1)
 - Scope Enforcer obrigatório — nenhuma ação executa sem validação
 - Audit Logger append-only JSONL
-- Attack Graph em networkx com export Mermaid
+- Attack Graph em estrutura própria com export Mermaid
 - Report Engine: Markdown + JSON estruturado
 - CLI: `rastro run --fixture ... --objective ... --scope ...`
 - Fixture sintético IAM com caminho de escalada determinístico

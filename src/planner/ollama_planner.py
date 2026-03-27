@@ -13,8 +13,6 @@ from __future__ import annotations
 import json
 from typing import List
 
-import httpx
-from pydantic import ValidationError
 
 from core.domain import Action, ActionType, Decision
 from planner.interface import Planner
@@ -63,6 +61,13 @@ class OllamaPlanner(Planner):
         base_url: str = "http://localhost:11434",
         timeout: int = 60,
     ) -> None:
+        try:
+            import httpx  # noqa: F401
+        except ImportError as exc:
+            raise ImportError(
+                "httpx não está instalado. Execute: pip install httpx"
+            ) from exc
+
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
@@ -82,6 +87,7 @@ class OllamaPlanner(Planner):
         user_message = self._build_prompt(snapshot, available_actions)
 
         try:
+            import httpx
             raw = self._call_ollama(user_message)
             return self._parse_response(raw, available_actions)
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
