@@ -61,3 +61,4 @@ def test_end_to_end_run(tmp_path: Path) -> None:
 
     report = report_json.read_text()
     assert '"objective_met": true' in report
+    assert '"mitre_techniques"' in report

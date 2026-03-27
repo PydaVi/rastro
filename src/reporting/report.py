@@ -23,6 +23,19 @@ class ReportGenerator:
         objective = snapshot.objective
         steps_taken = snapshot.steps_taken
         allowed_actions = [a.model_dump() for a in snapshot.actions_taken]
+        mitre_techniques = []
+        seen = set()
+        for action in snapshot.actions_taken:
+            if action.technique:
+                key = (
+                    action.technique.mitre_id,
+                    action.technique.mitre_name,
+                    action.technique.tactic,
+                    action.technique.platform,
+                )
+                if key not in seen:
+                    seen.add(key)
+                    mitre_techniques.append(action.technique.model_dump())
         blocked_actions = [
             {"action": action.model_dump(), "reason": reason}
             for action, reason in snapshot.blocked_actions
@@ -40,6 +53,7 @@ class ReportGenerator:
             "observations": observations,
             "graph_summary": graph_summary,
             "attack_graph_mermaid": mermaid,
+            "mitre_techniques": mitre_techniques,
             "objective_met": objective_met,
         }
 
@@ -66,6 +80,9 @@ class ReportGenerator:
             "## Graph Summary",
             f"- Nodes: {graph_summary['node_count']}",
             f"- Edges: {graph_summary['edge_count']}",
+            "",
+            "## MITRE ATT&CK Mapping",
+            "```\n" + str(mitre_techniques) + "\n```",
             "",
             "## Attack Graph (Mermaid)",
             "```mermaid",

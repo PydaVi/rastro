@@ -16,6 +16,12 @@
             "target": "account",
             "parameters": {
               "note": "list_roles"
+            },
+            "technique": {
+              "mitre_id": "T1087.004",
+              "mitre_name": "Account Discovery: Cloud Account",
+              "tactic": "discovery",
+              "platform": "AWS"
             }
           },
           {
@@ -23,6 +29,12 @@
             "target": "AuditRole",
             "parameters": {
               "note": "attempt_role_assumption"
+            },
+            "technique": {
+              "mitre_id": "T1548",
+              "mitre_name": "Abuse Elevation Control Mechanism",
+              "tactic": "privilege-escalation",
+              "platform": "AWS IAM"
             }
           }
         ]
@@ -37,6 +49,12 @@
       "target": "AuditRole",
       "parameters": {
         "note": "attempt_role_assumption"
+      },
+      "technique": {
+        "mitre_id": "T1548",
+        "mitre_name": "Abuse Elevation Control Mechanism",
+        "tactic": "privilege-escalation",
+        "platform": "AWS IAM"
       }
     },
     {
@@ -45,6 +63,12 @@
       "target": "sensitive_bucket",
       "parameters": {
         "note": "read_sensitive"
+      },
+      "technique": {
+        "mitre_id": "T1530",
+        "mitre_name": "Data from Cloud Storage",
+        "tactic": "collection",
+        "platform": "S3"
       }
     }
   ],
@@ -69,5 +93,19 @@
     "edge_count": 3
   },
   "attack_graph_mermaid": "graph TD\n  identity_analyst[\"identity:analyst\"]\n  resource_AuditRole[\"resource:AuditRole\"]\n  identity_AuditRole[\"identity:AuditRole\"]\n  resource_sensitive_bucket[\"resource:sensitive_bucket\"]\n  identity_analyst -->|\"assume_role\"| resource_AuditRole\n  linkStyle 0 stroke:#1b7f3b,stroke-width:2px;\n  identity_analyst -->|\"assume_role\"| identity_AuditRole\n  linkStyle 1 stroke:#1b7f3b,stroke-width:2px;\n  identity_AuditRole -->|\"access_resource\"| resource_sensitive_bucket\n  linkStyle 2 stroke:#1b7f3b,stroke-width:2px;",
+  "mitre_techniques": [
+    {
+      "mitre_id": "T1548",
+      "mitre_name": "Abuse Elevation Control Mechanism",
+      "tactic": "privilege-escalation",
+      "platform": "AWS IAM"
+    },
+    {
+      "mitre_id": "T1530",
+      "mitre_name": "Data from Cloud Storage",
+      "tactic": "collection",
+      "platform": "S3"
+    }
+  ],
   "objective_met": true
 }

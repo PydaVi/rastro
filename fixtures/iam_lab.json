@@ -12,6 +12,12 @@
             "target": "account",
             "parameters": {
               "note": "list_roles"
+            },
+            "technique": {
+              "mitre_id": "T1087.004",
+              "mitre_name": "Account Discovery: Cloud Account",
+              "tactic": "discovery",
+              "platform": "AWS"
             }
           },
           {
@@ -19,6 +25,12 @@
             "target": "AuditRole",
             "parameters": {
               "note": "attempt_role_assumption"
+            },
+            "technique": {
+              "mitre_id": "T1548",
+              "mitre_name": "Abuse Elevation Control Mechanism",
+              "tactic": "privilege-escalation",
+              "platform": "AWS IAM"
             }
           }
         ]
@@ -53,6 +65,12 @@
               "target": "sensitive_bucket",
               "parameters": {
                 "note": "read_sensitive"
+              },
+              "technique": {
+                "mitre_id": "T1530",
+                "mitre_name": "Data from Cloud Storage",
+                "tactic": "collection",
+                "platform": "S3"
               }
             }
           ]

@@ -4,7 +4,7 @@ Objective: Demonstrate synthetic IAM privilege escalation path to sensitive buck
 
 ## Starting Conditions
 ```
-{'flags': [], 'identities': {'analyst': {'available_actions': [{'action_type': 'enumerate', 'target': 'account', 'parameters': {'note': 'list_roles'}}, {'action_type': 'assume_role', 'target': 'AuditRole', 'parameters': {'note': 'attempt_role_assumption'}}]}}}
+{'flags': [], 'identities': {'analyst': {'available_actions': [{'action_type': 'enumerate', 'target': 'account', 'parameters': {'note': 'list_roles'}, 'technique': {'mitre_id': 'T1087.004', 'mitre_name': 'Account Discovery: Cloud Account', 'tactic': 'discovery', 'platform': 'AWS'}}, {'action_type': 'assume_role', 'target': 'AuditRole', 'parameters': {'note': 'attempt_role_assumption'}, 'technique': {'mitre_id': 'T1548', 'mitre_name': 'Abuse Elevation Control Mechanism', 'tactic': 'privilege-escalation', 'platform': 'AWS IAM'}}]}}}
 ```
 
 ## Steps Taken
@@ -12,7 +12,7 @@ Total steps: 2
 
 ## Allowed Actions
 ```
-[{'action_type': <ActionType.ASSUME_ROLE: 'assume_role'>, 'actor': 'analyst', 'target': 'AuditRole', 'parameters': {'note': 'attempt_role_assumption'}}, {'action_type': <ActionType.ACCESS_RESOURCE: 'access_resource'>, 'actor': 'AuditRole', 'target': 'sensitive_bucket', 'parameters': {'note': 'read_sensitive'}}]
+[{'action_type': <ActionType.ASSUME_ROLE: 'assume_role'>, 'actor': 'analyst', 'target': 'AuditRole', 'parameters': {'note': 'attempt_role_assumption'}, 'technique': {'mitre_id': 'T1548', 'mitre_name': 'Abuse Elevation Control Mechanism', 'tactic': 'privilege-escalation', 'platform': 'AWS IAM'}}, {'action_type': <ActionType.ACCESS_RESOURCE: 'access_resource'>, 'actor': 'AuditRole', 'target': 'sensitive_bucket', 'parameters': {'note': 'read_sensitive'}, 'technique': {'mitre_id': 'T1530', 'mitre_name': 'Data from Cloud Storage', 'tactic': 'collection', 'platform': 'S3'}}]
 ```
 
 ## Blocked Actions
@@ -28,6 +28,11 @@ Total steps: 2
 ## Graph Summary
 - Nodes: 4
 - Edges: 3
+
+## MITRE ATT&CK Mapping
+```
+[{'mitre_id': 'T1548', 'mitre_name': 'Abuse Elevation Control Mechanism', 'tactic': 'privilege-escalation', 'platform': 'AWS IAM'}, {'mitre_id': 'T1530', 'mitre_name': 'Data from Cloud Storage', 'tactic': 'collection', 'platform': 'S3'}]
+```
 
 ## Attack Graph (Mermaid)
 ```mermaid

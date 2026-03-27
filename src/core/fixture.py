@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
 
-from core.domain import Action, ActionType, Observation
+from core.domain import Action, ActionType, Observation, Technique
 
 
 @dataclass
@@ -41,6 +41,11 @@ class Fixture:
                         actor=identity,
                         target=action_def.get("target"),
                         parameters=action_def.get("parameters", {}),
+                        technique=(
+                            Technique.model_validate(action_def["technique"])
+                            if action_def.get("technique")
+                            else None
+                        ),
                     )
                 )
         return actions

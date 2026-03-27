@@ -13,6 +13,13 @@ class ActionType(str, Enum):
     ACCESS_RESOURCE = "access_resource"
 
 
+class Technique(BaseModel):
+    mitre_id: str
+    mitre_name: str
+    tactic: str
+    platform: str
+
+
 class Objective(BaseModel):
     description: str
     target: str
@@ -39,6 +46,7 @@ class Action(BaseModel):
     actor: str
     target: Optional[str] = None
     parameters: Dict[str, Any] = Field(default_factory=dict)
+    technique: Technique | None = None
 
 
 class Decision(BaseModel):
