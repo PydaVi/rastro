@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate synthetic IAM privilege escalation path to sensitive bucket.",
+  "target": "sensitive_bucket",
+  "success_criteria": {
+    "flag": "priv_esc"
+  }
+}

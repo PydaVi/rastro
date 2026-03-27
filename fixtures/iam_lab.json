@@ -1,0 +1,74 @@
+{
+  "name": "synthetic-iam-lab",
+  "description": "Deterministic IAM privilege escalation fixture.",
+  "version": "0.1",
+  "state": {
+    "flags": [],
+    "identities": {
+      "analyst": {
+        "available_actions": [
+          {
+            "action_type": "enumerate",
+            "target": "account",
+            "parameters": {
+              "note": "list_roles"
+            }
+          },
+          {
+            "action_type": "assume_role",
+            "target": "AuditRole",
+            "parameters": {
+              "note": "attempt_role_assumption"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "transitions": [
+    {
+      "action_type": "assume_role",
+      "actor": "analyst",
+      "target": "AuditRole",
+      "observation": {
+        "granted_role": "AuditRole",
+        "details": "AssumeRole succeeded."
+      },
+      "update_identities": {
+        "analyst": {
+          "available_actions": [
+            {
+              "action_type": "enumerate",
+              "target": "account",
+              "parameters": {
+                "note": "list_roles"
+              }
+            }
+          ]
+        },
+        "AuditRole": {
+          "available_actions": [
+            {
+              "action_type": "access_resource",
+              "target": "sensitive_bucket",
+              "parameters": {
+                "note": "read_sensitive"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "AuditRole",
+      "target": "sensitive_bucket",
+      "observation": {
+        "details": "Sensitive bucket accessed."
+      },
+      "add_flags": [
+        "priv_esc"
+      ]
+    }
+  ]
+}

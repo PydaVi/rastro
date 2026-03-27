@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Optional
+
+import typer
+
+from core.domain import Objective, Scope
+from core.state import StateManager
+from core.fixture import Fixture
+from planner.interface import Planner
+from planner.mock_planner import DeterministicPlanner
+from execution.scope_enforcer import ScopeEnforcer
+from execution.executor import Executor
+from core.attack_graph import AttackGraph
+from core.audit import AuditLogger
+from reporting.report import ReportGenerator
+
+
+app = typer.Typer(add_completion=False)
+
+
+@app.command()
+def run(
+    fixture_path: Path = typer.Option(..., "--fixture", "-f"),
+    objective_path: Path = typer.Option(..., "--objective", "-o"),
+    scope_path: Path = typer.Option(..., "--scope", "-s"),
+    output_dir: Path = typer.Option(Path("outputs"), "--out", "-d"),
+    max_steps: int = typer.Option(5, "--max-steps", "-m"),
+    seed: Optional[int] = typer.Option(None, "--seed"),
+) -> None:
+    """
+    Run the MVP agent against a synthetic fixture.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    fixture = Fixture.load(fixture_path)
+    objective = Objective.model_validate_json(objective_path.read_text())
+    scope = Scope.model_validate_json(scope_path.read_text())
+
+    state = StateManager(objective=objective, scope=scope, fixture=fixture)
+    planner: Planner = DeterministicPlanner(seed=seed)
+    scope_enforcer = ScopeEnforcer(scope)
+    executor = Executor(fixture)
+    graph = AttackGraph()
+    audit = AuditLogger(output_dir / "audit.jsonl")
+    reporter = ReportGenerator(output_dir)
+
+    effective_max_steps = min(max_steps, scope.max_steps)
+
+    audit.log_event(
+        "run_start",
+        {
+            "objective": objective.model_dump(),
+            "scope": scope.model_dump(),
+            "fixture": fixture.metadata(),
+            "max_steps": effective_max_steps,
+        },
+    )
+
+    for step in range(effective_max_steps):
+        available_actions = fixture.enumerate_actions(state.snapshot())
+        decision = planner.decide(state.snapshot(), available_actions)
+
+        allowed = scope_enforcer.validate(decision.action)
+        if not allowed:
+            state.record_blocked(decision.action, decision.reason)
+            audit.log_event(
+                "action_blocked",
+                {
+                    "step": step,
+                    "action": decision.action.model_dump(),
+                    "reason": decision.reason,
+                },
+            )
+            continue
+
+        observation = executor.execute(decision.action)
+        state.apply_observation(decision.action, observation)
+        graph.update(decision.action, observation, state.snapshot())
+        audit.log_event(
+            "action_executed",
+            {
+                "step": step,
+                "action": decision.action.model_dump(),
+                "reason": decision.reason,
+                "observation": observation.model_dump(),
+            },
+        )
+
+        if state.is_objective_met():
+            audit.log_event("objective_met", {"step": step})
+            break
+
+    report = reporter.generate(
+        state.snapshot(),
+        graph,
+        audit,
+        state.initial_state(),
+        state.is_objective_met(),
+    )
+    report_json_path = output_dir / "report.json"
+    report_md_path = output_dir / "report.md"
+    graph_path = output_dir / "attack_graph.mmd"
+    report_json_path.write_text(json.dumps(report["json"], indent=2))
+    report_md_path.write_text(report["markdown"])
+    graph_path.write_text(report["json"]["attack_graph_mermaid"])
+
+    audit.log_event(
+        "run_complete",
+        {
+            "objective_met": state.is_objective_met(),
+            "report_json": str(report_json_path),
+            "report_md": str(report_md_path),
+            "attack_graph_mermaid": str(graph_path),
+        },
+    )
+
+    typer.echo(f"Report JSON: {report_json_path}")
+    typer.echo(f"Report MD: {report_md_path}")
+    typer.echo(f"Attack Graph: {graph_path}")
+
+
+if __name__ == "__main__":
+    app()

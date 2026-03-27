@@ -1,0 +1,14 @@
+{
+  "allowed_actions": [
+    "enumerate",
+    "analyze",
+    "assume_role",
+    "access_resource"
+  ],
+  "allowed_resources": [
+    "account",
+    "AuditRole",
+    "sensitive_bucket"
+  ],
+  "max_steps": 5
+}
