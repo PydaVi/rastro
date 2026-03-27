@@ -151,6 +151,8 @@ DONE WHEN:
 - Relatório Markdown inclui tabela MITRE
 - JSON output inclui campo `mitre_techniques`
 
+Status: **completa**
+
 ---
 
 ### 1.5 — Tool Registry (base)

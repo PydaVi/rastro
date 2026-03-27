@@ -29,6 +29,8 @@ Scope Enforcer, Audit Logger, Attack Graph e Report Engine implementados.
 **Fase 1 em progresso.** LLM Planner plugável (Ollama / OpenAI-compatible /
 Claude) + MITRE ATT&CK mapping + Tool Registry declarativo.
 
+**MITRE mapping no MVP já está implementado** (techniques no fixture + relatório).
+
 Ver [PLAN.md](PLAN.md) para roadmap completo.
 
 ---
@@ -87,7 +89,7 @@ pip install -e ".[dev]"
 Executar com mock planner (sem LLM necessário):
 
 ```bash
-rastro run \
+python -m app.main \
   --fixture fixtures/iam_lab.json \
   --objective examples/objective.json \
   --scope examples/scope.json \
@@ -97,12 +99,20 @@ rastro run \
 
 Executar com Ollama (requer `ollama serve` rodando localmente):
 
+Edite `examples/scope.json`:
+```json
+"planner": {
+  "backend": "ollama",
+  "model": "llama3.1:8b",
+  "base_url": "http://localhost:11434"
+}
+```
+
 ```bash
-rastro run \
+python -m app.main \
   --fixture fixtures/iam_lab.json \
   --objective examples/objective.json \
   --scope examples/scope.json \
-  --planner ollama \
   --out outputs
 ```
 

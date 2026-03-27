@@ -157,6 +157,7 @@ Antes de considerar uma implementação completa, verifique:
 3. Nenhuma interface existente foi quebrada
 4. Se adicionou dependência nova, está em `pyproject.toml` como opcional
 5. O novo código tem ao menos um teste unitário
+6. Se uma etapa/fase foi concluída, atualize `PLAN.md`, `README.md` e `AGENTS.md`
 
 ---
 
