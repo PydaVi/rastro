@@ -1,9 +1,0 @@
-Metadata-Version: 2.4
-Name: rastro
-Version: 0.1.0
-Summary: Controlled, auditable LLM-assisted pentest agent MVP
-Requires-Python: >=3.12
-Requires-Dist: typer>=0.9.0
-Requires-Dist: pydantic>=2.6.0
-Provides-Extra: dev
-Requires-Dist: pytest>=8.0.0; extra == "dev"

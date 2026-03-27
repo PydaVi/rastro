@@ -1,5 +1,0 @@
-app
-core
-execution
-planner
-reporting
