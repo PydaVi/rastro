@@ -40,7 +40,22 @@ def run(
     scope = Scope.model_validate_json(scope_path.read_text())
 
     state = StateManager(objective=objective, scope=scope, fixture=fixture)
-    planner: Planner = get_planner(backend="mock", seed=seed)
+    planner_cfg = scope.planner
+    backend = planner_cfg.backend if planner_cfg else "mock"
+    planner_kwargs = {}
+    if planner_cfg:
+        if planner_cfg.model:
+            planner_kwargs["model"] = planner_cfg.model
+        if planner_cfg.base_url:
+            planner_kwargs["base_url"] = planner_cfg.base_url
+        if planner_cfg.api_key:
+            planner_kwargs["api_key"] = planner_cfg.api_key
+        if planner_cfg.timeout:
+            planner_kwargs["timeout"] = planner_cfg.timeout
+    if seed is not None:
+        planner_kwargs["seed"] = seed
+
+    planner: Planner = get_planner(backend=backend, **planner_kwargs)
     scope_enforcer = ScopeEnforcer(scope)
     executor = Executor(fixture)
     graph = AttackGraph()

@@ -1,0 +1,73 @@
+{
+  "objective": {
+    "description": "Demonstrate synthetic IAM privilege escalation path to sensitive bucket.",
+    "target": "sensitive_bucket",
+    "success_criteria": {
+      "flag": "priv_esc"
+    }
+  },
+  "starting_conditions": {
+    "flags": [],
+    "identities": {
+      "analyst": {
+        "available_actions": [
+          {
+            "action_type": "enumerate",
+            "target": "account",
+            "parameters": {
+              "note": "list_roles"
+            }
+          },
+          {
+            "action_type": "assume_role",
+            "target": "AuditRole",
+            "parameters": {
+              "note": "attempt_role_assumption"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "steps_taken": 2,
+  "allowed_actions": [
+    {
+      "action_type": "assume_role",
+      "actor": "analyst",
+      "target": "AuditRole",
+      "parameters": {
+        "note": "attempt_role_assumption"
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "AuditRole",
+      "target": "sensitive_bucket",
+      "parameters": {
+        "note": "read_sensitive"
+      }
+    }
+  ],
+  "blocked_actions": [],
+  "observations": [
+    {
+      "success": true,
+      "details": {
+        "granted_role": "AuditRole",
+        "details": "AssumeRole succeeded."
+      }
+    },
+    {
+      "success": true,
+      "details": {
+        "details": "Sensitive bucket accessed."
+      }
+    }
+  ],
+  "graph_summary": {
+    "node_count": 4,
+    "edge_count": 3
+  },
+  "attack_graph_mermaid": "graph TD\n  \"identity:analyst\"[\"identity:analyst\"]\n  \"resource:AuditRole\"[\"resource:AuditRole\"]\n  \"identity:AuditRole\"[\"identity:AuditRole\"]\n  \"resource:sensitive_bucket\"[\"resource:sensitive_bucket\"]\n  \"identity:analyst\" -->|\"assume_role\"| \"resource:AuditRole\" :::success\n  \"identity:analyst\" -->|\"assume_role\"| \"identity:AuditRole\" :::success\n  \"identity:AuditRole\" -->|\"access_resource\"| \"resource:sensitive_bucket\" :::success\nclassDef success stroke:#1b7f3b,stroke-width:2px;\nclassDef blocked stroke:#b3261e,stroke-width:2px;",
+  "objective_met": true
+}

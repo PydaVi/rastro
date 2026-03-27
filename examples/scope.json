@@ -10,5 +10,8 @@
     "AuditRole",
     "sensitive_bucket"
   ],
-  "max_steps": 5
+  "max_steps": 5,
+  "planner": {
+    "backend": "mock"
+  }
 }

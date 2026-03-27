@@ -24,7 +24,7 @@ def get_planner(backend: str = "mock", **kwargs) -> Planner:
       claude  — Anthropic API (opcional)
     """
     if backend == "mock":
-        return DeterministicPlanner()
+        return DeterministicPlanner(**kwargs)
 
     if backend == "ollama":
         from planner.ollama_planner import OllamaPlanner

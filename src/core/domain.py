@@ -19,10 +19,19 @@ class Objective(BaseModel):
     success_criteria: Dict[str, Any]
 
 
+class PlannerConfig(BaseModel):
+    backend: str = "mock"
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    timeout: Optional[int] = None
+
+
 class Scope(BaseModel):
     allowed_actions: List[ActionType]
     allowed_resources: List[str]
     max_steps: int = 5
+    planner: PlannerConfig | None = None
 
 
 class Action(BaseModel):
@@ -40,4 +49,3 @@ class Decision(BaseModel):
 class Observation(BaseModel):
     success: bool
     details: Dict[str, Any] = Field(default_factory=dict)
-
