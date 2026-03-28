@@ -2,11 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from app.main import run
+from app.main import _build_execution_surface, run
 from core.attack_graph import AttackGraph
 from core.audit import AuditLogger
 from core.domain import Action, ActionType, Decision, Objective, Observation, Scope
 from core.aws_dry_run_lab import AwsDryRunLab
+from execution.aws_executor import AwsRealExecutorStub
 from core.state import StateManager
 from reporting.report import ReportGenerator
 from execution.scope_enforcer import ScopeEnforcer
@@ -15,6 +16,53 @@ from planner.ollama_planner import OllamaPlanner
 from planner.openai_planner import _parse_response as parse_openai_response
 from planner.mock_planner import DeterministicPlanner
 
+
+
+def test_build_execution_surface_selects_real_stub_for_non_dry_run_aws() -> None:
+    scope = Scope.model_construct(
+        target="aws",
+        allowed_actions=[ActionType.ENUMERATE],
+        allowed_resources=["arn:aws:iam::123456789012:root"],
+        max_steps=5,
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+        planner=None,
+    )
+    surface = _build_execution_surface(environment=object(), scope=scope)
+    assert isinstance(surface, AwsRealExecutorStub)
+
+
+def test_aws_real_executor_stub_returns_explicit_not_implemented() -> None:
+    scope = Scope.model_construct(
+        target="aws",
+        allowed_actions=[ActionType.ENUMERATE],
+        allowed_resources=["arn:aws:iam::123456789012:root"],
+        max_steps=5,
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+        planner=None,
+    )
+    executor = AwsRealExecutorStub(scope)
+    action = Action(
+        action_type=ActionType.ENUMERATE,
+        actor="arn:aws:iam::123456789012:user/analyst",
+        target="arn:aws:iam::123456789012:root",
+        parameters={"service": "iam"},
+    )
+    observation = executor.execute(action)
+    assert observation.success is False
+    assert observation.details["reason"] == "aws_real_execution_not_implemented"
+    assert observation.details["execution_mode"] == "stub"
 
 def test_scope_enforcer_blocks_out_of_scope() -> None:
     scope = Scope(

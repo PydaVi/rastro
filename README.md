@@ -35,6 +35,8 @@ pendem de validação com credenciais reais.
 **Fase 2 dry-run já começou** com cenário AWS local, autorização obrigatória,
 política explícita no report/audit e enforcement por `allowed_services`,
 `allowed_regions`, `aws_account_ids` e `allowed_resources`.
+Também já existe um `AwsRealExecutorStub` para preparar a transição futura
+para execução real sem introduzir chamadas a AWS nesta fase.
 
 Ver [PLAN.md](PLAN.md) para roadmap completo.
 
@@ -81,6 +83,7 @@ Backends disponíveis:
 - Cada step registra backend do planner, motivo da decisão e resposta bruta do LLM quando aplicável
 - O attack graph é construído em tempo real
 - Ao final: relatório Markdown + JSON com o caminho de comprometimento
+- A ponte para um executor AWS real já existe, mas continua stubada e sem chamadas externas
 
 ---
 
@@ -179,6 +182,10 @@ pré-condições, não por prompt livre.
 No fluxo AWS dry-run, o ambiente também filtra ações por `allowed_services`,
 `allowed_regions`, `aws_account_ids` e `allowed_resources`, e rejeita execução
 direta fora da política.
+
+**Executor AWS real (stub)** — a interface para execução AWS real já existe,
+mas nesta fase retorna apenas `aws_real_execution_not_implemented` com
+`real_api_called=false`.
 
 **Attack Graph** — grafo dirigido onde nós são estados de comprometimento e
 arestas são técnicas executadas. Base do relatório final e de futuras

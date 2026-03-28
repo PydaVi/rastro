@@ -37,6 +37,8 @@ Consulte `PLAN.md` para o detalhamento completo de cada item.
 autorização obrigatória, `execution_policy` no report/audit, validação
 antecipada de mismatch entre `fixture`/`objective`/`scope` e enforcement
 por `allowed_services`, `allowed_regions`, `aws_account_ids` e `allowed_resources`.
+Também existe uma ponte explícita para executor AWS real via stub, ainda sem
+qualquer chamada externa.
 
 ---
 
@@ -146,6 +148,11 @@ docs/            — arquitetura e ADRs
 - Preserve `execution_mode=dry_run` e `real_api_called=false`
 - Respeite `allowed_services`, `allowed_regions`, `aws_account_ids` e `allowed_resources` tanto na enumeração quanto na execução
 - Qualquer endurecimento novo precisa de teste cobrindo regressão
+
+**Ao modificar o executor AWS real stubado:**
+- Preserve o comportamento sem rede até a fase apropriada
+- Retornos de stub devem ser explícitos e auditáveis
+- Não introduza `boto3` ou credenciais reais sem atualização explícita do roadmap
 
 ---
 

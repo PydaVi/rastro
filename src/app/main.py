@@ -15,6 +15,7 @@ from planner import get_planner
 from planner.interface import Planner
 from execution.scope_enforcer import ScopeEnforcer
 from execution.executor import Executor
+from execution.aws_executor import AwsRealExecutorStub
 from core.attack_graph import AttackGraph
 from core.audit import AuditLogger
 from reporting.report import ReportGenerator
@@ -41,9 +42,7 @@ def run(
     scope = Scope.model_validate_json(scope_path.read_text())
     fixture = Fixture.load(fixture_path)
     _validate_run_inputs(fixture, objective, scope)
-    environment = fixture
-    if scope.target == TargetType.AWS:
-        environment = AwsDryRunLab.from_fixture(fixture, scope)
+    environment = _build_environment(fixture, scope)
 
     tool_registry = None
     tools_path = Path("tools")
@@ -73,7 +72,8 @@ def run(
 
     planner: Planner = get_planner(backend=backend, **planner_kwargs)
     scope_enforcer = ScopeEnforcer(scope)
-    executor = Executor(environment)
+    execution_surface = _build_execution_surface(environment, scope)
+    executor = Executor(execution_surface)
     graph = AttackGraph()
     audit = AuditLogger(output_dir / "audit.jsonl")
     reporter = ReportGenerator(output_dir)
@@ -167,6 +167,18 @@ def run(
     typer.echo(f"Report JSON: {report_json_path}")
     typer.echo(f"Report MD: {report_md_path}")
     typer.echo(f"Attack Graph: {graph_path}")
+
+
+def _build_environment(fixture: Fixture, scope: Scope):
+    if scope.target == TargetType.AWS:
+        return AwsDryRunLab.from_fixture(fixture, scope)
+    return fixture
+
+
+def _build_execution_surface(environment, scope: Scope):
+    if scope.target == TargetType.AWS and not scope.dry_run:
+        return AwsRealExecutorStub(scope)
+    return environment
 
 
 def _build_execution_policy(scope: Scope) -> dict:

@@ -261,6 +261,7 @@ Status atual:
 - mismatch entre `fixture`/`objective`/`scope` falha cedo antes do loop
 - ambiente dry-run filtra ações por `allowed_services`, `allowed_regions`, `aws_account_ids` e `allowed_resources`
 - ambiente dry-run rejeita execução direta fora da política com motivos explícitos de negação
+- ponte para executor AWS real criada via `AwsRealExecutorStub`, ainda sem chamadas externas
 - executor AWS continua 100% local e não chama APIs reais
 
 ---
