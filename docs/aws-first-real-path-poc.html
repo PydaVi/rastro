@@ -1,218 +1,895 @@
-# Rastro in AWS: First Real Attack Path PoC
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rastro — First Real AWS Attack Path</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=IBM+Plex+Mono:wght@400;500&family=Fraunces:ital,wght@0,300;0,700;1,300&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a08;
+    --surface: #111110;
+    --surface2: #161614;
+    --border: #1e1e1b;
+    --text: #e8e6df;
+    --muted: #5a5850;
+    --muted2: #3a3830;
+    --accent: #c8f04a;
+    --accent2: #f04a2a;
+    --accent3: #4af0c8;
+    --amber: #f0b84a;
+    --mono: 'IBM Plex Mono', monospace;
+    --display: 'Syne', sans-serif;
+    --serif: 'Fraunces', serif;
+  }
 
-Este documento registra, de forma sanitizada, a primeira execução bem-sucedida
-de um caminho AWS real no Rastro.
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
 
-O ponto central desta prova de conceito não é apenas listar permissões ou
-apontar recursos expostos. O que foi validado aqui é o núcleo da proposta do
-projeto: raciocinar sobre um caminho completo de comprometimento, executar esse
-encadeamento dentro de um escopo autorizado e produzir evidência auditável do
-resultado.
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--serif);
+    font-weight: 300;
+    overflow-x: hidden;
+    line-height: 1.75;
+  }
 
-## Test Objective
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 999;
+  }
 
-Demonstrar um caminho AWS real, curto e auditável, que conecte:
+  /* ── HEADER ── */
+  .site-header {
+    padding: 1.5rem 3rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: sticky;
+    top: 0;
+    background: rgba(10,10,8,0.92);
+    backdrop-filter: blur(8px);
+    z-index: 100;
+  }
 
-1. descobrir a identidade atual
-2. enumerar roles
-3. assumir uma role autorizada
-4. validar permissões efetivas
-5. acessar um objeto S3 alvo
+  .site-logo {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--accent);
+    letter-spacing: 0.2em;
+    text-decoration: none;
+  }
 
-## Scope and Safety Boundaries
+  .site-meta {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--muted);
+    display: flex;
+    gap: 1.5rem;
+  }
 
-- `target=aws`
-- `dry_run=false`
-- conta autorizada
-- serviços permitidos:
-  - `iam`
-  - `sts`
-  - `s3`
-- região permitida:
-  - `us-east-1`
+  /* ── HERO ── */
+  .post-hero {
+    padding: 6rem 3rem 4rem;
+    max-width: 900px;
+    margin: 0 auto;
+    border-bottom: 1px solid var(--border);
+    animation: up 0.8s ease both;
+  }
 
-Todos os identificadores abaixo foram sanitizados.
+  .post-eyebrow {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--accent3);
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    margin-bottom: 2rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
 
-## Why This Test Matters
+  .post-eyebrow::before {
+    content: '';
+    width: 32px;
+    height: 1px;
+    background: var(--accent3);
+  }
 
-Até aqui, o Rastro já tinha validado:
+  .post-title {
+    font-family: var(--display);
+    font-weight: 800;
+    font-size: clamp(2.4rem, 6vw, 4.5rem);
+    line-height: 1.0;
+    letter-spacing: -0.025em;
+    margin-bottom: 2rem;
+  }
 
-- loop principal
-- enforcement de escopo
-- audit trail
-- execução dry-run com semântica AWS
+  .post-title .hl { color: var(--accent); }
 
-O passo novo desta PoC foi provar que a mesma arquitetura consegue sair da
-simulação local e executar um caminho real em AWS sem abandonar os controles de
-segurança do projeto.
+  .post-lead {
+    font-size: clamp(1.05rem, 2vw, 1.3rem);
+    color: var(--muted);
+    max-width: 680px;
+    line-height: 1.65;
+    margin-bottom: 2.5rem;
+    font-style: italic;
+  }
 
-Na prática, isso valida quatro pontos:
+  .post-meta-row {
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+    flex-wrap: wrap;
+    padding-top: 2rem;
+    border-top: 1px solid var(--border);
+  }
 
-1. o agente consegue operar com APIs reais, não apenas fixtures
-2. o caminho continua auditável passo a passo
-3. o escopo continua aplicado antes da execução
-4. os artefatos produzidos podem ser sanitizados para compartilhamento seguro
+  .meta-item {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+  }
 
-## Executed Path
+  .meta-item strong {
+    display: block;
+    color: var(--text);
+    font-size: 0.78rem;
+    margin-bottom: 0.1rem;
+  }
 
-1. `sts:GetCallerIdentity`
-2. `iam:ListRoles`
-3. `sts:AssumeRole`
-4. `iam:SimulatePrincipalPolicy`
-5. `s3:GetObject`
+  .tag {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    padding: 0.25rem 0.7rem;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    letter-spacing: 0.1em;
+  }
 
-## Outcome
+  .tag.green { border-color: var(--accent); color: var(--accent); }
+  .tag.cyan  { border-color: var(--accent3); color: var(--accent3); }
 
-- `objective_met: true`
-- `execution_mode: real`
-- `real_api_called: true`
-- total de passos: `3`
+  /* ── LAYOUT ── */
+  .post-body {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 0 3rem;
+  }
 
-## Executive Summary
+  /* ── PROSE ── */
+  .prose {
+    padding: 3rem 0;
+    border-bottom: 1px solid var(--border);
+  }
 
-- Initial identity: `<REDACTED_USER>`
-- Assumed role: `<REDACTED_ROLE>`
-- Final resource: `s3://<REDACTED_BUCKET>/<REDACTED_OBJECT_KEY>`
-- Execution mode: `real`
-- Proof: `s3:GetObject` permitido e executado com sucesso
+  .prose h2 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 1.5rem;
+    letter-spacing: -0.02em;
+    margin-bottom: 1.2rem;
+    margin-top: 2.5rem;
+    color: var(--text);
+  }
 
-## Attack Path Graph
+  .prose h2:first-child { margin-top: 0; }
 
-```mermaid
-sequenceDiagram
-  participant U as IAM User<br/><REDACTED_USER>
-  participant I as AWS IAM/STS
-  participant R as IAM Role<br/><REDACTED_ROLE>
-  participant S as S3 Object<br/>s3://<REDACTED_BUCKET>/<REDACTED_OBJECT_KEY>
+  .prose h3 {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--accent);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    margin-bottom: 0.8rem;
+    margin-top: 2rem;
+  }
 
-  U->>I: sts:GetCallerIdentity
-  U->>I: iam:ListRoles
-  U->>I: sts:AssumeRole
-  I-->>R: Temporary credentials
-  R->>I: iam:SimulatePrincipalPolicy
-  I-->>R: decision = allowed
-  R->>S: s3:GetObject
-```
+  .prose p {
+    color: var(--muted);
+    margin-bottom: 1.2rem;
+    font-size: 1rem;
+    max-width: 680px;
+  }
 
-Esse diagrama mostra o encadeamento real validado no teste:
+  .prose p em { color: var(--text); font-style: italic; }
+  .prose p strong { color: var(--text); font-weight: 700; font-family: var(--display); }
 
-1. o principal inicial resolve a própria identidade e enumera roles
-2. o principal assume uma role autorizada
-3. a role assumida confirma permissão efetiva sobre o alvo
-4. a role acessa o objeto S3 final
+  .prose code {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    color: var(--accent3);
+    background: var(--surface);
+    padding: 0.1rem 0.4rem;
+    border: 1px solid var(--border);
+  }
 
-## Step-by-Step Execution
+  /* ── CALLOUT ── */
+  .callout {
+    border-left: 3px solid var(--accent);
+    padding: 1.5rem 2rem;
+    background: var(--surface);
+    margin: 2rem 0;
+  }
 
-### Step 1 — Discovery
+  .callout.warn { border-color: var(--accent2); }
+  .callout.info { border-color: var(--accent3); }
 
-- APIs:
-  - `sts:GetCallerIdentity`
-  - `iam:ListRoles`
-- Resultado:
-  - identidade atual resolvida
-  - roles enumeradas com sucesso
+  .callout p { color: var(--text); margin: 0; font-style: italic; }
+  .callout-label {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    margin-bottom: 0.6rem;
+    color: var(--accent);
+  }
 
-### Step 2 — Privilege Escalation
+  .callout.warn .callout-label { color: var(--accent2); }
+  .callout.info .callout-label { color: var(--accent3); }
 
-- APIs:
-  - `sts:AssumeRole`
-  - `iam:SimulatePrincipalPolicy`
-- Resultado:
-  - role assumida com sucesso
-  - permissão efetiva para `s3:GetObject` avaliada como `allowed`
+  /* ── CODE BLOCK ── */
+  .code-block {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    margin: 1.5rem 0;
+    overflow: hidden;
+  }
 
-### Step 3 — Collection
+  .code-block-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.6rem 1.2rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+  }
 
-- API:
-  - `s3:GetObject`
-- Resultado:
-  - objeto acessado com sucesso
-  - preview do conteúdo foi capturado localmente e redigido nos artefatos sanitizados
+  .code-block-lang {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    color: var(--muted);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
 
-## What This Validated
+  .code-block-status {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    color: var(--accent);
+  }
 
-Esta execução demonstrou, em ambiente AWS real e autorizado:
+  .code-block pre {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    line-height: 1.8;
+    padding: 1.2rem 1.5rem;
+    overflow-x: auto;
+    color: var(--text);
+  }
 
-- resolução da identidade efetiva em uso
-- enumeração real de roles na conta
-- assunção real de uma role alvo
-- validação real de permissão efetiva antes do acesso final
-- acesso real ao recurso objetivo
-- produção de trilha de auditoria por step
+  .code-block .c-green  { color: var(--accent); }
+  .code-block .c-cyan   { color: var(--accent3); }
+  .code-block .c-red    { color: var(--accent2); }
+  .code-block .c-amber  { color: var(--amber); }
+  .code-block .c-muted  { color: var(--muted); }
 
-Isso aproxima o Rastro de um agente que raciocina sobre caminhos de
-comprometimento, em vez de apenas devolver uma lista estática de findings.
+  /* ── ATTACK PATH SVG ── */
+  .attack-path-wrap {
+    margin: 2rem 0;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    overflow: hidden;
+  }
 
-## Generated Artifacts
+  .attack-path-header {
+    padding: 0.8rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
 
-Durante runs reais, o Rastro gera:
+  .attack-path-title {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--muted);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
 
-- `report.json`
-- `report.md`
-- `audit.jsonl`
+  .attack-path-badge {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    color: var(--accent);
+    background: rgba(200,240,74,0.08);
+    border: 1px solid rgba(200,240,74,0.2);
+    padding: 0.2rem 0.6rem;
+  }
 
-e também versões sanitizadas:
+  .attack-path-svg {
+    padding: 2rem 1.5rem;
+    overflow-x: auto;
+  }
 
-- `report.sanitized.json`
-- `report.sanitized.md`
-- `audit.sanitized.jsonl`
+  /* ── STEP CARDS ── */
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    margin: 1.5rem 0;
+  }
 
-Esses artefatos sanitizados são os que devem ser usados para:
+  .step {
+    background: var(--bg);
+    display: grid;
+    grid-template-columns: 56px 1fr;
+    transition: background 0.2s;
+  }
 
-- posts técnicos
-- demonstrações públicas
-- provas de conceito compartilháveis
+  .step:hover { background: var(--surface); }
 
-## Security Considerations
+  .step-num {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+    border-right: 1px solid var(--border);
+    padding: 1.2rem 0;
+  }
 
-Esta PoC foi executada com:
+  .step-body {
+    padding: 1.2rem 1.5rem;
+  }
 
-- conta autorizada
-- escopo explícito
-- regiões e serviços permitidos
-- recursos permitidos
-- gate de execução real habilitado explicitamente
+  .step-action {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--accent3);
+    margin-bottom: 0.4rem;
+  }
 
-Além disso, os artefatos gerados pelo run incluem versões sanitizadas para
-evitar exposição de:
+  .step-desc {
+    font-size: 0.88rem;
+    color: var(--muted);
+    line-height: 1.5;
+  }
 
-- account ids
-- ARNs reais
-- nomes de usuário e role
-- bucket e object key
-- preview do conteúdo acessado
+  .step-result {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--accent);
+    margin-top: 0.4rem;
+  }
 
-## Validation Checklist
+  /* ── OUTCOME CARD ── */
+  .outcome {
+    border: 1px solid rgba(200,240,74,0.25);
+    background: rgba(200,240,74,0.04);
+    padding: 2rem;
+    margin: 2rem 0;
+  }
 
-- gate de execução real por `RASTRO_ENABLE_AWS_REAL=1`
-- enforcement de escopo antes da execução
-- execução real via SDK AWS
-- audit trail por step
-- geração de evidência real no report
-- sanitização automática de artefatos sensíveis
+  .outcome-label {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    color: var(--accent);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    margin-bottom: 1rem;
+  }
 
-## Current Limits
+  .outcome-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1rem;
+  }
 
-Esta PoC ainda representa o primeiro corte de execução real. O caminho validado
-é curto, controlado e parcialmente conhecido de antemão.
+  .outcome-item {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--muted);
+  }
 
-Isso significa que ainda não foi validado, nesta etapa:
+  .outcome-item strong {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--accent);
+    margin-bottom: 0.2rem;
+  }
 
-- escolha dinâmica da role a partir das roles descobertas
-- descoberta dinâmica do recurso final
-- competição entre múltiplos caminhos possíveis
-- decisão autônoma entre caminhos concorrentes
-- cobertura mais ampla de superfícies AWS
+  /* ── MITRE TABLE ── */
+  .mitre-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    margin: 1.5rem 0;
+  }
 
-## Next Steps
+  .mitre-table th {
+    text-align: left;
+    padding: 0.7rem 1rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.6rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    font-weight: 400;
+  }
 
-Depois deste marco, a direção correta é ampliar a cobertura AWS sem sair ainda
-desse domínio. O próximo salto de valor está em validar novos attack paths
-reais, mantendo a mesma disciplina de escopo, auditoria e sanitização.
+  .mitre-table td {
+    padding: 0.8rem 1rem;
+    border-bottom: 1px solid var(--muted2);
+    color: var(--text);
+    vertical-align: top;
+    line-height: 1.5;
+  }
 
-Os próximos objetivos naturais são:
+  .mitre-table tr:last-child td { border-bottom: none; }
+  .mitre-table tr:hover td { background: var(--surface); }
 
-- múltiplos attack paths reais em AWS
-- seleção dinâmica de roles e alvos
-- novos objetivos finais além de um único objeto S3
-- maior autonomia do planner entre caminhos concorrentes
+  .mitre-id { color: var(--accent3); }
+  .mitre-tactic { color: var(--amber); }
+
+  /* ── LIMITS / NEXT ── */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    margin: 1.5rem 0;
+  }
+
+  .two-col-item {
+    background: var(--bg);
+    padding: 1.8rem;
+  }
+
+  .two-col-item h4 {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--muted);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    margin-bottom: 1rem;
+  }
+
+  .two-col-item ul {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .two-col-item li {
+    font-size: 0.85rem;
+    color: var(--muted);
+    padding-left: 1.2rem;
+    position: relative;
+    line-height: 1.5;
+  }
+
+  .two-col-item li::before {
+    content: '→';
+    position: absolute;
+    left: 0;
+    color: var(--border);
+    font-family: var(--mono);
+  }
+
+  .two-col-item.next li::before { color: var(--accent); content: '✓'; }
+
+  /* ── FOOTER ── */
+  .post-footer {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 3rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid var(--border);
+  }
+
+  .footer-left {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+  }
+
+  .footer-left strong { color: var(--accent); }
+
+  @keyframes up {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  @media (max-width: 680px) {
+    .site-header, .post-hero, .post-body, .post-footer { padding-left: 1.5rem; padding-right: 1.5rem; }
+    .two-col { grid-template-columns: 1fr; }
+    .step { grid-template-columns: 40px 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="site-header">
+  <a class="site-logo" href="#">rastro /</a>
+  <div class="site-meta">
+    <span>github.com/PydaVi/rastro</span>
+    <span>Apache 2.0</span>
+    <span>março 2026</span>
+  </div>
+</header>
+
+<!-- HERO -->
+<div class="post-hero">
+  <div class="post-eyebrow">poc · aws · fase 2</div>
+  <h1 class="post-title">
+    Primeiro attack path<br>
+    <span class="hl">AWS real.</span>
+  </h1>
+  <p class="post-lead">
+    O ponto central desta prova de conceito não é listar permissões nem apontar recursos
+    expostos. O que foi validado aqui é o núcleo da proposta do Rastro: raciocinar sobre
+    um caminho completo de comprometimento, executar esse encadeamento dentro de um escopo
+    autorizado e produzir evidência auditável do resultado.
+  </p>
+  <div class="post-meta-row">
+    <div class="meta-item"><strong>data</strong>março 2026</div>
+    <div class="meta-item"><strong>ambiente</strong>AWS — conta de lab autorizada</div>
+    <div class="meta-item"><strong>steps</strong>3</div>
+    <div class="meta-item"><strong>resultado</strong>objective_met: true</div>
+    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-left:auto;">
+      <span class="tag green">execution_mode: real</span>
+      <span class="tag cyan">real_api_called: true</span>
+      <span class="tag">sanitizado</span>
+    </div>
+  </div>
+</div>
+
+<!-- BODY -->
+<div class="post-body">
+
+  <!-- CONTEXTO -->
+  <section class="prose">
+    <h2>Contexto</h2>
+
+    <div class="callout warn">
+      <div class="callout-label">// aviso</div>
+      <p>Esta PoC foi executada em conta AWS autorizada, com escopo explícito e gate de execução real habilitado via <code>RASTRO_ENABLE_AWS_REAL=1</code>. Todos os identificadores foram sanitizados. Não execute Rastro sem autorização do dono do ambiente.</p>
+    </div>
+
+    <p>Até esta execução, o Rastro já tinha validado o loop principal, enforcement de escopo, audit trail e execução dry-run com semântica AWS. O passo novo desta PoC foi provar que a <em>mesma arquitetura</em> consegue sair da simulação local e executar um caminho real em AWS sem abandonar os controles de segurança do projeto.</p>
+
+    <p>Na prática, isso valida quatro pontos críticos:</p>
+
+    <h3>// o que foi validado</h3>
+    <p>O agente consegue operar com APIs reais, não apenas fixtures. O caminho continua <em>auditável passo a passo</em>, com evidências reais por step. O escopo continua aplicado antes da execução — o Scope Enforcer não é bypassado em ambiente real. Os artefatos produzidos podem ser sanitizados para compartilhamento seguro.</p>
+
+    <h3>// escopo da execução</h3>
+    <div class="code-block">
+      <div class="code-block-header">
+        <span class="code-block-lang">scope.yaml</span>
+        <span class="code-block-status">● autorizado</span>
+      </div>
+      <pre><span class="c-muted">target:</span> <span class="c-cyan">aws</span>
+<span class="c-muted">dry_run:</span> <span class="c-red">false</span>
+<span class="c-muted">allowed_services:</span>
+  - <span class="c-green">iam</span>
+  - <span class="c-green">sts</span>
+  - <span class="c-green">s3</span>
+<span class="c-muted">allowed_regions:</span>
+  - <span class="c-green">us-east-1</span>
+<span class="c-muted">authorized_by:</span>     <span class="c-amber">REDACTED</span>
+<span class="c-muted">authorized_at:</span>     <span class="c-amber">2026-03-XX</span>
+<span class="c-muted">authorization_document:</span> <span class="c-amber">docs/authorization.pdf</span></pre>
+    </div>
+  </section>
+
+  <!-- ATTACK PATH -->
+  <section class="prose">
+    <h2>O caminho de comprometimento</h2>
+
+    <p>O agente partiu de um IAM User com permissões mínimas e chegou ao acesso de um objeto S3 sensível em <strong>3 passos</strong>, passando por assunção de role e validação de permissão efetiva antes do acesso final.</p>
+
+    <!-- SVG ATTACK PATH -->
+    <div class="attack-path-wrap">
+      <div class="attack-path-header">
+        <span class="attack-path-title">attack path graph — rastro v0.1</span>
+        <span class="attack-path-badge">objective_met: true</span>
+      </div>
+      <div class="attack-path-svg">
+        <svg width="100%" viewBox="0 0 820 220" style="min-width:600px;">
+          <defs>
+            <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </marker>
+          </defs>
+
+          <!-- Node 1: IAM User -->
+          <g>
+            <rect x="20" y="80" width="150" height="60" rx="6" fill="#161614" stroke="#2a2a26" stroke-width="1"/>
+            <text font-family="'IBM Plex Mono',monospace" font-size="11" fill="#c8f04a" x="95" y="104" text-anchor="middle" font-weight="500">IAM User</text>
+            <text font-family="'IBM Plex Mono',monospace" font-size="10" fill="#5a5850" x="95" y="122" text-anchor="middle">REDACTED_USER</text>
+          </g>
+
+          <!-- Arrow 1 with two labels stacked -->
+          <line x1="170" y1="110" x2="228" y2="110" stroke="#3a3830" stroke-width="1" marker-end="url(#arr)"/>
+          <text font-family="'IBM Plex Mono',monospace" font-size="9" fill="#4af0c8" x="199" y="100" text-anchor="middle">sts:GetCallerIdentity</text>
+          <text font-family="'IBM Plex Mono',monospace" font-size="9" fill="#4af0c8" x="199" y="128" text-anchor="middle">iam:ListRoles</text>
+
+          <!-- Node 2: IAM/STS -->
+          <g>
+            <rect x="228" y="80" width="140" height="60" rx="6" fill="#161614" stroke="#2a2a26" stroke-width="1"/>
+            <text font-family="'IBM Plex Mono',monospace" font-size="11" fill="#e8e6df" x="298" y="104" text-anchor="middle" font-weight="500">AWS IAM/STS</text>
+            <text font-family="'IBM Plex Mono',monospace" font-size="10" fill="#5a5850" x="298" y="122" text-anchor="middle">identity plane</text>
+          </g>
+
+          <!-- Arrow 2 AssumeRole -->
+          <line x1="368" y1="110" x2="428" y2="110" stroke="#3a3830" stroke-width="1" marker-end="url(#arr)"/>
+          <text font-family="'IBM Plex Mono',monospace" font-size="9" fill="#f0b84a" x="398" y="100" text-anchor="middle">sts:AssumeRole</text>
+
+          <!-- Temp creds dashed -->
+          <path d="M488 80 Q488 40 298 40 Q228 40 228 80" fill="none" stroke="#2a2a26" stroke-width="1" stroke-dasharray="3 3" marker-end="url(#arr)"/>
+          <text font-family="'IBM Plex Mono',monospace" font-size="9" fill="#3a3830" x="388" y="33" text-anchor="middle">temporary credentials</text>
+
+          <!-- Node 3: IAM Role -->
+          <g>
+            <rect x="428" y="80" width="150" height="60" rx="6" fill="#1a1408" stroke="#f0b84a" stroke-width="1" stroke-opacity="0.4"/>
+            <text font-family="'IBM Plex Mono',monospace" font-size="11" fill="#f0b84a" x="503" y="104" text-anchor="middle" font-weight="500">IAM Role</text>
+            <text font-family="'IBM Plex Mono',monospace" font-size="10" fill="#5a5850" x="503" y="122" text-anchor="middle">REDACTED_ROLE</text>
+          </g>
+
+          <!-- SimulatePrincipalPolicy arc above -->
+          <path d="M503 80 Q503 18 298 18 Q250 18 228 60" fill="none" stroke="#4af0c8" stroke-width="1" stroke-opacity="0.3" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+          <text font-family="'IBM Plex Mono',monospace" font-size="9" fill="#4af0c8" x="370" y="12" text-anchor="middle" fill-opacity="0.6">iam:SimulatePrincipalPolicy → allowed</text>
+
+          <!-- Arrow 3 s3:GetObject -->
+          <line x1="578" y1="110" x2="638" y2="110" stroke="#c8f04a" stroke-width="1.5" marker-end="url(#arr)"/>
+          <text font-family="'IBM Plex Mono',monospace" font-size="9" fill="#c8f04a" x="608" y="100" text-anchor="middle">s3:GetObject</text>
+
+          <!-- Node 4: S3 Object — goal -->
+          <g>
+            <rect x="638" y="66" width="165" height="88" rx="6" fill="#0a1208" stroke="#c8f04a" stroke-width="1.5" stroke-opacity="0.6"/>
+            <rect x="638" y="66" width="165" height="88" rx="6" fill="none" stroke="#c8f04a" stroke-width="1" stroke-opacity="0.15"/>
+            <text font-family="'IBM Plex Mono',monospace" font-size="11" fill="#c8f04a" x="720" y="97" text-anchor="middle" font-weight="500">S3 Object</text>
+            <text font-family="'IBM Plex Mono',monospace" font-size="9.5" fill="#5a5850" x="720" y="114" text-anchor="middle">REDACTED_BUCKET/</text>
+            <text font-family="'IBM Plex Mono',monospace" font-size="9.5" fill="#5a5850" x="720" y="130" text-anchor="middle">REDACTED_KEY</text>
+            <text font-family="'IBM Plex Mono',monospace" font-size="9" fill="#c8f04a" x="720" y="148" text-anchor="middle">● objetivo atingido</text>
+          </g>
+
+          <!-- MITRE badge below each node -->
+          <text font-family="'IBM Plex Mono',monospace" font-size="8" fill="#3a3830" x="95" y="158" text-anchor="middle">T1087.004 · discovery</text>
+          <text font-family="'IBM Plex Mono',monospace" font-size="8" fill="#3a3830" x="503" y="158" text-anchor="middle">T1548 · priv. escalation</text>
+          <text font-family="'IBM Plex Mono',monospace" font-size="8" fill="#3a3830" x="720" y="165" text-anchor="middle">T1530 · collection</text>
+        </svg>
+      </div>
+    </div>
+
+    <h3>// passo a passo</h3>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">01</div>
+        <div class="step-body">
+          <div class="step-action">sts:GetCallerIdentity · iam:ListRoles</div>
+          <div class="step-desc">O agente resolve a identidade efetiva em uso e enumera as roles disponíveis na conta. Nenhuma suposição sobre o ambiente — tudo descoberto dinamicamente a partir das credenciais fornecidas.</div>
+          <div class="step-result">→ identidade resolvida · roles enumeradas com sucesso</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">02</div>
+        <div class="step-body">
+          <div class="step-action">sts:AssumeRole · iam:SimulatePrincipalPolicy</div>
+          <div class="step-desc">O agente assume a role alvo identificada no step anterior. Antes de tentar o acesso final, valida a permissão efetiva via <code>SimulatePrincipalPolicy</code> — comprovando que <code>s3:GetObject</code> é <code>allowed</code> sem executar a ação ainda.</div>
+          <div class="step-result">→ role assumida · decisão: allowed · credenciais temporárias emitidas</div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">03</div>
+        <div class="step-body">
+          <div class="step-action">s3:GetObject</div>
+          <div class="step-desc">Com credenciais temporárias da role assumida, o agente acessa o objeto S3 alvo. O conteúdo foi capturado localmente e redigido nos artefatos sanitizados. <strong>Objetivo atingido.</strong></div>
+          <div class="step-result">→ objeto acessado · preview capturado · objective_met: true</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- AUDIT LOG -->
+  <section class="prose">
+    <h2>Evidências auditáveis</h2>
+
+    <p>Cada step gerou uma entrada no audit trail append-only. O formato inclui timestamp, backend do planner, decisão, ação executada, resultado e metadados da execução.</p>
+
+    <div class="code-block">
+      <div class="code-block-header">
+        <span class="code-block-lang">audit.jsonl — sanitizado</span>
+        <span class="code-block-status">append-only</span>
+      </div>
+      <pre><span class="c-muted">{"ts":"2026-03-XX","event":"</span><span class="c-cyan">run_start</span><span class="c-muted">","payload":{</span>
+  <span class="c-muted">"objective":</span><span class="c-amber">"access REDACTED_BUCKET via assumed role"</span><span class="c-muted">,</span>
+  <span class="c-muted">"target":</span><span class="c-green">"aws"</span><span class="c-muted">,</span>
+  <span class="c-muted">"execution_mode":</span><span class="c-green">"real"</span><span class="c-muted">,</span>
+  <span class="c-muted">"planner_backend":</span><span class="c-green">"ollama"</span>
+<span class="c-muted">}}</span>
+
+<span class="c-muted">{"ts":"2026-03-XX","event":"</span><span class="c-cyan">action_executed</span><span class="c-muted">","payload":{</span>
+  <span class="c-muted">"step":0,"action":</span><span class="c-green">"iam_list_roles"</span><span class="c-muted">,</span>
+  <span class="c-muted">"reason":</span><span class="c-amber">"Enumerar roles disponíveis para identificar caminhos de escalada"</span><span class="c-muted">,</span>
+  <span class="c-muted">"real_api_called":true,"observation":{"success":true}</span>
+<span class="c-muted">}}</span>
+
+<span class="c-muted">{"ts":"2026-03-XX","event":"</span><span class="c-cyan">action_executed</span><span class="c-muted">","payload":{</span>
+  <span class="c-muted">"step":1,"action":</span><span class="c-green">"iam_passrole"</span><span class="c-muted">,</span>
+  <span class="c-muted">"reason":</span><span class="c-amber">"REDACTED_ROLE tem trust policy que permite assunção. SimulatePrincipalPolicy confirma s3:GetObject allowed."</span><span class="c-muted">,</span>
+  <span class="c-muted">"real_api_called":true,"observation":{"success":true,"granted_role":"REDACTED_ROLE"}</span>
+<span class="c-muted">}}</span>
+
+<span class="c-muted">{"ts":"2026-03-XX","event":"</span><span class="c-cyan">action_executed</span><span class="c-muted">","payload":{</span>
+  <span class="c-muted">"step":2,"action":</span><span class="c-green">"s3_read_sensitive"</span><span class="c-muted">,</span>
+  <span class="c-muted">"reason":</span><span class="c-amber">"Permissão efetiva confirmada. Acessando objeto alvo como REDACTED_ROLE."</span><span class="c-muted">,</span>
+  <span class="c-muted">"real_api_called":true,"observation":{"success":true,"content_preview":"REDACTED"}</span>
+<span class="c-muted">}}</span>
+
+<span class="c-muted">{"ts":"2026-03-XX","event":"</span><span class="c-green">objective_met</span><span class="c-muted">","payload":{"step":2}}</span></pre>
+    </div>
+
+    <div class="callout info">
+      <div class="callout-label">// nota sobre o raciocínio</div>
+      <p>O campo <code>reason</code> em cada step é gerado pelo OllamaPlanner — não é hardcoded. O agente explica por que escolheu aquela ação dado o estado atual do grafo. Isso é o que diferencia o Rastro de um script sequencial.</p>
+    </div>
+  </section>
+
+  <!-- MITRE -->
+  <section class="prose">
+    <h2>Mapeamento MITRE ATT&CK</h2>
+
+    <p>Cada ação executada neste caminho está mapeada para a MITRE ATT&CK Cloud Matrix.</p>
+
+    <table class="mitre-table">
+      <thead>
+        <tr>
+          <th>Técnica</th>
+          <th>ID</th>
+          <th>Tática</th>
+          <th>APIs usadas</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Account Discovery</td>
+          <td class="mitre-id">T1087.004</td>
+          <td class="mitre-tactic">Discovery</td>
+          <td><code>sts:GetCallerIdentity</code> · <code>iam:ListRoles</code></td>
+        </tr>
+        <tr>
+          <td>Valid Accounts — Cloud</td>
+          <td class="mitre-id">T1078.004</td>
+          <td class="mitre-tactic">Priv. Escalation</td>
+          <td><code>sts:AssumeRole</code></td>
+        </tr>
+        <tr>
+          <td>Abuse Elevation Control</td>
+          <td class="mitre-id">T1548</td>
+          <td class="mitre-tactic">Priv. Escalation</td>
+          <td><code>iam:SimulatePrincipalPolicy</code></td>
+        </tr>
+        <tr>
+          <td>Data from Cloud Storage</td>
+          <td class="mitre-id">T1530</td>
+          <td class="mitre-tactic">Collection</td>
+          <td><code>s3:GetObject</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- OUTCOME -->
+  <section class="prose">
+    <h2>Resultado</h2>
+
+    <div class="outcome">
+      <div class="outcome-label">// executive summary</div>
+      <div class="outcome-grid">
+        <div class="outcome-item"><strong>objective_met</strong>true</div>
+        <div class="outcome-item"><strong>execution_mode</strong>real</div>
+        <div class="outcome-item"><strong>real_api_called</strong>true</div>
+        <div class="outcome-item"><strong>total de steps</strong>3</div>
+        <div class="outcome-item"><strong>planner</strong>OllamaPlanner (local)</div>
+        <div class="outcome-item"><strong>ações bloqueadas</strong>0</div>
+        <div class="outcome-item"><strong>identity inicial</strong>REDACTED_USER</div>
+        <div class="outcome-item"><strong>role assumida</strong>REDACTED_ROLE</div>
+        <div class="outcome-item"><strong>recurso final</strong>s3://REDACTED_BUCKET/KEY</div>
+      </div>
+    </div>
+
+    <p>O caminho foi curto e controlado — parcialmente conhecido de antemão. Isso é esperado para um primeiro teste real. O que importa é que <em>a arquitetura funcionou em AWS real</em>: scope enforcement, audit trail, raciocínio do planner e evidências reais — tudo operando junto, sem bypass de nenhuma camada de controle.</p>
+  </section>
+
+  <!-- LIMITES E PRÓXIMOS PASSOS -->
+  <section class="prose">
+    <h2>Limites atuais e próximos passos</h2>
+
+    <p>Esta PoC representa o primeiro corte de execução real. O que ainda não foi validado nesta etapa:</p>
+
+    <div class="two-col">
+      <div class="two-col-item">
+        <h4>// limites desta poc</h4>
+        <ul>
+          <li>Seleção dinâmica de role a partir das roles descobertas</li>
+          <li>Descoberta dinâmica do recurso final sem conhecimento prévio</li>
+          <li>Competição entre múltiplos caminhos possíveis</li>
+          <li>Decisão autônoma entre caminhos concorrentes</li>
+          <li>Cobertura mais ampla de superfícies AWS</li>
+        </ul>
+      </div>
+      <div class="two-col-item next">
+        <h4>// fase 3 — próximos paths</h4>
+        <ul>
+          <li>PassRole chain via Lambda — T1548</li>
+          <li>EC2 instance profile → terraform state → secrets</li>
+          <li>Cross-account trust policy abuse</li>
+          <li>Planner escolhendo entre caminhos alternativos</li>
+          <li>Relatório apresentável para cliente real</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout">
+      <div class="callout-label">// barra de maturidade</div>
+      <p>A fase AWS estará madura quando: 3+ paths end-to-end reais auditados em conta de lab, planner demonstrando escolha entre caminhos alternativos, e relatório gerado apresentável para engenheiro sênior sem explicação adicional.</p>
+    </div>
+  </section>
+
+  <!-- ARTEFATOS -->
+  <section class="prose" style="border-bottom:none;">
+    <h2>Artefatos gerados</h2>
+
+    <p>Todo run real do Rastro produz duas versões de cada artefato — original e sanitizada. Os artefatos sanitizados são os adequados para posts técnicos, demonstrações e provas de conceito públicas.</p>
+
+    <div class="code-block">
+      <div class="code-block-header">
+        <span class="code-block-lang">outputs/</span>
+        <span class="code-block-status">gerado automaticamente</span>
+      </div>
+      <pre><span class="c-green">outputs/</span>
+  <span class="c-cyan">report.json</span>               <span class="c-muted"># dados estruturados — integração e análise</span>
+  <span class="c-cyan">report.md</span>                 <span class="c-muted"># relatório narrativo com attack path</span>
+  <span class="c-cyan">audit.jsonl</span>               <span class="c-muted"># log append-only por step</span>
+  <span class="c-amber">report.sanitized.json</span>     <span class="c-muted"># ARNs, IDs e keys redigidos</span>
+  <span class="c-amber">report.sanitized.md</span>       <span class="c-muted"># versão pública do relatório</span>
+  <span class="c-amber">audit.sanitized.jsonl</span>     <span class="c-muted"># log sem identificadores sensíveis</span></pre>
+    </div>
+  </section>
+
+</div>
+
+<!-- FOOTER -->
+<footer class="post-footer">
+  <div class="footer-left">
+    <strong>rastro</strong> — agente de red team autônomo<br>
+    <span style="font-size:0.62rem;">Apache 2.0 · use com autorização explícita · github.com/PydaVi/rastro</span>
+  </div>
+  <div style="font-family:var(--mono);font-size:0.65rem;color:var(--muted);text-align:right;">
+    poc report · fase 2<br>
+    <span style="color:var(--accent)">// o rastro já está em AWS</span>
+  </div>
+</footer>
+
+</body>
+</html>
