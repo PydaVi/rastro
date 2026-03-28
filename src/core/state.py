@@ -18,6 +18,7 @@ class StateSnapshot:
     steps_taken: int
     actions_taken: List[Action]
     action_reasons: List[str]
+    action_metadata: List[Dict]
     blocked_actions: List[Tuple[Action, str]]
     observations: List[Observation]
 
@@ -38,6 +39,7 @@ class StateManager:
         self._steps_taken = 0
         self._actions_taken: List[Action] = []
         self._action_reasons: List[str] = []
+        self._action_metadata: List[Dict] = []
         self._blocked_actions: List[Tuple[Action, str]] = []
         self._observations: List[Observation] = []
 
@@ -50,6 +52,7 @@ class StateManager:
             steps_taken=self._steps_taken,
             actions_taken=list(self._actions_taken),
             action_reasons=list(self._action_reasons),
+            action_metadata=list(self._action_metadata),
             blocked_actions=list(self._blocked_actions),
             observations=list(self._observations),
         )
@@ -58,11 +61,16 @@ class StateManager:
         return json.loads(json.dumps(self._initial_state))
 
     def apply_observation(
-        self, action: Action, observation: Observation, reason: str
+        self,
+        action: Action,
+        observation: Observation,
+        reason: str,
+        metadata: Dict | None = None,
     ) -> None:
         self._steps_taken += 1
         self._actions_taken.append(action)
         self._action_reasons.append(reason)
+        self._action_metadata.append(metadata or {})
         self._observations.append(observation)
 
     def record_blocked(self, action: Action, reason: str) -> None:

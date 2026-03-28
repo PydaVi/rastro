@@ -87,10 +87,13 @@ class OllamaPlanner(Planner):
             import httpx
             raw = self._call_ollama(user_message)
             decision = self._parse_response(raw, available_actions)
-            if decision.action.parameters is None:
-                decision.action.parameters = {}
-            # Attach raw response for audit/debug (stored in action.parameters)
-            decision.action.parameters["ollama_raw_response"] = raw
+            decision.planner_metadata.update(
+                {
+                    "planner_backend": "ollama",
+                    "planner_model": self._model,
+                    "raw_response": raw,
+                }
+            )
             return decision
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
             # Ollama não está rodando ou não responde — falha explícita.
@@ -164,11 +167,13 @@ class OllamaPlanner(Planner):
                         parameters={"note": "no_viable_action"},
                     ),
                     reason=reason,
+                    planner_metadata={},
                 )
             if action_index >= 0 and action_index < len(available_actions):
                 return Decision(
                     action=available_actions[action_index],
                     reason=reason,
+                    planner_metadata={},
                 )
 
         # Backward compatibility: try action_type/actor/target matching.
@@ -196,6 +201,7 @@ class OllamaPlanner(Planner):
                     f"LLM escolheu ação indisponível ({action_type_str}/{actor}/{target}). "
                     f"Fallback para {fallback.action_type.value}. Razão original: {reason}"
                 ),
+                planner_metadata={},
             )
 
-        return Decision(action=matched, reason=reason)
+        return Decision(action=matched, reason=reason, planner_metadata={})

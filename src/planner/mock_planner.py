@@ -38,4 +38,5 @@ class DeterministicPlanner(Planner):
         return Decision(
             action=action,
             reason=f"Selected highest-priority action {action.action_type.value}.",
+            planner_metadata={"planner_backend": "mock"},
         )

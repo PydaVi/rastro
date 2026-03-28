@@ -53,6 +53,7 @@ class Action(BaseModel):
 class Decision(BaseModel):
     action: Action
     reason: str
+    planner_metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class Observation(BaseModel):

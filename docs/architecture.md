@@ -7,6 +7,7 @@ This MVP implements a minimal vertical slice of a controlled pentest agent with 
 - Domain models: `src/core/domain.py` defines objectives, actions, decisions, and observations.
 - Planner interface: `src/planner/interface.py` abstracts decision logic.
 - Deterministic planner: `src/planner/mock_planner.py` provides a safe, predictable backend.
+- Planner metadata: each decision carries backend/model/raw-response metadata for audit and reporting.
 - Scope enforcer: `src/execution/scope_enforcer.py` validates every action against allowed actions/resources.
 - Executor: `src/execution/executor.py` applies simulated transitions only.
 - Fixture: `src/core/fixture.py` provides the synthetic IAM lab and deterministic transitions.
@@ -21,6 +22,6 @@ The CLI runs a bounded loop:
 3. Scope enforcer validates the action.
 4. Executor applies a safe simulated transition.
 5. Attack graph is updated.
-6. Audit event is logged.
+6. Audit event is logged with planner metadata.
 
 Loop stops on objective completion or max steps.

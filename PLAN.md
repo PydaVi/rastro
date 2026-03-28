@@ -22,6 +22,7 @@ O que foi construído:
 - Planner interface abstraída (mock determinístico no MVP, LLM plugável na Fase 1)
 - Scope Enforcer obrigatório — nenhuma ação executa sem validação
 - Audit Logger append-only JSONL
+- Planner metadata por step no audit e no report (backend, modelo, raw response quando aplicável)
 - Attack Graph em estrutura própria com export Mermaid
 - Report Engine: Markdown + JSON estruturado
 - CLI: `rastro run --fixture ... --objective ... --scope ...`

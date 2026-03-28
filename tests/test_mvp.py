@@ -5,6 +5,7 @@ from core.domain import Action, ActionType, Scope
 from execution.scope_enforcer import ScopeEnforcer
 from core.fixture import Fixture
 from planner.openai_planner import _parse_response as parse_openai_response
+from planner.mock_planner import DeterministicPlanner
 
 
 def test_scope_enforcer_blocks_out_of_scope() -> None:
@@ -89,3 +90,19 @@ def test_openai_parser_accepts_action_index() -> None:
     assert decision.action.action_type == ActionType.ASSUME_ROLE
     assert decision.action.target == "AuditRole"
     assert decision.reason == "Use the role path."
+
+
+def test_mock_planner_emits_backend_metadata() -> None:
+    planner = DeterministicPlanner(seed=1)
+    actions = [
+        Action(
+            action_type=ActionType.ENUMERATE,
+            actor="analyst",
+            target="account",
+            parameters={},
+        )
+    ]
+
+    decision = planner.decide(snapshot=None, available_actions=actions)
+
+    assert decision.planner_metadata["planner_backend"] == "mock"

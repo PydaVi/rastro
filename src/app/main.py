@@ -103,12 +103,18 @@ def run(
                     "step": step,
                     "action": decision.action.model_dump(),
                     "reason": decision.reason,
+                    "planner_metadata": decision.planner_metadata,
                 },
             )
             continue
 
         observation = executor.execute(decision.action)
-        state.apply_observation(decision.action, observation, decision.reason)
+        state.apply_observation(
+            decision.action,
+            observation,
+            decision.reason,
+            decision.planner_metadata,
+        )
         graph.update(decision.action, observation, state.snapshot())
         audit.log_event(
             "action_executed",
@@ -116,6 +122,7 @@ def run(
                 "step": step,
                 "action": decision.action.model_dump(),
                 "reason": decision.reason,
+                "planner_metadata": decision.planner_metadata,
                 "observation": observation.model_dump(),
             },
         )

@@ -75,6 +75,7 @@ Backends disponíveis:
 - Executa o loop: `enumerate → plan → validate → execute → observe → graph`
 - Cada ação é validada pelo Scope Enforcer antes de executar
 - Cada decisão é logada no audit trail append-only
+- Cada step registra backend do planner, motivo da decisão e resposta bruta do LLM quando aplicável
 - O attack graph é construído em tempo real
 - Ao final: relatório Markdown + JSON com o caminho de comprometimento
 
@@ -120,6 +121,11 @@ outputs/
   report.json        # dados estruturados para integração
   attack_graph.mmd   # grafo de comprometimento em Mermaid
 ```
+
+No `report.json`, cada item de `steps` inclui `planner_metadata` com:
+- `planner_backend`
+- `planner_model` quando houver
+- `raw_response` para planners LLM
 
 ---
 

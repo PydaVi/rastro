@@ -69,7 +69,13 @@ class OpenAIPlanner(Planner):
 
         raw = response.choices[0].message.content
         decision = _parse_response(raw, available_actions)
-        decision.action.parameters["openai_raw_response"] = raw
+        decision.planner_metadata.update(
+            {
+                "planner_backend": "openai",
+                "planner_model": self._model,
+                "raw_response": raw,
+            }
+        )
         return decision
 
 
@@ -109,11 +115,13 @@ def _parse_response(raw: str, available_actions: List[Action]) -> Decision:
                     parameters={"note": "no_viable_action"},
                 ),
                 reason=reason,
+                planner_metadata={},
             )
         if action_index >= 0 and action_index < len(available_actions):
             return Decision(
                 action=available_actions[action_index],
                 reason=reason,
+                planner_metadata={},
             )
 
     action_type_str = data.get("action_type", "")
@@ -139,6 +147,7 @@ def _parse_response(raw: str, available_actions: List[Action]) -> Decision:
                 f"LLM escolheu ação indisponível ({action_type_str}/{actor}/{target}). "
                 f"Fallback para {fallback.action_type.value}. Razão original: {reason}"
             ),
+            planner_metadata={},
         )
 
-    return Decision(action=matched, reason=reason)
+    return Decision(action=matched, reason=reason, planner_metadata={})

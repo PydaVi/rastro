@@ -31,11 +31,15 @@ class ReportGenerator:
             reason = None
             if idx < len(snapshot.action_reasons):
                 reason = snapshot.action_reasons[idx]
+            planner_metadata = {}
+            if idx < len(snapshot.action_metadata):
+                planner_metadata = snapshot.action_metadata[idx]
             steps.append(
                 {
                     "step": idx + 1,
                     "action": action.model_dump(),
                     "reason": reason,
+                    "planner_metadata": planner_metadata,
                     "observation": observation,
                 }
             )
@@ -97,6 +101,7 @@ class ReportGenerator:
                 f"{s['action']['actor']} -> {s['action'].get('target') or '-'} "
                 f"(tool={s['action'].get('tool') or '-'}) "
                 f"| success={s['observation']['success'] if s['observation'] else 'n/a'} "
+                f"| backend={s['planner_metadata'].get('planner_backend', 'unknown')} "
                 f"| reason={s['reason'] or '-'}"
                 for s in steps
             )

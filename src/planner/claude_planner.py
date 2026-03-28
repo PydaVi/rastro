@@ -65,5 +65,11 @@ class ClaudePlanner(Planner):
 
         raw = response.content[0].text
         decision = _parse_response(raw, available_actions)
-        decision.action.parameters["claude_raw_response"] = raw
+        decision.planner_metadata.update(
+            {
+                "planner_backend": "claude",
+                "planner_model": self._model,
+                "raw_response": raw,
+            }
+        )
         return decision
