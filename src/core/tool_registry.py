@@ -6,6 +6,8 @@ from typing import Dict, List
 
 from pydantic import BaseModel
 
+from core.domain import Action
+
 
 class Tool(BaseModel):
     name: str
@@ -34,6 +36,20 @@ class ToolRegistry:
 
     def get(self, name: str) -> Tool | None:
         return self.tools.get(name)
+
+    def filter_actions(self, actions: List[Action], flags: List[str]) -> List[Action]:
+        active_flags = set(flags)
+        eligible: List[Action] = []
+        for action in actions:
+            if not action.tool:
+                eligible.append(action)
+                continue
+            tool = self.get(action.tool)
+            if tool is None:
+                continue
+            if all(pre in active_flags for pre in tool.preconditions):
+                eligible.append(action)
+        return eligible
 
 
 def _load_yaml(path: Path) -> Dict:

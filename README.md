@@ -100,20 +100,13 @@ python -m app.main \
 
 Executar com Ollama (requer `ollama serve` rodando localmente):
 
-Edite `examples/scope.json`:
-```json
-"planner": {
-  "backend": "ollama",
-  "model": "llama3.1:8b",
-  "base_url": "http://localhost:11434"
-}
-```
+Use `examples/scope_ollama.json` (modelo leve recomendado: `phi3:mini`).
 
 ```bash
 python -m app.main \
   --fixture fixtures/iam_lab.json \
   --objective examples/objective.json \
-  --scope examples/scope.json \
+  --scope examples/scope_ollama.json \
   --out outputs
 ```
 

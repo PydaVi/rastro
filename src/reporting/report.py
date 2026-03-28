@@ -28,10 +28,14 @@ class ReportGenerator:
             observation = None
             if idx < len(snapshot.observations):
                 observation = snapshot.observations[idx].model_dump()
+            reason = None
+            if idx < len(snapshot.action_reasons):
+                reason = snapshot.action_reasons[idx]
             steps.append(
                 {
                     "step": idx + 1,
                     "action": action.model_dump(),
+                    "reason": reason,
                     "observation": observation,
                 }
             )
@@ -92,7 +96,8 @@ class ReportGenerator:
                 f"{s['step']}. {s['action']['action_type']} "
                 f"{s['action']['actor']} -> {s['action'].get('target') or '-'} "
                 f"(tool={s['action'].get('tool') or '-'}) "
-                f"| success={s['observation']['success'] if s['observation'] else 'n/a'}"
+                f"| success={s['observation']['success'] if s['observation'] else 'n/a'} "
+                f"| reason={s['reason'] or '-'}"
                 for s in steps
             )
             + "\n```",

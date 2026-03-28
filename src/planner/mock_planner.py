@@ -23,8 +23,6 @@ class DeterministicPlanner(Planner):
                 reason="No available actions; defaulting to analyze.",
             )
 
-        available_actions = _filter_by_tool_preconditions(snapshot, available_actions)
-
         # Simple deterministic heuristic: prefer assume_role, then access_resource, then enumerate.
         priority = {
             ActionType.ASSUME_ROLE: 0,
@@ -41,23 +39,3 @@ class DeterministicPlanner(Planner):
             action=action,
             reason=f"Selected highest-priority action {action.action_type.value}.",
         )
-
-
-def _filter_by_tool_preconditions(snapshot, actions: List[Action]) -> List[Action]:
-    registry = getattr(snapshot, "tool_registry", None)
-    if registry is None:
-        return actions
-
-    flags = set(snapshot.fixture_state.get("flags", []))
-    eligible: List[Action] = []
-    for action in actions:
-        if not action.tool:
-            eligible.append(action)
-            continue
-        tool = registry.get(action.tool)
-        if tool is None:
-            continue
-        if all(pre in flags for pre in tool.preconditions):
-            eligible.append(action)
-
-    return eligible or actions

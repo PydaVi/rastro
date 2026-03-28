@@ -86,7 +86,12 @@ def run(
     )
 
     for step in range(effective_max_steps):
-        available_actions = fixture.enumerate_actions(state.snapshot())
+        snapshot = state.snapshot()
+        available_actions = fixture.enumerate_actions(snapshot)
+        if tool_registry is not None:
+            available_actions = tool_registry.filter_actions(
+                available_actions, snapshot.fixture_state.get("flags", [])
+            )
         decision = planner.decide(state.snapshot(), available_actions)
 
         allowed = scope_enforcer.validate(decision.action)
@@ -103,7 +108,7 @@ def run(
             continue
 
         observation = executor.execute(decision.action)
-        state.apply_observation(decision.action, observation)
+        state.apply_observation(decision.action, observation, decision.reason)
         graph.update(decision.action, observation, state.snapshot())
         audit.log_event(
             "action_executed",

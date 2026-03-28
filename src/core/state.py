@@ -17,6 +17,7 @@ class StateSnapshot:
     tool_registry: ToolRegistry | None
     steps_taken: int
     actions_taken: List[Action]
+    action_reasons: List[str]
     blocked_actions: List[Tuple[Action, str]]
     observations: List[Observation]
 
@@ -36,6 +37,7 @@ class StateManager:
         self._initial_state = fixture.state_copy()
         self._steps_taken = 0
         self._actions_taken: List[Action] = []
+        self._action_reasons: List[str] = []
         self._blocked_actions: List[Tuple[Action, str]] = []
         self._observations: List[Observation] = []
 
@@ -47,6 +49,7 @@ class StateManager:
             tool_registry=self._tool_registry,
             steps_taken=self._steps_taken,
             actions_taken=list(self._actions_taken),
+            action_reasons=list(self._action_reasons),
             blocked_actions=list(self._blocked_actions),
             observations=list(self._observations),
         )
@@ -54,9 +57,12 @@ class StateManager:
     def initial_state(self) -> Dict:
         return json.loads(json.dumps(self._initial_state))
 
-    def apply_observation(self, action: Action, observation: Observation) -> None:
+    def apply_observation(
+        self, action: Action, observation: Observation, reason: str
+    ) -> None:
         self._steps_taken += 1
         self._actions_taken.append(action)
+        self._action_reasons.append(reason)
         self._observations.append(observation)
 
     def record_blocked(self, action: Action, reason: str) -> None:

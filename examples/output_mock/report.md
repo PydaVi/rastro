@@ -12,9 +12,9 @@ Total steps: 3
 
 ## Step-by-Step
 ```
-1. ActionType.ENUMERATE analyst -> account (tool=iam_list_roles) | success=True
-2. ActionType.ASSUME_ROLE analyst -> AuditRole (tool=iam_passrole) | success=True
-3. ActionType.ACCESS_RESOURCE AuditRole -> sensitive_bucket (tool=s3_read_sensitive) | success=True
+1. ActionType.ENUMERATE analyst -> account (tool=iam_list_roles) | success=True | reason=Selected highest-priority action enumerate.
+2. ActionType.ASSUME_ROLE analyst -> AuditRole (tool=iam_passrole) | success=True | reason=Selected highest-priority action assume_role.
+3. ActionType.ACCESS_RESOURCE AuditRole -> sensitive_bucket (tool=s3_read_sensitive) | success=True | reason=Selected highest-priority action access_resource.
 ```
 
 ## Allowed Actions

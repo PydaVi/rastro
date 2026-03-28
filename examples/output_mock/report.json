@@ -62,6 +62,7 @@
         },
         "tool": "iam_list_roles"
       },
+      "reason": "Selected highest-priority action enumerate.",
       "observation": {
         "success": true,
         "details": {
@@ -86,6 +87,7 @@
         },
         "tool": "iam_passrole"
       },
+      "reason": "Selected highest-priority action assume_role.",
       "observation": {
         "success": true,
         "details": {
@@ -111,6 +113,7 @@
         },
         "tool": "s3_read_sensitive"
       },
+      "reason": "Selected highest-priority action access_resource.",
       "observation": {
         "success": true,
         "details": {

@@ -89,7 +89,12 @@ class OllamaPlanner(Planner):
         try:
             import httpx
             raw = self._call_ollama(user_message)
-            return self._parse_response(raw, available_actions)
+            decision = self._parse_response(raw, available_actions)
+            if decision.action.parameters is None:
+                decision.action.parameters = {}
+            # Attach raw response for audit/debug (stored in action.parameters)
+            decision.action.parameters["ollama_raw_response"] = raw
+            return decision
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
             # Ollama não está rodando ou não responde — falha explícita.
             raise RuntimeError(
@@ -102,26 +107,24 @@ class OllamaPlanner(Planner):
     # ------------------------------------------------------------------
 
     def _build_prompt(self, snapshot, available_actions: List[Action]) -> str:
-        actions_repr = [
-            {
-                "action_type": a.action_type.value,
-                "actor": a.actor,
-                "target": a.target,
-                "parameters": a.parameters,
-            }
-            for a in available_actions
-        ]
+        actions_repr = [a.model_dump() for a in available_actions]
 
         return json.dumps(
             {
-                "objective": str(snapshot.get("objective", "unknown")),
-                "graph_summary": snapshot.get("graph_summary", {}),
+                "objective": {
+                    "description": snapshot.objective.description,
+                    "target": snapshot.objective.target,
+                },
+                "flags": snapshot.fixture_state.get("flags", []),
+                "steps_taken": snapshot.steps_taken,
                 "available_actions": actions_repr,
             },
             indent=2,
         )
 
     def _call_ollama(self, user_message: str) -> str:
+        import httpx
+
         payload = {
             "model": self._model,
             "stream": False,
@@ -150,8 +153,6 @@ class OllamaPlanner(Planner):
                 f"Ollama retornou JSON inválido: {raw!r}"
             ) from exc
 
-        # Valida que a ação escolhida pelo LLM existe nas ações disponíveis.
-        # Se o LLM alucinar uma ação fora do conjunto, fallback para analyze.
         action_type_str = data.get("action_type", "")
         actor = data.get("actor", "")
         target = data.get("target")

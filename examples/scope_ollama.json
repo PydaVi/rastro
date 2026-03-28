@@ -1,0 +1,20 @@
+{
+  "allowed_actions": [
+    "enumerate",
+    "analyze",
+    "assume_role",
+    "access_resource"
+  ],
+  "allowed_resources": [
+    "account",
+    "AuditRole",
+    "sensitive_bucket"
+  ],
+  "max_steps": 5,
+  "planner": {
+    "backend": "ollama",
+    "model": "phi3:mini",
+    "base_url": "http://localhost:11434",
+    "timeout": 300
+  }
+}

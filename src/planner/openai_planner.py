@@ -72,19 +72,15 @@ class OpenAIPlanner(Planner):
 
 
 def _build_prompt(snapshot, available_actions: List[Action]) -> str:
-    actions_repr = [
-        {
-            "action_type": a.action_type.value,
-            "actor": a.actor,
-            "target": a.target,
-            "parameters": a.parameters,
-        }
-        for a in available_actions
-    ]
+    actions_repr = [a.model_dump() for a in available_actions]
     return json.dumps(
         {
-            "objective": str(snapshot.get("objective", "unknown")),
-            "graph_summary": snapshot.get("graph_summary", {}),
+            "objective": {
+                "description": snapshot.objective.description,
+                "target": snapshot.objective.target,
+            },
+            "flags": snapshot.fixture_state.get("flags", []),
+            "steps_taken": snapshot.steps_taken,
             "available_actions": actions_repr,
         },
         indent=2,
