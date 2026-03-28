@@ -19,6 +19,7 @@ from execution.executor import Executor
 from execution.aws_executor import AwsRealExecutor
 from core.attack_graph import AttackGraph
 from core.audit import AuditLogger
+from core.sanitizer import write_sanitized_artifacts
 from reporting.report import ReportGenerator
 
 
@@ -153,6 +154,7 @@ def run(
     report_json_path.write_text(json.dumps(report["json"], indent=2))
     report_md_path.write_text(report["markdown"])
     graph_path.write_text(report["json"]["attack_graph_mermaid"])
+    write_sanitized_artifacts(output_dir, report["json"], report["markdown"], audit.path)
 
     audit.log_event(
         "run_complete",

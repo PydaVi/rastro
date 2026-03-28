@@ -12,6 +12,7 @@ from core.state import StateManager
 from reporting.report import ReportGenerator
 from execution.scope_enforcer import ScopeEnforcer
 from core.fixture import Fixture
+from core.sanitizer import write_sanitized_artifacts
 from planner.ollama_planner import OllamaPlanner
 from planner.openai_planner import _parse_response as parse_openai_response
 from planner.mock_planner import DeterministicPlanner
@@ -183,6 +184,57 @@ def test_fixture_transition() -> None:
     assert observation.success is True
     assert fixture.state_copy()["identities"]["AuditRole"]["available_actions"]
 
+
+
+def test_write_sanitized_artifacts_redacts_real_aws_outputs(tmp_path: Path) -> None:
+    report_json = {
+        "steps": [
+            {
+                "observation": {
+                    "success": True,
+                    "details": {
+                        "real_api_called": True,
+                        "aws_identity": {
+                            "account_id": "550192603632",
+                            "arn": "arn:aws:iam::550192603632:user/brainctl-user",
+                        },
+                        "evidence": {
+                            "bucket": "sensitive-finance-data",
+                            "object_key": "payroll.csv",
+                            "accessed_via": "arn:aws:iam::550192603632:role/AuditRole",
+                        },
+                        "response_summary": {
+                            "preview": "employee_id,name,salary",
+                        },
+                    },
+                }
+            }
+        ]
+    }
+    markdown = "identity arn:aws:iam::550192603632:user/brainctl-user bucket s3://sensitive-finance-data/payroll.csv"
+    audit_path = tmp_path / "audit.jsonl"
+    audit_path.write_text('{"payload":{"real_api_called":true,"identity":"arn:aws:iam::550192603632:user/brainctl-user","bucket":"sensitive-finance-data","preview":"employee_id,name,salary"}}\n')
+
+    write_sanitized_artifacts(tmp_path, report_json, markdown, audit_path)
+
+    sanitized_report = (tmp_path / "report.sanitized.json").read_text()
+    sanitized_md = (tmp_path / "report.sanitized.md").read_text()
+    sanitized_audit = (tmp_path / "audit.sanitized.jsonl").read_text()
+
+    assert "550192603632" not in sanitized_report
+    assert "brainctl-user" not in sanitized_report
+    assert "sensitive-finance-data" not in sanitized_report
+    assert "payroll.csv" not in sanitized_report
+    assert "employee_id,name,salary" not in sanitized_report
+    assert "<AWS_ACCOUNT_ID>" in sanitized_report
+    assert "<REDACTED_BUCKET>" in sanitized_report
+    assert "<REDACTED_OBJECT_KEY>" in sanitized_report
+    assert "<REDACTED_USER>" in sanitized_md
+    assert "brainctl-user" not in sanitized_md
+    assert "AuditRole" not in sanitized_md
+    assert "sensitive-finance-data" not in sanitized_md
+    assert "payroll.csv" not in sanitized_md
+    assert "<REDACTED_CONTENT_PREVIEW>" in sanitized_audit
 
 def test_end_to_end_run(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
