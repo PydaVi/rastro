@@ -40,6 +40,7 @@ def run(
     objective = Objective.model_validate_json(objective_path.read_text())
     scope = Scope.model_validate_json(scope_path.read_text())
     fixture = Fixture.load(fixture_path)
+    _validate_run_inputs(fixture, objective, scope)
     environment = fixture
     if scope.target == TargetType.AWS:
         environment = AwsDryRunLab.from_fixture(fixture)
@@ -162,6 +163,35 @@ def run(
     typer.echo(f"Report JSON: {report_json_path}")
     typer.echo(f"Report MD: {report_md_path}")
     typer.echo(f"Attack Graph: {graph_path}")
+
+
+def _validate_run_inputs(fixture: Fixture, objective: Objective, scope: Scope) -> None:
+    observed_resources = set(scope.allowed_resources)
+    observed_resources.add(objective.target)
+    for action in fixture.enumerate_actions(None):
+        observed_resources.add(action.actor)
+        if action.target:
+            observed_resources.add(action.target)
+
+    has_aws_identifier = any(_is_aws_identifier(value) for value in observed_resources)
+    has_non_aws_identifier = any(value and not _is_aws_identifier(value) for value in observed_resources)
+
+    if scope.target == TargetType.AWS and has_non_aws_identifier:
+        raise typer.BadParameter(
+            "AWS dry-run scope is incompatible with the provided fixture/objective. "
+            "Use AWS-shaped identifiers (ARNs) consistently across fixture, objective and scope."
+        )
+
+    if scope.target == TargetType.FIXTURE and has_aws_identifier:
+        raise typer.BadParameter(
+            "Fixture target is incompatible with AWS-shaped fixture/objective data. "
+            "Use target=aws with the AWS dry-run examples."
+        )
+
+
+
+def _is_aws_identifier(value: str | None) -> bool:
+    return bool(value and value.startswith("arn:aws:"))
 
 
 if __name__ == "__main__":
