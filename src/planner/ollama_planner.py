@@ -33,14 +33,11 @@ You MUST respond with valid JSON only. No explanation, no markdown, no preamble.
 
 Response schema:
 {
-  "action_type": "<one of the available action_type values>",
-  "actor": "<actor from the available action>",
-  "target": "<target from the available action or null>",
-  "parameters": {},
+  "action_index": <integer index from available_actions>,
   "reason": "<one sentence explaining why this action advances the objective>"
 }
 
-If no action is viable, respond with action_type "analyze" and explain in reason.
+If no action is viable, respond with action_index -1 and explain in reason.
 """
 
 
@@ -117,7 +114,9 @@ class OllamaPlanner(Planner):
                 },
                 "flags": snapshot.fixture_state.get("flags", []),
                 "steps_taken": snapshot.steps_taken,
-                "available_actions": actions_repr,
+                "available_actions": [
+                    {"index": idx, **action} for idx, action in enumerate(actions_repr)
+                ],
             },
             indent=2,
         )
@@ -153,10 +152,29 @@ class OllamaPlanner(Planner):
                 f"Ollama retornou JSON inválido: {raw!r}"
             ) from exc
 
+        reason = data.get("reason", "no reason provided")
+        action_index = data.get("action_index", None)
+        if isinstance(action_index, int):
+            if action_index == -1:
+                return Decision(
+                    action=Action(
+                        action_type=ActionType.ANALYZE,
+                        actor="system",
+                        target=None,
+                        parameters={"note": "no_viable_action"},
+                    ),
+                    reason=reason,
+                )
+            if action_index >= 0 and action_index < len(available_actions):
+                return Decision(
+                    action=available_actions[action_index],
+                    reason=reason,
+                )
+
+        # Backward compatibility: try action_type/actor/target matching.
         action_type_str = data.get("action_type", "")
         actor = data.get("actor", "")
         target = data.get("target")
-        reason = data.get("reason", "no reason provided")
 
         matched = next(
             (
