@@ -6,6 +6,7 @@ outputs/
 outputs_aws_dry_run/
 outputs_real/
 outputs_real*/
+terraform_local_lab/
 .env
 .env.*
 *.pem

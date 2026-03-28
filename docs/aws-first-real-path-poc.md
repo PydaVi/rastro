@@ -79,19 +79,22 @@ Na prática, isso valida quatro pontos:
 ## Attack Path Graph
 
 ```mermaid
-graph TD
-  user["IAM User<br/><REDACTED_USER>"]
-  root["AWS Account<br/>root context"]
-  role["IAM Role<br/><REDACTED_ROLE>"]
-  s3["S3 Object<br/>s3://<REDACTED_BUCKET>/<REDACTED_OBJECT_KEY>"]
+sequenceDiagram
+  participant U as IAM User<br/><REDACTED_USER>
+  participant I as AWS IAM/STS
+  participant R as IAM Role<br/><REDACTED_ROLE>
+  participant S as S3 Object<br/>s3://<REDACTED_BUCKET>/<REDACTED_OBJECT_KEY>
 
-  user -->|"sts:GetCallerIdentity<br/>iam:ListRoles"| root
-  user -->|"sts:AssumeRole"| role
-  role -->|"iam:SimulatePrincipalPolicy"| role
-  role -->|"s3:GetObject"| s3
+  U->>I: sts:GetCallerIdentity
+  U->>I: iam:ListRoles
+  U->>I: sts:AssumeRole
+  I-->>R: Temporary credentials
+  R->>I: iam:SimulatePrincipalPolicy
+  I-->>R: decision = allowed
+  R->>S: s3:GetObject
 ```
 
-Esse grafo mostra o encadeamento real validado no teste:
+Esse diagrama mostra o encadeamento real validado no teste:
 
 1. o principal inicial resolve a própria identidade e enumera roles
 2. o principal assume uma role autorizada

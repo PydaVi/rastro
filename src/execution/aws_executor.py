@@ -78,8 +78,8 @@ class AwsRealExecutor:
 
     def _execute_iam_list_roles(self, client: AwsClient, action: Action) -> dict:
         region = _required_parameter(action, "region")
-        identity = self.client.get_caller_identity(region=region)
-        roles = self.client.list_roles(region=region)
+        identity = client.get_caller_identity(region=region)
+        roles = client.list_roles(region=region)
         return {
             "details": "Executed sts:GetCallerIdentity and iam:ListRoles against AWS.",
             "aws_identity": {
@@ -103,7 +103,7 @@ class AwsRealExecutor:
         if not role_arn:
             raise ValueError("iam_passrole requires role_arn or target")
         session_name = action.parameters.get("session_name", "rastro-audit-session")
-        assumed = self.client.assume_role(
+        assumed = client.assume_role(
             region=region,
             role_arn=role_arn,
             session_name=session_name,
@@ -120,13 +120,13 @@ class AwsRealExecutor:
         policy_resource = action.parameters.get("policy_resource")
         if not policy_resource:
             raise ValueError("iam_passrole requires policy_resource")
-        simulation = self.client.simulate_principal_policy(
+        simulation = client.simulate_principal_policy(
             region=region,
             policy_source_arn=role_arn,
             action_names=[policy_action],
             resource_arns=[policy_resource],
         )
-        caller = self.client.get_caller_identity(
+        caller = client.get_caller_identity(
             region=region,
             credentials=self._assumed_credentials,
         )
@@ -163,7 +163,7 @@ class AwsRealExecutor:
         region = _required_parameter(action, "region")
         bucket = _required_parameter(action, "bucket")
         object_key = _required_parameter(action, "object_key")
-        response = self.client.get_object(
+        response = client.get_object(
             region=region,
             bucket=bucket,
             object_key=object_key,
