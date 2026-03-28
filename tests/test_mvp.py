@@ -4,6 +4,7 @@ from app.main import run
 from core.domain import Action, ActionType, Scope
 from execution.scope_enforcer import ScopeEnforcer
 from core.fixture import Fixture
+from planner.openai_planner import _parse_response as parse_openai_response
 
 
 def test_scope_enforcer_blocks_out_of_scope() -> None:
@@ -62,3 +63,29 @@ def test_end_to_end_run(tmp_path: Path) -> None:
     report = report_json.read_text()
     assert '"objective_met": true' in report
     assert '"mitre_techniques"' in report
+
+
+def test_openai_parser_accepts_action_index() -> None:
+    actions = [
+        Action(
+            action_type=ActionType.ENUMERATE,
+            actor="analyst",
+            target="account",
+            parameters={},
+        ),
+        Action(
+            action_type=ActionType.ASSUME_ROLE,
+            actor="analyst",
+            target="AuditRole",
+            parameters={},
+        ),
+    ]
+
+    decision = parse_openai_response(
+        '{"action_index": 1, "reason": "Use the role path."}',
+        actions,
+    )
+
+    assert decision.action.action_type == ActionType.ASSUME_ROLE
+    assert decision.action.target == "AuditRole"
+    assert decision.reason == "Use the role path."

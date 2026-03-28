@@ -64,4 +64,6 @@ class ClaudePlanner(Planner):
         )
 
         raw = response.content[0].text
-        return _parse_response(raw, available_actions)
+        decision = _parse_response(raw, available_actions)
+        decision.action.parameters["claude_raw_response"] = raw
+        return decision

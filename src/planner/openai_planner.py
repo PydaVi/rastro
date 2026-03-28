@@ -68,7 +68,9 @@ class OpenAIPlanner(Planner):
         )
 
         raw = response.choices[0].message.content
-        return _parse_response(raw, available_actions)
+        decision = _parse_response(raw, available_actions)
+        decision.action.parameters["openai_raw_response"] = raw
+        return decision
 
 
 def _build_prompt(snapshot, available_actions: List[Action]) -> str:
