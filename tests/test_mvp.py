@@ -633,3 +633,5 @@ def test_aws_s3_discovery_dry_run_end_to_end(tmp_path: Path) -> None:
     assert '"objective_met": true' in report
     assert '"tool": "s3_list_bucket"' in report
     assert '"discovered_objects"' in report
+    assert '"mitre_id": "T1619"' in report
+    assert '"evidence"' in report

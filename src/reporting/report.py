@@ -220,11 +220,10 @@ def _build_executive_summary(steps: list[Dict], objective_met: bool) -> Dict:
         if details.get("real_api_called") is not None:
             summary["real_api_called"] = details.get("real_api_called")
 
-        if summary["proof"] is None:
-            if details.get("simulated_policy_result"):
-                summary["proof"] = details.get("simulated_policy_result")
-            elif details.get("evidence"):
-                summary["proof"] = details.get("evidence")
+        if details.get("evidence"):
+            summary["proof"] = details.get("evidence")
+        elif summary["proof"] is None and details.get("simulated_policy_result"):
+            summary["proof"] = details.get("simulated_policy_result")
 
     if steps:
         summary["final_resource"] = steps[-1].get("action", {}).get("target")

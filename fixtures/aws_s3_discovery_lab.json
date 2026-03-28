@@ -115,6 +115,12 @@
                 "bucket": "sensitive-finance-data",
                 "prefix": ""
               },
+              "technique": {
+                "mitre_id": "T1619",
+                "mitre_name": "Cloud Storage Object Discovery",
+                "tactic": "discovery",
+                "platform": "S3"
+              },
               "tool": "s3_list_bucket"
             }
           ]
