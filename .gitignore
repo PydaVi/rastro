@@ -3,6 +3,15 @@
 __pycache__/
 *.pyc
 outputs/
+outputs_aws_dry_run/
+outputs_real/
+outputs_real*/
+.env
+.env.*
+*.pem
+*.key
+credentials
+config.local.json
 .DS_Store
 .egg-info/
 src/*.egg-info/
