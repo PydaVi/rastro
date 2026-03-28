@@ -63,6 +63,13 @@
         "tool": "iam_list_roles"
       },
       "reason": "Selected highest-priority action enumerate.",
+      "fallback_used": false,
+      "planner_metadata": {
+        "planner_backend": "mock"
+      },
+      "planner_backend": "mock",
+      "planner_model": null,
+      "raw_response": null,
       "observation": {
         "success": true,
         "details": {
@@ -88,6 +95,13 @@
         "tool": "iam_passrole"
       },
       "reason": "Selected highest-priority action assume_role.",
+      "fallback_used": false,
+      "planner_metadata": {
+        "planner_backend": "mock"
+      },
+      "planner_backend": "mock",
+      "planner_model": null,
+      "raw_response": null,
       "observation": {
         "success": true,
         "details": {
@@ -114,6 +128,13 @@
         "tool": "s3_read_sensitive"
       },
       "reason": "Selected highest-priority action access_resource.",
+      "fallback_used": false,
+      "planner_metadata": {
+        "planner_backend": "mock"
+      },
+      "planner_backend": "mock",
+      "planner_model": null,
+      "raw_response": null,
       "observation": {
         "success": true,
         "details": {

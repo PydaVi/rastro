@@ -34,12 +34,18 @@ class ReportGenerator:
             planner_metadata = {}
             if idx < len(snapshot.action_metadata):
                 planner_metadata = snapshot.action_metadata[idx]
+            raw_response = planner_metadata.get("raw_response")
+            fallback_used = bool(reason and "Fallback para" in reason)
             steps.append(
                 {
                     "step": idx + 1,
                     "action": action.model_dump(),
                     "reason": reason,
+                    "fallback_used": fallback_used,
                     "planner_metadata": planner_metadata,
+                    "planner_backend": planner_metadata.get("planner_backend"),
+                    "planner_model": planner_metadata.get("planner_model"),
+                    "raw_response": raw_response,
                     "observation": observation,
                 }
             )
@@ -83,6 +89,31 @@ class ReportGenerator:
             "objective_met": objective_met,
         }
 
+        step_lines = []
+        for step in steps:
+            status = step["observation"]["success"] if step["observation"] else "n/a"
+            backend = step["planner_backend"] or "unknown"
+            suffix = " | fallback=true" if step["fallback_used"] else ""
+            step_lines.append(
+                f"{step['step']}. {step['action']['action_type']} "
+                f"{step['action']['actor']} -> {step['action'].get('target') or '-'} "
+                f"(tool={step['action'].get('tool') or '-'}) "
+                f"| success={status} | backend={backend}{suffix} "
+                f"| reason={step['reason'] or '-'}"
+            )
+
+        planner_details = []
+        for step in steps:
+            planner_details.append(
+                {
+                    "step": step["step"],
+                    "planner_backend": step["planner_backend"],
+                    "planner_model": step["planner_model"],
+                    "fallback_used": step["fallback_used"],
+                    "raw_response": step["raw_response"],
+                }
+            )
+
         markdown = [
             "# MVP Report",
             "",
@@ -95,17 +126,10 @@ class ReportGenerator:
             f"Total steps: {steps_taken}",
             "",
             "## Step-by-Step",
-            "```\n"
-            + "\n".join(
-                f"{s['step']}. {s['action']['action_type']} "
-                f"{s['action']['actor']} -> {s['action'].get('target') or '-'} "
-                f"(tool={s['action'].get('tool') or '-'}) "
-                f"| success={s['observation']['success'] if s['observation'] else 'n/a'} "
-                f"| backend={s['planner_metadata'].get('planner_backend', 'unknown')} "
-                f"| reason={s['reason'] or '-'}"
-                for s in steps
-            )
-            + "\n```",
+            "```\n" + "\n".join(step_lines) + "\n```",
+            "",
+            "## Planner Details",
+            f"```\n{planner_details}\n```",
             "",
             "## Allowed Actions",
             f"```\n{allowed_actions}\n```",
