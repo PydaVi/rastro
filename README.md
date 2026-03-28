@@ -26,13 +26,14 @@ audit log: completo
 **Fase 0 completa.** Loop central funcionando com fixture sintético IAM.
 Scope Enforcer, Audit Logger, Attack Graph e Report Engine implementados.
 
-**Fase 1 em progresso.** `OllamaPlanner` validado end-to-end com modelo local.
-`OpenAIPlanner` e `ClaudePlanner` já estão implementados no código, mas ainda
-pendem de validação com credenciais reais.
+**Fase 1 concluída para o escopo atual do MVP.** `OllamaPlanner` já foi
+validado end-to-end com modelo local. `OpenAIPlanner` e `ClaudePlanner` já
+estão implementados no código; a pendência residual é a validação end-to-end
+com credenciais reais.
 
 **MITRE mapping no MVP já está implementado** (techniques no fixture + relatório).
 **Tool Registry base já está implementado** (YAML + pré-condições).
-**Fase 2 está em progresso** com dois trilhos:
+**Fase 2 concluída para o primeiro corte AWS real** com dois trilhos:
 - `dry-run` AWS local com autorização obrigatória, política explícita no report/audit
   e enforcement por `allowed_services`, `allowed_regions`, `aws_account_ids`
   e `allowed_resources`
@@ -45,6 +46,9 @@ pendem de validação com credenciais reais.
   também já foi validado em conta autorizada com `MockPlanner` e
   `OllamaPlanner`
 - artefatos sanitizados são gerados automaticamente para compartilhamento seguro
+
+**Fase 3 está em progresso inicial.** O foco agora é expandir AWS para novos
+attack paths reais a partir da base já validada nos Paths 1 e 2.
 
 Ver [PLAN.md](PLAN.md) para roadmap completo.
 
