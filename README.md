@@ -47,8 +47,10 @@ com credenciais reais.
   `OllamaPlanner`
 - artefatos sanitizados são gerados automaticamente para compartilhamento seguro
 
-**Fase 3 está em progresso inicial.** O foco agora é expandir AWS para novos
-attack paths reais a partir da base já validada nos Paths 1 e 2.
+**Fase 3 está em progresso inicial.** A base do Path 3 já foi validada em
+`dry_run`, com múltiplas roles assumíveis e apenas uma levando ao objetivo
+final. Esse cenário já passou com `MockPlanner` e `OllamaPlanner`. O próximo
+passo é levar o Path 3 para cenário real em AWS, começando por `MockPlanner`.
 
 Ver [PLAN.md](PLAN.md) para roadmap completo.
 

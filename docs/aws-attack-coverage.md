@@ -75,14 +75,45 @@ Objetivo final:
 Esse segundo path é importante porque já sai do fluxo “role conhecida -> objeto
 conhecido” e adiciona uma etapa intermediária de discovery realista.
 
+### Path 3 — IAM Role Choice -> Sensitive S3 Object
+
+Sequência:
+
+1. `sts:GetCallerIdentity`
+2. `iam:ListRoles`
+3. escolha entre duas roles assumíveis
+4. `sts:AssumeRole`
+5. `iam:SimulatePrincipalPolicy`
+6. `s3:ListBucket`
+7. `s3:GetObject`
+
+Status:
+
+- `dry_run`: validado
+- `real`: ainda não validado
+- `planner`: validado com `MockPlanner` e `OllamaPlanner`
+
+Objetivo final:
+
+- escolher corretamente entre múltiplos pivôs IAM, ignorando uma role
+  distratora e seguindo apenas a role que leva ao objeto sensível
+
+Esse terceiro path é importante porque introduz escolha explícita de pivô.
+Além do caminho vencedor, o report e o Mermaid agora mostram:
+
+- `candidate_roles`
+- `selected_role`
+- `rejected_roles`
+- a role distratora como caminho alternativo
+
 ## AWS Coverage Matrix
 
 | Tática | Técnica | MITRE ID | Status | Onde aparece hoje |
 |---|---|---|---|---|
-| Discovery | Account Discovery: Cloud Account | `T1087.004` | `real`, `multi-path` | `iam_list_roles`, Path 1, Path 2 |
-| Privilege Escalation | Abuse Elevation Control Mechanism | `T1548` | `real`, `multi-path` | `iam_passrole`, Path 1, Path 2 |
-| Collection | Data from Cloud Storage | `T1530` | `real`, `multi-path` | `s3_read_sensitive`, Path 1, Path 2 |
-| Discovery | Cloud Storage Object Discovery | `T1619` | `real` | `s3_list_bucket`, Path 2 |
+| Discovery | Account Discovery: Cloud Account | `T1087.004` | `real`, `multi-path` | `iam_list_roles`, Path 1, Path 2, Path 3 |
+| Privilege Escalation | Abuse Elevation Control Mechanism | `T1548` | `real`, `multi-path` | `iam_passrole`, Path 1, Path 2, Path 3 |
+| Collection | Data from Cloud Storage | `T1530` | `real`, `multi-path` | `s3_read_sensitive`, Path 1, Path 2, Path 3 |
+| Discovery | Cloud Storage Object Discovery | `T1619` | `real`, `multi-path` | `s3_list_bucket`, Path 2, Path 3 |
 
 ## Coverage by Tactic
 
@@ -170,17 +201,19 @@ Observação:
 
 ### Base prepared for Phase 3
 
-- segundo path AWS já modelado
+- segundo path AWS já modelado e validado em `real`
+- terceiro path AWS já modelado e validado em `dry_run`
 - passo intermediário de discovery S3 já existe
 - o sistema já consegue distinguir entre:
   - descobrir contexto
   - assumir role
   - descobrir objetos
   - coletar o alvo
+- o report já consegue mostrar escolha de pivô entre roles candidatas
 
 ### Not mature yet
 
-- seleção dinâmica de role entre múltiplas candidatas
+- seleção dinâmica de role entre múltiplas candidatas em cenário AWS real
 - descoberta dinâmica de recurso final em ambiente real
 - comparação entre caminhos concorrentes
 - planner escolhendo entre paths diferentes
@@ -234,7 +267,7 @@ Uma forma pragmática de organizar os próximos paths:
 
 ### Priority 1
 
-- Path 3 real: novo pivô ou novo objetivo final em AWS
+- Path 3 real: múltiplas roles assumíveis, só uma levando ao objetivo final
 
 ### Priority 2
 
@@ -243,8 +276,8 @@ Uma forma pragmática de organizar os próximos paths:
 
 ### Priority 3
 
-- duas roles assumíveis, só uma levando ao objetivo
-- planner precisando escolher o melhor pivô
+- dois buckets possíveis, só um levando ao objetivo
+- planner precisando escolher o bucket correto
 
 ### Priority 4
 
@@ -263,10 +296,7 @@ projeto.
 
 Hoje:
 
-- `T1087.004`, `T1548` e `T1530` já aparecem de forma consistente
-- `s3_list_bucket` já existe operacionalmente, mas ainda precisa de
-  normalização final no modelo de `Technique` e no report para aparecer com a
-  mesma qualidade das demais
+- `T1087.004`, `T1548`, `T1619` e `T1530` já aparecem de forma consistente
 
 Isso não bloqueia o avanço dos paths, mas vale ser corrigido antes de ampliar
 demais a matriz.

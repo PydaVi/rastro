@@ -283,6 +283,8 @@ reais de comprometimento, ainda concentrados em IAM, STS e S3.
 Base já preparada:
 - suporte a `s3_list_bucket` no executor AWS e no dry-run
 - fixture e exemplos para um segundo path com descoberta de objetos S3 antes do acesso final
+- fixture e exemplos para um terceiro path com múltiplas roles assumíveis,
+  role distratora e escolha explícita de pivô
 
 Princípio da fase:
 - Rastro não cresce por integração solta de serviço, e sim por
@@ -296,6 +298,13 @@ DONE WHEN:
 - o planner consegue navegar entre alternativas válidas
 
 Status: **em progresso**
+
+Progresso atual:
+- Path 3 em `dry_run` já validado com `MockPlanner`
+- Path 3 em `dry_run` já validado com `OllamaPlanner`
+- report e Mermaid agora mostram `candidate_roles`, `selected_role`,
+  `rejected_roles` e a role distratora como caminho alternativo
+- próximo passo: validar o Path 3 em cenário real AWS, começando com `MockPlanner`
 
 ---
 

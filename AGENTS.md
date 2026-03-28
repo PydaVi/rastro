@@ -49,7 +49,11 @@ descoberta intermediária em S3, também já foi validado com `MockPlanner` e
 compartilhamento.
 
 **Fase 3 está em progresso inicial.** O foco agora é expandir AWS para múltiplos
-attack paths reais, usando a base já validada dos Paths 1 e 2.
+attack paths reais, usando a base já validada dos Paths 1 e 2. O Path 3 já foi
+validado em `dry_run` com múltiplas roles assumíveis, uma role distratora e
+escolha explícita de pivô, tanto com `MockPlanner` quanto com `OllamaPlanner`.
+O próximo passo é validar esse mesmo cenário em AWS real, começando por
+`MockPlanner`.
 
 **Após a Fase 2, o roadmap continua em AWS.** Não inicie Kubernetes, Linux ou
 outras superfícies antes de AWS ter múltiplos attack paths reais auditados.
