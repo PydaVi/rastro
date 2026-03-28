@@ -74,11 +74,13 @@ class ReportGenerator:
         graph_summary = graph.summary()
         mermaid = graph.to_mermaid()
         executive_summary = _build_executive_summary(steps, objective_met)
+        execution_policy = _build_execution_policy(snapshot.scope)
 
         report_json = {
             "objective": objective.model_dump(),
             "starting_conditions": initial_state,
             "executive_summary": executive_summary,
+            "execution_policy": execution_policy,
             "steps_taken": steps_taken,
             "steps": steps,
             "allowed_actions": allowed_actions,
@@ -127,6 +129,15 @@ class ReportGenerator:
             f"- Real API called: {executive_summary['real_api_called']}",
             f"- Proof: {executive_summary['proof']}",
             f"- Objective met: {executive_summary['objective_met']}",
+            "",
+            "## Execution Policy",
+            f"- Target: {execution_policy['target']}",
+            f"- Dry-run required: {execution_policy['dry_run_required']}",
+            f"- Dry-run applied: {execution_policy['dry_run_applied']}",
+            f"- Allowed services: {execution_policy['allowed_services']}",
+            f"- Allowed regions: {execution_policy['allowed_regions']}",
+            f"- AWS account IDs: {execution_policy['aws_account_ids']}",
+            f"- Authorization document: {execution_policy['authorization_document']}",
             "",
             "## Starting Conditions",
             f"```\n{initial_state}\n```",
@@ -231,3 +242,15 @@ def _short_resource(value: str | None) -> str:
     if value.startswith("arn:aws:s3:::"):
         return value.replace("arn:aws:s3:::", "s3://", 1)
     return value
+
+
+def _build_execution_policy(scope) -> Dict:
+    return {
+        "target": scope.target.value,
+        "dry_run_required": scope.target.value == "aws",
+        "dry_run_applied": scope.dry_run,
+        "allowed_services": list(scope.allowed_services),
+        "allowed_regions": list(scope.allowed_regions),
+        "aws_account_ids": list(scope.aws_account_ids),
+        "authorization_document": scope.authorization_document,
+    }

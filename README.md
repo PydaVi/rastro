@@ -32,6 +32,8 @@ pendem de validação com credenciais reais.
 
 **MITRE mapping no MVP já está implementado** (techniques no fixture + relatório).
 **Tool Registry base já está implementado** (YAML + pré-condições).
+**Fase 2 dry-run já começou** com cenário AWS local, autorização obrigatória,
+política explícita no report/audit e enforcement por `allowed_services`.
 
 Ver [PLAN.md](PLAN.md) para roadmap completo.
 
@@ -71,7 +73,7 @@ Backends disponíveis:
 ## O que o Rastro faz (hoje)
 
 - Recebe um objetivo de ataque e um escopo definido em YAML
-- Carrega um ambiente alvo (fixture sintético no MVP, AWS real na Fase 2)
+- Carrega um ambiente alvo (fixture sintético no MVP, AWS dry-run na Fase 2)
 - Executa o loop: `enumerate → plan → validate → execute → observe → graph`
 - Cada ação é validada pelo Scope Enforcer antes de executar
 - Cada decisão é logada no audit trail append-only
@@ -137,6 +139,12 @@ No `report.json`, cada item de `steps` inclui `planner_metadata` com:
 - `planner_model` quando houver
 - `raw_response` para planners LLM
 
+No fluxo AWS dry-run, `report.json` e `audit.jsonl` também incluem:
+- `execution_policy`
+- `execution_mode`
+- `real_api_called`
+- evidências AWS sintéticas como `aws_identity`, `simulated_policy_result` e `evidence`
+
 ---
 
 ## Arquitetura
@@ -167,14 +175,15 @@ MITRE, pré-condições e pós-condições. O Planner seleciona tools por
 pré-condições, não por prompt livre.
 
 **Scope Enforcer** — toda ação passa por aqui antes de executar. Sem exceções.
-Em ambiente real, requer campos de autorização no `scope.yaml`.
+No fluxo AWS dry-run, o ambiente também filtra ações por `allowed_services`
+e rejeita execução direta fora da política.
 
 **Attack Graph** — grafo dirigido onde nós são estados de comprometimento e
 arestas são técnicas executadas. Base do relatório final e de futuras
 publicações acadêmicas.
 
-**Audit Logger** — JSONL append-only com timestamp, decisão, ação, resultado
-e raciocínio do Planner para cada step.
+**Audit Logger** — JSONL append-only com timestamp, decisão, ação, resultado,
+raciocínio do Planner e política de execução aplicada.
 
 ---
 
@@ -188,6 +197,7 @@ aws_account_ids:
   - "123456789012"
 allowed_services:
   - iam
+  - sts
   - s3
 authorized_by: "nome completo"
 authorized_at: "2026-01-01"
@@ -206,7 +216,7 @@ do ambiente.
 |------|----------|--------|
 | 0 | Loop central + fixture sintético IAM | ✓ completa |
 | 1 | LLM Planner plugável + MITRE mapping + Tool Registry | em progresso |
-| 2 | AWS real (conta de lab autorizada) | pendente |
+| 2 | AWS dry-run + preparação para conta real autorizada | em progresso |
 | 3 | Kubernetes attack paths | pendente |
 | 4 | Linux + ambiente híbrido | pendente |
 | 5 | v1.0 + dataset público + Neo4j | pendente |

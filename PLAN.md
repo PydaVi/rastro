@@ -255,8 +255,11 @@ DONE WHEN:
 - Relatório inclui evidências reais (ARNs, timestamps, respostas da API)
 
 Status atual:
-- groundwork de `dry-run` iniciado
 - `target=aws` já valida autorização e exige `dry_run=true`
+- fixture AWS local com ARNs, `sts:GetCallerIdentity`, `iam:ListRoles`, `sts:AssumeRole` e `s3:GetObject` simulados
+- `execution_policy` agora aparece no report e no audit
+- mismatch entre `fixture`/`objective`/`scope` falha cedo antes do loop
+- ambiente dry-run filtra ações por `allowed_services` e rejeita execução direta fora da política
 - executor AWS continua 100% local e não chama APIs reais
 
 ---

@@ -43,7 +43,7 @@ def run(
     _validate_run_inputs(fixture, objective, scope)
     environment = fixture
     if scope.target == TargetType.AWS:
-        environment = AwsDryRunLab.from_fixture(fixture)
+        environment = AwsDryRunLab.from_fixture(fixture, scope)
 
     tool_registry = None
     tools_path = Path("tools")
@@ -80,12 +80,15 @@ def run(
 
     effective_max_steps = min(max_steps, scope.max_steps)
 
+    execution_policy = _build_execution_policy(scope)
+
     audit.log_event(
         "run_start",
         {
             "objective": objective.model_dump(),
             "scope": scope.model_dump(),
             "fixture": environment.metadata(),
+            "execution_policy": execution_policy,
             "max_steps": effective_max_steps,
         },
     )
@@ -157,12 +160,25 @@ def run(
             "report_json": str(report_json_path),
             "report_md": str(report_md_path),
             "attack_graph_mermaid": str(graph_path),
+            "execution_policy": execution_policy,
         },
     )
 
     typer.echo(f"Report JSON: {report_json_path}")
     typer.echo(f"Report MD: {report_md_path}")
     typer.echo(f"Attack Graph: {graph_path}")
+
+
+def _build_execution_policy(scope: Scope) -> dict:
+    return {
+        "target": scope.target.value,
+        "dry_run_required": scope.target == TargetType.AWS,
+        "dry_run_applied": scope.dry_run,
+        "allowed_services": scope.allowed_services,
+        "allowed_regions": scope.allowed_regions,
+        "aws_account_ids": scope.aws_account_ids,
+        "authorization_document": scope.authorization_document,
+    }
 
 
 def _validate_run_inputs(fixture: Fixture, objective: Objective, scope: Scope) -> None:

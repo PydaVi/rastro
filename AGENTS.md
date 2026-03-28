@@ -33,6 +33,11 @@ Não refatore o que já está funcionando sem razão explícita.
 
 Consulte `PLAN.md` para o detalhamento completo de cada item.
 
+**Fase 2 dry-run já está em progresso**: existe um cenário AWS local com
+autorização obrigatória, `execution_policy` no report/audit, validação
+antecipada de mismatch entre `fixture`/`objective`/`scope` e enforcement
+por `allowed_services`.
+
 ---
 
 ## Decisões de design já tomadas — não reverter
@@ -133,6 +138,14 @@ docs/            — arquitetura e ADRs
 - O loop tem max_steps. Não remova esse limite.
 - A ordem é sempre: enumerate → plan → validate → execute → observe → graph
 - Não adicione lógica de negócio no app — ela pertence aos módulos de core
+- Validações antecipadas de segurança podem falhar antes do loop se `scope`,
+  `fixture` e `objective` forem incompatíveis
+
+**Ao modificar o ambiente AWS dry-run:**
+- Continue 100% local — nenhuma chamada real a AWS nesta fase
+- Preserve `execution_mode=dry_run` e `real_api_called=false`
+- Respeite `allowed_services` tanto na enumeração quanto na execução
+- Qualquer endurecimento novo precisa de teste cobrindo regressão
 
 ---
 

@@ -21,7 +21,8 @@
   ],
   "allowed_services": [
     "iam",
-    "s3"
+    "s3",
+    "sts"
   ],
   "authorized_by": "Demo Operator",
   "authorized_at": "2026-03-28",

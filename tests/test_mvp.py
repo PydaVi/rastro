@@ -6,6 +6,7 @@ from app.main import run
 from core.attack_graph import AttackGraph
 from core.audit import AuditLogger
 from core.domain import Action, ActionType, Decision, Objective, Observation, Scope
+from core.aws_dry_run_lab import AwsDryRunLab
 from core.state import StateManager
 from reporting.report import ReportGenerator
 from execution.scope_enforcer import ScopeEnforcer
@@ -185,6 +186,45 @@ def test_report_marks_fallback_steps(tmp_path: Path) -> None:
     assert report["json"]["steps"][0]["planner_backend"] == "ollama"
 
 
+
+
+def test_aws_dry_run_lab_filters_disallowed_services() -> None:
+    fixture_path = Path(__file__).resolve().parents[1] / "fixtures" / "aws_dry_run_lab.json"
+    fixture = Fixture.load(fixture_path)
+    scope = Scope.model_validate_json((Path(__file__).resolve().parents[1] / "examples" / "scope_aws_dry_run.json").read_text())
+    scope.allowed_services = ["iam"]
+    lab = AwsDryRunLab.from_fixture(fixture, scope)
+
+    actions = lab.enumerate_actions(snapshot=None)
+
+    assert actions
+    assert all(action.parameters.get("service") == "iam" for action in actions)
+    denied = Action(
+        action_type=ActionType.ACCESS_RESOURCE,
+        actor="arn:aws:iam::123456789012:role/AuditRole",
+        target="arn:aws:s3:::sensitive-finance-data/payroll.csv",
+        parameters={"service": "s3"},
+    )
+    observation = lab.execute(denied)
+    assert observation.success is False
+    assert observation.details["reason"] == "service_not_allowed"
+
+def test_aws_scope_rejects_dry_run_false() -> None:
+    with pytest.raises(ValueError, match="dry_run=true"):
+        Scope(
+            target="aws",
+            allowed_actions=[ActionType.ENUMERATE],
+            allowed_resources=["arn:aws:iam::123456789012:root"],
+            dry_run=False,
+            max_steps=5,
+            aws_account_ids=["123456789012"],
+            allowed_regions=["us-east-1"],
+            allowed_services=["iam"],
+            authorized_by="Demo Operator",
+            authorized_at="2026-03-28",
+            authorization_document="docs/authorization-demo.md",
+        )
+
 def test_aws_scope_requires_authorization_fields() -> None:
     with pytest.raises(ValueError):
         Scope(
@@ -212,6 +252,31 @@ def test_run_rejects_scope_fixture_mismatch(tmp_path: Path) -> None:
             max_steps=5,
             seed=1,
         )
+
+
+def test_aws_dry_run_report_and_audit_include_execution_policy(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture_path = repo_root / "fixtures" / "aws_dry_run_lab.json"
+    objective_path = repo_root / "examples" / "objective_aws_dry_run.json"
+    scope_path = repo_root / "examples" / "scope_aws_dry_run.json"
+
+    run(
+        fixture_path=fixture_path,
+        objective_path=objective_path,
+        scope_path=scope_path,
+        output_dir=tmp_path,
+        max_steps=5,
+        seed=1,
+    )
+
+    report = (tmp_path / "report.json").read_text()
+    audit_log = (tmp_path / "audit.jsonl").read_text()
+
+    assert '"execution_policy"' in report
+    assert '"dry_run_applied": true' in report
+    assert '"allowed_services": [' in report
+    assert '"execution_policy"' in audit_log
+    assert '"authorization_document": "docs/authorization-demo.md"' in audit_log
 
 def test_aws_dry_run_end_to_end(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
