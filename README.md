@@ -39,7 +39,9 @@ pendem de validação com credenciais reais.
 - executor AWS real mínimo já implementado no código, com dependência opcional
   e gate explícito por `RASTRO_ENABLE_AWS_REAL=1`
 - o primeiro path AWS real já foi validado com sucesso em conta autorizada,
-  com artefatos sanitizados para compartilhamento seguro
+  primeiro com `MockPlanner` para validar o executor e depois com
+  `OllamaPlanner` para validar o planner em ambiente real
+- artefatos sanitizados são gerados automaticamente para compartilhamento seguro
 
 Ver [PLAN.md](PLAN.md) para roadmap completo.
 

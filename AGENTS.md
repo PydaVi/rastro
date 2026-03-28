@@ -39,8 +39,9 @@ mismatch entre `fixture`/`objective`/`scope` e enforcement por
 `allowed_services`, `allowed_regions`, `aws_account_ids` e `allowed_resources`.
 Também existe um executor AWS real mínimo no código, gated por
 `RASTRO_ENABLE_AWS_REAL=1`.
-O primeiro path AWS real já foi validado com sucesso em conta autorizada, e
-artefatos sanitizados devem ser preferidos para qualquer compartilhamento.
+O primeiro path AWS real já foi validado com sucesso em conta autorizada,
+primeiro com `MockPlanner` e depois com `OllamaPlanner`. Artefatos sanitizados
+devem ser preferidos para qualquer compartilhamento.
 
 **Após a Fase 2, o roadmap continua em AWS.** Não inicie Kubernetes, Linux ou
 outras superfícies antes de AWS ter múltiplos attack paths reais auditados.

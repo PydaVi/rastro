@@ -265,6 +265,7 @@ Status atual:
 - execução real ainda é gated por `RASTRO_ENABLE_AWS_REAL=1`
 - `boto3` entrou como dependência opcional
 - o primeiro path AWS real já foi validado em conta autorizada
+- esse path já foi executado com `MockPlanner` e com `OllamaPlanner`
 - artefatos sanitizados agora são gerados automaticamente para runs reais
 
 ---

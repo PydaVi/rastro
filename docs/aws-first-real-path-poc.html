@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Rastro — First Real AWS Attack Path</title>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=IBM+Plex+Mono:wght@400;500&family=Fraunces:ital,wght@0,300;0,700;1,300&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #0a0a08;
@@ -18,9 +17,9 @@
     --accent2: #f04a2a;
     --accent3: #4af0c8;
     --amber: #f0b84a;
-    --mono: 'IBM Plex Mono', monospace;
-    --display: 'Syne', sans-serif;
-    --serif: 'Fraunces', serif;
+    --mono: ui-monospace, 'SFMono-Regular', 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+    --display: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    --serif: Georgia, 'Times New Roman', serif;
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -725,7 +724,7 @@
   <span class="c-muted">"objective":</span><span class="c-amber">"access REDACTED_BUCKET via assumed role"</span><span class="c-muted">,</span>
   <span class="c-muted">"target":</span><span class="c-green">"aws"</span><span class="c-muted">,</span>
   <span class="c-muted">"execution_mode":</span><span class="c-green">"real"</span><span class="c-muted">,</span>
-  <span class="c-muted">"planner_backend":</span><span class="c-green">"ollama"</span>
+  <span class="c-muted">"planner_backend":</span><span class="c-green">"mock"</span>
 <span class="c-muted">}}</span>
 
 <span class="c-muted">{"ts":"2026-03-XX","event":"</span><span class="c-cyan">action_executed</span><span class="c-muted">","payload":{</span>
@@ -751,7 +750,7 @@
 
     <div class="callout info">
       <div class="callout-label">// nota sobre o raciocínio</div>
-      <p>O campo <code>reason</code> em cada step é gerado pelo OllamaPlanner — não é hardcoded. O agente explica por que escolheu aquela ação dado o estado atual do grafo. Isso é o que diferencia o Rastro de um script sequencial.</p>
+      <p>O primeiro teste real foi fechado com <code>MockPlanner</code>, preservando determinismo para validar o executor AWS. Depois disso, o mesmo path também foi validado separadamente com <code>OllamaPlanner</code>, confirmando que o planner LLM consegue escolher a sequência correta em ambiente real.</p>
     </div>
   </section>
 
@@ -810,7 +809,7 @@
         <div class="outcome-item"><strong>execution_mode</strong>real</div>
         <div class="outcome-item"><strong>real_api_called</strong>true</div>
         <div class="outcome-item"><strong>total de steps</strong>3</div>
-        <div class="outcome-item"><strong>planner</strong>OllamaPlanner (local)</div>
+        <div class="outcome-item"><strong>planner base validado</strong>MockPlanner</div>
         <div class="outcome-item"><strong>ações bloqueadas</strong>0</div>
         <div class="outcome-item"><strong>identity inicial</strong>REDACTED_USER</div>
         <div class="outcome-item"><strong>role assumida</strong>REDACTED_ROLE</div>
@@ -818,7 +817,7 @@
       </div>
     </div>
 
-    <p>O caminho foi curto e controlado — parcialmente conhecido de antemão. Isso é esperado para um primeiro teste real. O que importa é que <em>a arquitetura funcionou em AWS real</em>: scope enforcement, audit trail, raciocínio do planner e evidências reais — tudo operando junto, sem bypass de nenhuma camada de controle.</p>
+    <p>O caminho foi curto e controlado — parcialmente conhecido de antemão. Isso é esperado para um primeiro teste real. O que importa é que <em>a arquitetura funcionou em AWS real</em>: scope enforcement, audit trail, raciocínio do planner e evidências reais — tudo operando junto, sem bypass de nenhuma camada de controle. Depois do fechamento determinístico com <code>MockPlanner</code>, o mesmo path também foi validado com <code>OllamaPlanner</code>.</p>
   </section>
 
   <!-- LIMITES E PRÓXIMOS PASSOS -->
