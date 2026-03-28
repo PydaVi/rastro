@@ -36,6 +36,25 @@ Pendência residual da Fase 1:
 
 Consulte `PLAN.md` para o detalhamento completo de cada item.
 
+**Descobertas arquiteturais relevantes devem virar documento em `docs/`.**
+Sempre que um experimento, path ou validacao revelar uma mudanca real de
+entendimento sobre o engine, registre isso em um documento proprio.
+
+Esse registro deve seguir uma estrutura proxima de metodo cientifico, com:
+- contexto
+- hipotese
+- desenho experimental
+- resultado observado
+- interpretacao
+- implicacoes arquiteturais
+- ameacas a validade
+- conclusao
+
+Esses documentos existem para:
+- preservar a evolucao tecnica do projeto
+- servir de base para posts futuros
+- sustentar apresentacoes publicas da solucao com rigor metodologico
+
 **Fase 2 está concluída para o primeiro corte AWS real**: existe um cenário AWS local com autorização
 obrigatória, `execution_policy` no report/audit, validação antecipada de
 mismatch entre `fixture`/`objective`/`scope` e enforcement por

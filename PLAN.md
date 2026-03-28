@@ -291,11 +291,17 @@ Princípio da fase:
   **attack paths completos**
 - cada adição deve ir do ponto de entrada ao objetivo final
 - o planner precisa começar a escolher entre mais de um caminho possível
+- a partir do Path 3, fica explicito que o engine precisa evoluir de
+  planner reativo para um sistema com memoria de branches e recuperacao
 
 DONE WHEN:
 - existem múltiplos paths AWS reais auditados
 - os paths compartilham a mesma política de execução e o mesmo report
 - o planner consegue navegar entre alternativas válidas
+- o engine registra hipoteses de pivô concorrentes
+- o engine consegue marcar branches como falhos e tentar alternativas
+- o engine possui backtracking explicito entre pontos de decisão
+- o engine consegue recuperar de uma escolha errada sem cair em loop
 
 Status: **em progresso**
 
@@ -304,7 +310,16 @@ Progresso atual:
 - Path 3 em `dry_run` já validado com `OllamaPlanner`
 - report e Mermaid agora mostram `candidate_roles`, `selected_role`,
   `rejected_roles` e a role distratora como caminho alternativo
-- próximo passo: validar o Path 3 em cenário real AWS, começando com `MockPlanner`
+- Path 3 em AWS real já validado com `MockPlanner`
+- Path 3 em AWS real com `OllamaPlanner` falhou ao escolher a role errada,
+  expondo a necessidade de:
+  - `candidate path tracking`
+  - `branch failure memory`
+  - `backtracking`
+  - `path scoring`
+  - `recovery-oriented state`
+- ver `docs/path-3-role-choice-learning.md`
+- próximo passo: transformar essa descoberta em capacidade explicita do engine
 
 ---
 
