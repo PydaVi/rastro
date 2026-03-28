@@ -1,9 +1,14 @@
 from pathlib import Path
 
 from app.main import run
-from core.domain import Action, ActionType, Scope
+from core.attack_graph import AttackGraph
+from core.audit import AuditLogger
+from core.domain import Action, ActionType, Decision, Objective, Observation, Scope
+from core.state import StateManager
+from reporting.report import ReportGenerator
 from execution.scope_enforcer import ScopeEnforcer
 from core.fixture import Fixture
+from planner.ollama_planner import OllamaPlanner
 from planner.openai_planner import _parse_response as parse_openai_response
 from planner.mock_planner import DeterministicPlanner
 
@@ -106,3 +111,73 @@ def test_mock_planner_emits_backend_metadata() -> None:
     decision = planner.decide(snapshot=None, available_actions=actions)
 
     assert decision.planner_metadata["planner_backend"] == "mock"
+
+
+def test_ollama_parser_falls_back_on_invalid_selection() -> None:
+    planner = OllamaPlanner.__new__(OllamaPlanner)
+    actions = [
+        Action(
+            action_type=ActionType.ENUMERATE,
+            actor="analyst",
+            target="account",
+            parameters={},
+        ),
+        Action(
+            action_type=ActionType.ASSUME_ROLE,
+            actor="analyst",
+            target="AuditRole",
+            parameters={},
+        ),
+    ]
+
+    decision = planner._parse_response(
+        '{"action_type": "assume_role", "actor": "analyst", "target": null, "reason": "bad target"}',
+        actions,
+    )
+
+    assert decision.action.action_type == ActionType.ENUMERATE
+    assert "Fallback para enumerate" in decision.reason
+
+
+def test_report_marks_fallback_steps(tmp_path: Path) -> None:
+    fixture_path = Path(__file__).resolve().parents[1] / "fixtures" / "iam_lab.json"
+    fixture = Fixture.load(fixture_path)
+    objective = Objective(
+        description="test objective",
+        target="sensitive_bucket",
+        success_criteria={"flag": "priv_esc"},
+    )
+    scope = Scope(
+        allowed_actions=[
+            ActionType.ENUMERATE,
+            ActionType.ANALYZE,
+            ActionType.ASSUME_ROLE,
+            ActionType.ACCESS_RESOURCE,
+        ],
+        allowed_resources=["account", "AuditRole", "sensitive_bucket"],
+        max_steps=5,
+    )
+    state = StateManager(objective=objective, scope=scope, fixture=fixture)
+    action = Action(
+        action_type=ActionType.ENUMERATE,
+        actor="analyst",
+        target="account",
+        parameters={},
+    )
+    state.apply_observation(
+        action,
+        Observation(success=True, details={"details": "Roles enumerated."}),
+        "LLM escolheu ação indisponível (assume_role/analyst/None). Fallback para enumerate.",
+        {"planner_backend": "ollama", "raw_response": '{"action_index": 99}'},
+    )
+
+    report = ReportGenerator(tmp_path).generate(
+        state.snapshot(),
+        AttackGraph(),
+        AuditLogger(tmp_path / "audit.jsonl"),
+        state.initial_state(),
+        objective_met=False,
+    )
+
+    assert report["json"]["steps"][0]["fallback_used"] is True
+    assert report["json"]["steps"][0]["planner_backend"] == "ollama"
