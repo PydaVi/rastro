@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -15,7 +16,7 @@ from planner import get_planner
 from planner.interface import Planner
 from execution.scope_enforcer import ScopeEnforcer
 from execution.executor import Executor
-from execution.aws_executor import AwsRealExecutorStub
+from execution.aws_executor import AwsRealExecutor
 from core.attack_graph import AttackGraph
 from core.audit import AuditLogger
 from reporting.report import ReportGenerator
@@ -170,22 +171,23 @@ def run(
 
 
 def _build_environment(fixture: Fixture, scope: Scope):
-    if scope.target == TargetType.AWS:
+    if scope.target == TargetType.AWS and scope.dry_run:
         return AwsDryRunLab.from_fixture(fixture, scope)
     return fixture
 
 
 def _build_execution_surface(environment, scope: Scope):
     if scope.target == TargetType.AWS and not scope.dry_run:
-        return AwsRealExecutorStub(scope)
+        return AwsRealExecutor(environment, scope)
     return environment
 
 
 def _build_execution_policy(scope: Scope) -> dict:
     return {
         "target": scope.target.value,
-        "dry_run_required": scope.target == TargetType.AWS,
+        "dry_run_required": scope.target == TargetType.AWS and not _aws_real_execution_enabled(),
         "dry_run_applied": scope.dry_run,
+        "real_execution_enabled": _aws_real_execution_enabled(),
         "allowed_services": scope.allowed_services,
         "allowed_regions": scope.allowed_regions,
         "aws_account_ids": scope.aws_account_ids,
@@ -194,6 +196,11 @@ def _build_execution_policy(scope: Scope) -> dict:
 
 
 def _validate_run_inputs(fixture: Fixture, objective: Objective, scope: Scope) -> None:
+    if scope.target == TargetType.AWS and not scope.dry_run and not _aws_real_execution_enabled():
+        raise typer.BadParameter(
+            "AWS real execution is disabled. Set RASTRO_ENABLE_AWS_REAL=1 to allow dry_run=false."
+        )
+
     observed_resources = set(scope.allowed_resources)
     observed_resources.add(objective.target)
     for action in fixture.enumerate_actions(None):
@@ -206,7 +213,7 @@ def _validate_run_inputs(fixture: Fixture, objective: Objective, scope: Scope) -
 
     if scope.target == TargetType.AWS and has_non_aws_identifier:
         raise typer.BadParameter(
-            "AWS dry-run scope is incompatible with the provided fixture/objective. "
+            "AWS scope is incompatible with the provided fixture/objective. "
             "Use AWS-shaped identifiers (ARNs) consistently across fixture, objective and scope."
         )
 
@@ -220,6 +227,10 @@ def _validate_run_inputs(fixture: Fixture, objective: Objective, scope: Scope) -
 
 def _is_aws_identifier(value: str | None) -> bool:
     return bool(value and value.startswith("arn:aws:"))
+
+
+def _aws_real_execution_enabled() -> bool:
+    return os.getenv("RASTRO_ENABLE_AWS_REAL", "0") == "1"
 
 
 if __name__ == "__main__":

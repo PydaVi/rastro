@@ -255,44 +255,101 @@ DONE WHEN:
 - Relatório inclui evidências reais (ARNs, timestamps, respostas da API)
 
 Status atual:
-- `target=aws` já valida autorização e exige `dry_run=true`
+- `target=aws` já valida autorização explícita
 - fixture AWS local com ARNs, `sts:GetCallerIdentity`, `iam:ListRoles`, `sts:AssumeRole` e `s3:GetObject` simulados
 - `execution_policy` agora aparece no report e no audit
 - mismatch entre `fixture`/`objective`/`scope` falha cedo antes do loop
 - ambiente dry-run filtra ações por `allowed_services`, `allowed_regions`, `aws_account_ids` e `allowed_resources`
 - ambiente dry-run rejeita execução direta fora da política com motivos explícitos de negação
-- ponte para executor AWS real criada via `AwsRealExecutorStub`, ainda sem chamadas externas
-- executor AWS continua 100% local e não chama APIs reais
+- executor AWS real mínimo implementado para `iam_list_roles`, `iam_passrole` e `s3_read_sensitive`
+- execução real ainda é gated por `RASTRO_ENABLE_AWS_REAL=1`
+- `boto3` entrou como dependência opcional
 
 ---
 
-## Fase 3 — Kubernetes Attack Paths
+## Fase 3 — AWS Attack Paths Reais
 
 **Pré-requisito:** Fase 2 completa.
 
-**Objetivo:** Expandir superfície para Kubernetes. O agente raciocina sobre
-caminhos de comprometimento em clusters — RBAC abuse, container escape,
-kubelet exploitation, lateral movement cloud → cluster.
+**Objetivo:** Expandir AWS de um único demo real para múltiplos caminhos
+reais de comprometimento, ainda concentrados em IAM, STS e S3.
 
-Integração com `brain-chaos` como cluster de teste
-(k3d + ArgoCD + Kyverno + Cilium já configurados).
-
-Técnicas alvo:
-- RBAC misconfiguration (T1078.004)
-- Container escape via privileged pod (T1611)
-- Secrets em etcd / environment variables (T1552.007)
-- Lateral movement EC2 → cluster via kubeconfig exposto
+Princípio da fase:
+- Rastro não cresce por integração solta de serviço, e sim por
+  **attack paths completos**
+- cada adição deve ir do ponto de entrada ao objetivo final
+- o planner precisa começar a escolher entre mais de um caminho possível
 
 DONE WHEN:
-- `rastro run --target k8s` opera contra cluster de lab
-- Attack graph conecta identidade AWS a recursos Kubernetes
-- Primeiro paper submetido baseado em resultados das Fases 2 e 3
+- existem múltiplos paths AWS reais auditados
+- os paths compartilham a mesma política de execução e o mesmo report
+- o planner consegue navegar entre alternativas válidas
 
 ---
 
-## Fase 4 — Linux + Ambiente Híbrido
+## Fase 4 — AWS Novos Objetivos e Superfícies
 
 **Pré-requisito:** Fase 3 completa.
+
+Objetivo: ampliar a cobertura AWS para novos objetivos finais e novos tipos
+de recurso, ainda mantendo a lógica de attack paths completos.
+
+Superfícies candidatas:
+- Secrets Manager
+- SSM Parameter Store
+- KMS metadata / policy reasoning
+- múltiplos alvos S3 e variação de objetivos de coleta
+
+---
+
+## Fase 5 — AWS Compute e Pivot
+
+**Pré-requisito:** Fase 4 completa.
+
+Objetivo: conectar identidade, permissões e superfícies de execução dentro
+da AWS.
+
+Superfícies candidatas:
+- Lambda
+- EC2
+- SSM
+- caminhos de pivot dentro da conta autorizada
+
+---
+
+## Fase 6 — AWS Multi-Path Autônomo
+
+**Pré-requisito:** Fase 5 completa.
+
+Objetivo: provar autonomia real em AWS com múltiplos caminhos concorrentes,
+comparação entre alternativas e escolha estratégica do melhor encadeamento.
+
+---
+
+## Fase 7 — Maturidade AWS Antes de Expandir
+
+**Pré-requisito:** Fase 6 completa.
+
+Objetivo: estabelecer Rastro como produto interessante em AWS antes de sair
+para novas superfícies.
+
+Só depois desta fase faz sentido começar Kubernetes, Linux ou ambiente híbrido.
+
+---
+
+## Fase 8 — Kubernetes Attack Paths
+
+**Pré-requisito:** Fase 7 completa.
+
+Kubernetes só entra depois que AWS já tiver vários paths reais auditados e
+o produto provar, em AWS, a tese central de raciocínio sobre caminhos de
+comprometimento.
+
+---
+
+## Fase 9 — Linux + Ambiente Híbrido
+
+**Pré-requisito:** Fase 8 completa.
 
 Superfície Linux: privilege escalation local, SUID abuse, cron jobs,
 sudo misconfiguration. Conectar com cloud: pivot de EC2 para VPC, movimento
@@ -300,12 +357,13 @@ via SSM Run Command, secrets em ambiente híbrido on-prem + cloud.
 
 ---
 
-## Fase 5 — v1.0 + Dataset Público
+## Fase 10 — v1.0 + Dataset Público
 
 Objetivo de longo prazo.
 
-- AWS, GCP, Azure, Kubernetes, Linux — cobertura MITRE completa
-- Neo4j substituindo networkx para persistência, Cypher queries e visualização
+- AWS profundamente coberta antes da expansão lateral
+- Kubernetes e Linux entram sobre base já madura
+- Neo4j pode entrar para persistência, Cypher queries e visualização
 - Dataset público de attack graphs anonimizados para pesquisa
 - Documentação de qualidade para contribuição externa
 - Base sólida para submissão a editais FAPESP / GSI / MCTI

@@ -7,7 +7,7 @@ from core.attack_graph import AttackGraph
 from core.audit import AuditLogger
 from core.domain import Action, ActionType, Decision, Objective, Observation, Scope
 from core.aws_dry_run_lab import AwsDryRunLab
-from execution.aws_executor import AwsRealExecutorStub
+from execution.aws_executor import AwsRealExecutor, AwsRealExecutorStub
 from core.state import StateManager
 from reporting.report import ReportGenerator
 from execution.scope_enforcer import ScopeEnforcer
@@ -17,8 +17,56 @@ from planner.openai_planner import _parse_response as parse_openai_response
 from planner.mock_planner import DeterministicPlanner
 
 
+class FakeAwsClient:
+    def get_caller_identity(self, region: str, credentials=None):
+        if credentials:
+            return {
+                "Account": "123456789012",
+                "Arn": "arn:aws:sts::123456789012:assumed-role/AuditRole/rastro-audit-session",
+            }
+        return {
+            "Account": "123456789012",
+            "Arn": "arn:aws:iam::123456789012:user/analyst",
+        }
 
-def test_build_execution_surface_selects_real_stub_for_non_dry_run_aws() -> None:
+    def list_roles(self, region: str, credentials=None):
+        return ["arn:aws:iam::123456789012:role/AuditRole"]
+
+    def assume_role(self, region: str, role_arn: str, session_name: str, credentials=None):
+        return {
+            "Credentials": {
+                "AccessKeyId": "AKIA...",
+                "SecretAccessKey": "secret",
+                "SessionToken": "token",
+            }
+        }
+
+    def simulate_principal_policy(
+        self,
+        region: str,
+        policy_source_arn: str,
+        action_names: list[str],
+        resource_arns: list[str],
+        credentials=None,
+    ):
+        return {
+            "EvaluationResults": [
+                {
+                    "EvalDecision": "allowed",
+                }
+            ]
+        }
+
+    def get_object(self, region: str, bucket: str, object_key: str, credentials=None):
+        return {
+            "ContentLength": 24,
+            "ETag": '"etag"',
+            "Preview": "payroll-preview",
+        }
+
+
+
+def test_build_execution_surface_selects_real_executor_for_non_dry_run_aws() -> None:
     scope = Scope.model_construct(
         target="aws",
         allowed_actions=[ActionType.ENUMERATE],
@@ -33,8 +81,9 @@ def test_build_execution_surface_selects_real_stub_for_non_dry_run_aws() -> None
         authorization_document="docs/authorization-demo.md",
         planner=None,
     )
-    surface = _build_execution_surface(environment=object(), scope=scope)
-    assert isinstance(surface, AwsRealExecutorStub)
+    fixture = Fixture.load(Path(__file__).resolve().parents[1] / "fixtures" / "aws_dry_run_lab.json")
+    surface = _build_execution_surface(environment=fixture, scope=scope)
+    assert isinstance(surface, AwsRealExecutor)
 
 
 def test_aws_real_executor_stub_returns_explicit_not_implemented() -> None:
@@ -63,6 +112,47 @@ def test_aws_real_executor_stub_returns_explicit_not_implemented() -> None:
     assert observation.success is False
     assert observation.details["reason"] == "aws_real_execution_not_implemented"
     assert observation.details["execution_mode"] == "stub"
+
+
+def test_aws_real_executor_executes_single_real_path() -> None:
+    fixture = Fixture.load(Path(__file__).resolve().parents[1] / "fixtures" / "aws_dry_run_lab.json")
+    scope = Scope.model_construct(
+        target="aws",
+        allowed_actions=[
+            ActionType.ENUMERATE,
+            ActionType.ASSUME_ROLE,
+            ActionType.ACCESS_RESOURCE,
+        ],
+        allowed_resources=[
+            "arn:aws:iam::123456789012:root",
+            "arn:aws:iam::123456789012:role/AuditRole",
+            "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+        ],
+        max_steps=5,
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam", "sts", "s3"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+        planner=None,
+    )
+    executor = AwsRealExecutor(fixture=fixture, scope=scope, client=FakeAwsClient())
+    enumerate_action, assume_action = fixture.enumerate_actions(None)
+    enumerate_observation = executor.execute(enumerate_action)
+    assume_observation = executor.execute(assume_action)
+    access_action = fixture.enumerate_actions(None)[1]
+    access_observation = executor.execute(access_action)
+
+    assert enumerate_observation.success is True
+    assert enumerate_observation.details["execution_mode"] == "real"
+    assert enumerate_observation.details["aws_identity"]["arn"] == "arn:aws:iam::123456789012:user/analyst"
+    assert assume_observation.success is True
+    assert assume_observation.details["granted_role"] == "arn:aws:iam::123456789012:role/AuditRole"
+    assert assume_observation.details["simulated_policy_result"]["decision"] == "allowed"
+    assert access_observation.success is True
+    assert access_observation.details["response_summary"]["preview"] == "payroll-preview"
 
 def test_scope_enforcer_blocks_out_of_scope() -> None:
     scope = Scope(
@@ -314,21 +404,21 @@ def test_aws_dry_run_lab_filters_disallowed_resources() -> None:
     assert observation.success is False
     assert observation.details["reason"] == "resource_not_allowed"
 
-def test_aws_scope_rejects_dry_run_false() -> None:
-    with pytest.raises(ValueError, match="dry_run=true"):
-        Scope(
-            target="aws",
-            allowed_actions=[ActionType.ENUMERATE],
-            allowed_resources=["arn:aws:iam::123456789012:root"],
-            dry_run=False,
-            max_steps=5,
-            aws_account_ids=["123456789012"],
-            allowed_regions=["us-east-1"],
-            allowed_services=["iam"],
-            authorized_by="Demo Operator",
-            authorized_at="2026-03-28",
-            authorization_document="docs/authorization-demo.md",
-        )
+def test_aws_scope_allows_dry_run_false_with_authorization() -> None:
+    scope = Scope(
+        target="aws",
+        allowed_actions=[ActionType.ENUMERATE],
+        allowed_resources=["arn:aws:iam::123456789012:root"],
+        dry_run=False,
+        max_steps=5,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+    )
+    assert scope.dry_run is False
 
 def test_aws_scope_requires_authorization_fields() -> None:
     with pytest.raises(ValueError):
@@ -348,11 +438,33 @@ def test_run_rejects_scope_fixture_mismatch(tmp_path: Path) -> None:
     objective_path = repo_root / "examples" / "objective.json"
     scope_path = repo_root / "examples" / "scope_aws_dry_run.json"
 
-    with pytest.raises(Exception, match="AWS dry-run scope is incompatible"):
+    with pytest.raises(Exception, match="AWS scope is incompatible"):
         run(
             fixture_path=fixture_path,
             objective_path=objective_path,
             scope_path=scope_path,
+            output_dir=tmp_path,
+            max_steps=5,
+            seed=1,
+        )
+
+
+def test_run_rejects_real_aws_when_capability_disabled(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture_path = repo_root / "fixtures" / "aws_dry_run_lab.json"
+    objective_path = repo_root / "examples" / "objective_aws_dry_run.json"
+    real_scope = tmp_path / "scope_real.json"
+    real_scope.write_text(
+        (
+            repo_root / "examples" / "scope_aws_dry_run.json"
+        ).read_text().replace('"dry_run": true', '"dry_run": false')
+    )
+
+    with pytest.raises(Exception, match="AWS real execution is disabled"):
+        run(
+            fixture_path=fixture_path,
+            objective_path=objective_path,
+            scope_path=real_scope,
             output_dir=tmp_path,
             max_steps=5,
             seed=1,

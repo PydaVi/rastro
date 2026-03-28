@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Dict
 
@@ -134,6 +135,7 @@ class ReportGenerator:
             f"- Target: {execution_policy['target']}",
             f"- Dry-run required: {execution_policy['dry_run_required']}",
             f"- Dry-run applied: {execution_policy['dry_run_applied']}",
+            f"- Real execution enabled: {execution_policy['real_execution_enabled']}",
             f"- Allowed services: {execution_policy['allowed_services']}",
             f"- Allowed regions: {execution_policy['allowed_regions']}",
             f"- AWS account IDs: {execution_policy['aws_account_ids']}",
@@ -247,10 +249,15 @@ def _short_resource(value: str | None) -> str:
 def _build_execution_policy(scope) -> Dict:
     return {
         "target": scope.target.value,
-        "dry_run_required": scope.target.value == "aws",
+        "dry_run_required": scope.target.value == "aws" and not _aws_real_execution_enabled(),
         "dry_run_applied": scope.dry_run,
+        "real_execution_enabled": _aws_real_execution_enabled(),
         "allowed_services": list(scope.allowed_services),
         "allowed_regions": list(scope.allowed_regions),
         "aws_account_ids": list(scope.aws_account_ids),
         "authorization_document": scope.authorization_document,
     }
+
+
+def _aws_real_execution_enabled() -> bool:
+    return os.getenv("RASTRO_ENABLE_AWS_REAL", "0") == "1"

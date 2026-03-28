@@ -33,12 +33,15 @@ Não refatore o que já está funcionando sem razão explícita.
 
 Consulte `PLAN.md` para o detalhamento completo de cada item.
 
-**Fase 2 dry-run já está em progresso**: existe um cenário AWS local com
-autorização obrigatória, `execution_policy` no report/audit, validação
-antecipada de mismatch entre `fixture`/`objective`/`scope` e enforcement
-por `allowed_services`, `allowed_regions`, `aws_account_ids` e `allowed_resources`.
-Também existe uma ponte explícita para executor AWS real via stub, ainda sem
-qualquer chamada externa.
+**Fase 2 está em progresso**: existe um cenário AWS local com autorização
+obrigatória, `execution_policy` no report/audit, validação antecipada de
+mismatch entre `fixture`/`objective`/`scope` e enforcement por
+`allowed_services`, `allowed_regions`, `aws_account_ids` e `allowed_resources`.
+Também existe um executor AWS real mínimo no código, gated por
+`RASTRO_ENABLE_AWS_REAL=1`.
+
+**Após a Fase 2, o roadmap continua em AWS.** Não inicie Kubernetes, Linux ou
+outras superfícies antes de AWS ter múltiplos attack paths reais auditados.
 
 ---
 
@@ -149,16 +152,18 @@ docs/            — arquitetura e ADRs
 - Respeite `allowed_services`, `allowed_regions`, `aws_account_ids` e `allowed_resources` tanto na enumeração quanto na execução
 - Qualquer endurecimento novo precisa de teste cobrindo regressão
 
-**Ao modificar o executor AWS real stubado:**
-- Preserve o comportamento sem rede até a fase apropriada
-- Retornos de stub devem ser explícitos e auditáveis
-- Não introduza `boto3` ou credenciais reais sem atualização explícita do roadmap
+**Ao modificar o executor AWS real:**
+- Imports opcionais do SDK devem continuar tardios
+- Toda chamada real deve respeitar `allowed_services`, `allowed_regions`,
+  `aws_account_ids` e `allowed_resources`
+- O gate `RASTRO_ENABLE_AWS_REAL=1` não deve ser removido sem decisão explícita
+- Testes da suite padrão continuam sem depender de AWS
 
 ---
 
 ## O que não fazer
 
-- Não implemente acesso real a AWS, Kubernetes, ou Linux ainda (Fase 2+)
+- Não implemente novas superfícies reais fora de AWS antes do roadmap permitir
 - Não adicione dependências de LLM como requisito obrigatório do projeto
 - Não remova o mock_planner — ele é necessário para a suite de testes
 - Não altere a interface `Planner` sem atualizar todos os backends

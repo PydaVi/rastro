@@ -29,7 +29,11 @@
             "parameters": {
               "note": "simulate_sts_assume_role",
               "service": "sts",
-              "region": "us-east-1"
+              "region": "us-east-1",
+              "role_arn": "arn:aws:iam::123456789012:role/AuditRole",
+              "session_name": "rastro-audit-session",
+              "policy_action": "s3:GetObject",
+              "policy_resource": "arn:aws:s3:::sensitive-finance-data/payroll.csv"
             },
             "technique": {
               "mitre_id": "T1548",
@@ -107,7 +111,9 @@
               "parameters": {
                 "note": "simulate_s3_get_object",
                 "service": "s3",
-                "region": "us-east-1"
+                "region": "us-east-1",
+                "bucket": "sensitive-finance-data",
+                "object_key": "payroll.csv"
               },
               "technique": {
                 "mitre_id": "T1530",

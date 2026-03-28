@@ -32,11 +32,12 @@ pendem de validação com credenciais reais.
 
 **MITRE mapping no MVP já está implementado** (techniques no fixture + relatório).
 **Tool Registry base já está implementado** (YAML + pré-condições).
-**Fase 2 dry-run já começou** com cenário AWS local, autorização obrigatória,
-política explícita no report/audit e enforcement por `allowed_services`,
-`allowed_regions`, `aws_account_ids` e `allowed_resources`.
-Também já existe um `AwsRealExecutorStub` para preparar a transição futura
-para execução real sem introduzir chamadas a AWS nesta fase.
+**Fase 2 está em progresso** com dois trilhos:
+- `dry-run` AWS local com autorização obrigatória, política explícita no report/audit
+  e enforcement por `allowed_services`, `allowed_regions`, `aws_account_ids`
+  e `allowed_resources`
+- executor AWS real mínimo já implementado no código, com dependência opcional
+  e gate explícito por `RASTRO_ENABLE_AWS_REAL=1`
 
 Ver [PLAN.md](PLAN.md) para roadmap completo.
 
@@ -71,6 +72,10 @@ Backends disponíveis:
 | `claude` | Anthropic API — opcional |
 | `mock` | testes determinísticos sem LLM |
 
+AWS continua sendo a superfície prioritária nas próximas fases. Kubernetes e
+Linux só entram depois que AWS já tiver múltiplos attack paths reais e
+auditáveis.
+
 ---
 
 ## O que o Rastro faz (hoje)
@@ -83,7 +88,8 @@ Backends disponíveis:
 - Cada step registra backend do planner, motivo da decisão e resposta bruta do LLM quando aplicável
 - O attack graph é construído em tempo real
 - Ao final: relatório Markdown + JSON com o caminho de comprometimento
-- A ponte para um executor AWS real já existe, mas continua stubada e sem chamadas externas
+- A execução AWS real mínima já existe no código para `iam_list_roles`,
+  `iam_passrole` e `s3_read_sensitive`, ainda dependente de conta/autorização
 
 ---
 
@@ -125,6 +131,17 @@ python -m app.main \
   --fixture fixtures/aws_dry_run_lab.json \
   --objective examples/objective_aws_dry_run.json \
   --scope examples/scope_aws_dry_run.json \
+  --out outputs
+```
+
+Executar o fluxo AWS real mínimo (requer credenciais AWS válidas e `boto3`):
+
+```bash
+pip install -e ".[aws]"
+RASTRO_ENABLE_AWS_REAL=1 python -m app.main \
+  --fixture fixtures/aws_dry_run_lab.json \
+  --objective examples/objective_aws_dry_run.json \
+  --scope examples/scope_aws_real.json \
   --out outputs
 ```
 
@@ -183,9 +200,9 @@ No fluxo AWS dry-run, o ambiente também filtra ações por `allowed_services`,
 `allowed_regions`, `aws_account_ids` e `allowed_resources`, e rejeita execução
 direta fora da política.
 
-**Executor AWS real (stub)** — a interface para execução AWS real já existe,
-mas nesta fase retorna apenas `aws_real_execution_not_implemented` com
-`real_api_called=false`.
+**Executor AWS real** — o primeiro corte já existe para `iam_list_roles`,
+`iam_passrole` e `s3_read_sensitive`. Por padrão continua desabilitado; só é
+ativado com `RASTRO_ENABLE_AWS_REAL=1`.
 
 **Attack Graph** — grafo dirigido onde nós são estados de comprometimento e
 arestas são técnicas executadas. Base do relatório final e de futuras
@@ -225,10 +242,15 @@ do ambiente.
 |------|----------|--------|
 | 0 | Loop central + fixture sintético IAM | ✓ completa |
 | 1 | LLM Planner plugável + MITRE mapping + Tool Registry | em progresso |
-| 2 | AWS dry-run + preparação para conta real autorizada | em progresso |
-| 3 | Kubernetes attack paths | pendente |
-| 4 | Linux + ambiente híbrido | pendente |
-| 5 | v1.0 + dataset público + Neo4j | pendente |
+| 2 | Primeiro path AWS real, seguro e auditável | em progresso |
+| 3 | Mais attack paths AWS reais | planejada |
+| 4 | AWS novos objetivos e superfícies | planejada |
+| 5 | AWS compute e pivot | planejada |
+| 6 | AWS multi-path autônomo | planejada |
+| 7 | Maturidade AWS antes de expandir | planejada |
+| 8 | Kubernetes attack paths | futura |
+| 9 | Linux + ambiente híbrido | futura |
+| 10 | v1.0 + dataset público + Neo4j | futura |
 
 ---
 

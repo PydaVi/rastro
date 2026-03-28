@@ -56,8 +56,6 @@ class Scope(BaseModel):
     @model_validator(mode="after")
     def validate_target_requirements(self) -> "Scope":
         if self.target == TargetType.AWS:
-            if not self.dry_run:
-                raise ValueError("AWS target currently requires dry_run=true.")
             required_lists = [
                 ("aws_account_ids", self.aws_account_ids),
                 ("allowed_regions", self.allowed_regions),
