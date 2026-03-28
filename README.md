@@ -38,6 +38,8 @@ pendem de validação com credenciais reais.
   e `allowed_resources`
 - executor AWS real mínimo já implementado no código, com dependência opcional
   e gate explícito por `RASTRO_ENABLE_AWS_REAL=1`
+- o primeiro path AWS real já foi validado com sucesso em conta autorizada,
+  com artefatos sanitizados para compartilhamento seguro
 
 Ver [PLAN.md](PLAN.md) para roadmap completo.
 
@@ -165,6 +167,17 @@ No fluxo AWS dry-run, `report.json` e `audit.jsonl` também incluem:
 - `execution_mode`
 - `real_api_called`
 - evidências AWS sintéticas como `aws_identity`, `simulated_policy_result` e `evidence`
+
+No fluxo AWS real, o projeto também gera automaticamente:
+- `report.sanitized.json`
+- `report.sanitized.md`
+- `audit.sanitized.jsonl`
+
+Esses artefatos existem para compartilhamento seguro de provas de conceito e
+posts técnicos, sem expor conta, principal, bucket ou conteúdo real.
+
+Ver também:
+- `docs/aws-first-real-path-poc.md`
 
 ---
 

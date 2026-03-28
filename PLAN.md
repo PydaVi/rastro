@@ -264,6 +264,8 @@ Status atual:
 - executor AWS real mínimo implementado para `iam_list_roles`, `iam_passrole` e `s3_read_sensitive`
 - execução real ainda é gated por `RASTRO_ENABLE_AWS_REAL=1`
 - `boto3` entrou como dependência opcional
+- o primeiro path AWS real já foi validado em conta autorizada
+- artefatos sanitizados agora são gerados automaticamente para runs reais
 
 ---
 
