@@ -38,9 +38,12 @@ pendem de validação com credenciais reais.
   e `allowed_resources`
 - executor AWS real mínimo já implementado no código, com dependência opcional
   e gate explícito por `RASTRO_ENABLE_AWS_REAL=1`
-- o primeiro path AWS real já foi validado com sucesso em conta autorizada,
+- o Path 1 AWS real já foi validado com sucesso em conta autorizada,
   primeiro com `MockPlanner` para validar o executor e depois com
   `OllamaPlanner` para validar o planner em ambiente real
+- o Path 2 AWS real, com descoberta intermediária via `s3:ListBucket`,
+  também já foi validado em conta autorizada com `MockPlanner` e
+  `OllamaPlanner`
 - artefatos sanitizados são gerados automaticamente para compartilhamento seguro
 
 Ver [PLAN.md](PLAN.md) para roadmap completo.
@@ -179,7 +182,8 @@ Esses artefatos existem para compartilhamento seguro de provas de conceito e
 posts técnicos, sem expor conta, principal, bucket ou conteúdo real.
 
 Ver também:
-- `docs/aws-first-real-path-poc.md`
+- `docs/aws-first-real-path-poc.html`
+- `docs/aws-attack-coverage.md`
 
 ---
 
@@ -257,8 +261,8 @@ do ambiente.
 |------|----------|--------|
 | 0 | Loop central + fixture sintético IAM | ✓ completa |
 | 1 | LLM Planner plugável + MITRE mapping + Tool Registry | em progresso |
-| 2 | Primeiro path AWS real, seguro e auditável | em progresso |
-| 3 | Mais attack paths AWS reais | planejada |
+| 2 | Primeiros attack paths AWS reais, seguros e auditáveis | em progresso |
+| 3 | Mais attack paths AWS reais | em progresso |
 | 4 | AWS novos objetivos e superfícies | planejada |
 | 5 | AWS compute e pivot | planejada |
 | 6 | AWS multi-path autônomo | planejada |

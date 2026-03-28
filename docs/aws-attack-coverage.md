@@ -65,7 +65,8 @@ Sequência:
 Status:
 
 - `dry_run`: validado
-- `real`: ainda não validado
+- `real`: validado
+- `planner`: validado com `MockPlanner` e `OllamaPlanner`
 
 Objetivo final:
 
@@ -81,7 +82,7 @@ conhecido” e adiciona uma etapa intermediária de discovery realista.
 | Discovery | Account Discovery: Cloud Account | `T1087.004` | `real`, `multi-path` | `iam_list_roles`, Path 1, Path 2 |
 | Privilege Escalation | Abuse Elevation Control Mechanism | `T1548` | `real`, `multi-path` | `iam_passrole`, Path 1, Path 2 |
 | Collection | Data from Cloud Storage | `T1530` | `real`, `multi-path` | `s3_read_sensitive`, Path 1, Path 2 |
-| Discovery | S3 object discovery via bucket listing | provisional | `dry_run` | `s3_list_bucket`, Path 2 |
+| Discovery | Cloud Storage Object Discovery | `T1619` | `real` | `s3_list_bucket`, Path 2 |
 
 ## Coverage by Tactic
 
@@ -155,7 +156,7 @@ Isso é esperado no estágio atual. O projeto ainda está fechando a base AWS.
 Observação:
 
 - `s3_list_bucket` já tem suporte no executor AWS e no dry-run
-- o próximo passo é validar esse segundo path em conta AWS autorizada
+- o segundo path já foi validado em conta AWS autorizada
 
 ## Maturity Assessment
 
@@ -233,9 +234,7 @@ Uma forma pragmática de organizar os próximos paths:
 
 ### Priority 1
 
-- Path 2 real: `AssumeRole -> ListBucket -> GetObject`
-- validar com `MockPlanner`
-- validar com `OllamaPlanner`
+- Path 3 real: novo pivô ou novo objetivo final em AWS
 
 ### Priority 2
 
