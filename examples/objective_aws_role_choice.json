@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate an AWS IAM path where multiple assumable roles exist but only one leads to the sensitive S3 object.",
+  "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+  "success_criteria": {
+    "flag": "priv_esc"
+  }
+}

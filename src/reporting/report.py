@@ -73,7 +73,8 @@ class ReportGenerator:
         ]
         observations = [o.model_dump() for o in snapshot.observations]
         graph_summary = graph.summary()
-        mermaid = graph.to_mermaid()
+        choice_summary = _build_choice_summary(initial_state, steps)
+        mermaid = _build_enriched_mermaid(graph, choice_summary)
         executive_summary = _build_executive_summary(steps, objective_met)
         execution_policy = _build_execution_policy(snapshot.scope)
 
@@ -88,6 +89,7 @@ class ReportGenerator:
             "blocked_actions": blocked_actions,
             "observations": observations,
             "graph_summary": graph_summary,
+            "choice_summary": choice_summary,
             "attack_graph_mermaid": mermaid,
             "mitre_techniques": mitre_techniques,
             "tool_chain": tool_chain,
@@ -161,6 +163,11 @@ class ReportGenerator:
             "",
             "## Observations",
             f"```\n{observations}\n```",
+            "",
+            "## Path Choice",
+            f"- Candidate roles: {[ _short_resource(role) for role in choice_summary['candidate_roles'] ]}",
+            f"- Selected role: {_short_resource(choice_summary['selected_role'])}",
+            f"- Rejected roles: {[ _short_resource(role) for role in choice_summary['rejected_roles'] ]}",
             "",
             "## Graph Summary",
             f"- Nodes: {graph_summary['node_count']}",
@@ -260,3 +267,70 @@ def _build_execution_policy(scope) -> Dict:
 
 def _aws_real_execution_enabled() -> bool:
     return os.getenv("RASTRO_ENABLE_AWS_REAL", "0") == "1"
+
+
+def _build_choice_summary(initial_state: Dict, steps: list[Dict]) -> Dict:
+    candidate_roles = []
+    identities = initial_state.get("identities", {})
+    for details in identities.values():
+        for action in details.get("available_actions", []):
+            if action.get("action_type") == "assume_role" and action.get("target"):
+                candidate_roles.append(action["target"])
+    candidate_roles = list(dict.fromkeys(candidate_roles))
+
+    selected_role = None
+    for step in steps:
+        details = (step.get("observation") or {}).get("details") or {}
+        if details.get("granted_role"):
+            selected_role = details.get("granted_role")
+            break
+
+    rejected_roles = [role for role in candidate_roles if role != selected_role]
+    return {
+        "candidate_roles": candidate_roles,
+        "selected_role": selected_role,
+        "rejected_roles": rejected_roles,
+    }
+
+
+def _build_enriched_mermaid(graph: AttackGraph, choice_summary: Dict) -> str:
+    base = graph.to_mermaid().splitlines()
+    candidate_roles = choice_summary.get("candidate_roles") or []
+    selected_role = choice_summary.get("selected_role")
+    rejected_roles = choice_summary.get("rejected_roles") or []
+    if not candidate_roles or not selected_role or not rejected_roles:
+        return "\n".join(base)
+
+    def node_id(raw: str) -> str:
+        return "".join(ch if ch.isalnum() else "_" for ch in raw)
+
+    analyst_node = None
+    for node in graph.nodes.values():
+        if node.node_type == "identity" and node.metadata.get("name") != selected_role:
+            analyst_node = node
+            break
+    if analyst_node is None:
+        return "\n".join(base)
+
+    extra_lines = []
+    next_link_index = len(graph.edges)
+    analyst_safe = node_id(analyst_node.node_id)
+    for rejected_role in rejected_roles:
+        resource_id = f"resource:{rejected_role}"
+        identity_id = f"identity:{rejected_role}"
+        safe_resource = node_id(resource_id)
+        safe_identity = node_id(identity_id)
+        extra_lines.append(f'  {safe_resource}["resource:{rejected_role}"]')
+        extra_lines.append(f'  {safe_identity}["identity:{rejected_role}"]')
+        extra_lines.append(f'  {analyst_safe} -.->|"candidate assume_role"| {safe_resource}')
+        extra_lines.append(
+            f"  linkStyle {next_link_index} stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4 3;"
+        )
+        next_link_index += 1
+        extra_lines.append(f'  {analyst_safe} -.->|"candidate assume_role"| {safe_identity}')
+        extra_lines.append(
+            f"  linkStyle {next_link_index} stroke:#6b7280,stroke-width:1.5px,stroke-dasharray:4 3;"
+        )
+        next_link_index += 1
+
+    return "\n".join(base + extra_lines)

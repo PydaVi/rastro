@@ -1,0 +1,36 @@
+{
+  "target": "aws",
+  "allowed_actions": [
+    "enumerate",
+    "analyze",
+    "assume_role",
+    "access_resource"
+  ],
+  "allowed_resources": [
+    "arn:aws:iam::123456789012:root",
+    "arn:aws:iam::123456789012:role/AuditRole",
+    "arn:aws:iam::123456789012:role/BucketReaderRole",
+    "arn:aws:s3:::sensitive-finance-data",
+    "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+    "arn:aws:s3:::public-reports"
+  ],
+  "max_steps": 6,
+  "planner": {
+    "backend": "mock"
+  },
+  "dry_run": true,
+  "aws_account_ids": [
+    "123456789012"
+  ],
+  "allowed_regions": [
+    "us-east-1"
+  ],
+  "allowed_services": [
+    "iam",
+    "sts",
+    "s3"
+  ],
+  "authorized_by": "Demo Operator",
+  "authorized_at": "2026-03-28",
+  "authorization_document": "docs/authorization-demo.md"
+}
