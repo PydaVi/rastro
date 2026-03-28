@@ -1,14 +1,14 @@
 graph TD
-  identity_analyst["identity:analyst"]
-  resource_account["resource:account"]
-  resource_AuditRole["resource:AuditRole"]
-  identity_AuditRole["identity:AuditRole"]
-  resource_sensitive_bucket["resource:sensitive_bucket"]
-  identity_analyst -->|"enumerate"| resource_account
+  identity_arn_aws_iam__123456789012_user_analyst["identity:arn:aws:iam::123456789012:user/analyst"]
+  resource_arn_aws_iam__123456789012_root["resource:arn:aws:iam::123456789012:root"]
+  resource_arn_aws_iam__123456789012_role_AuditRole["resource:arn:aws:iam::123456789012:role/AuditRole"]
+  identity_arn_aws_iam__123456789012_role_AuditRole["identity:arn:aws:iam::123456789012:role/AuditRole"]
+  resource_arn_aws_s3___sensitive_finance_data_payroll_csv["resource:arn:aws:s3:::sensitive-finance-data/payroll.csv"]
+  identity_arn_aws_iam__123456789012_user_analyst -->|"enumerate"| resource_arn_aws_iam__123456789012_root
   linkStyle 0 stroke:#1b7f3b,stroke-width:2px;
-  identity_analyst -->|"assume_role"| resource_AuditRole
+  identity_arn_aws_iam__123456789012_user_analyst -->|"assume_role"| resource_arn_aws_iam__123456789012_role_AuditRole
   linkStyle 1 stroke:#1b7f3b,stroke-width:2px;
-  identity_analyst -->|"assume_role"| identity_AuditRole
+  identity_arn_aws_iam__123456789012_user_analyst -->|"assume_role"| identity_arn_aws_iam__123456789012_role_AuditRole
   linkStyle 2 stroke:#1b7f3b,stroke-width:2px;
-  identity_AuditRole -->|"access_resource"| resource_sensitive_bucket
+  identity_arn_aws_iam__123456789012_role_AuditRole -->|"access_resource"| resource_arn_aws_s3___sensitive_finance_data_payroll_csv
   linkStyle 3 stroke:#1b7f3b,stroke-width:2px;

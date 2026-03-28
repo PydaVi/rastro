@@ -73,10 +73,12 @@ class ReportGenerator:
         observations = [o.model_dump() for o in snapshot.observations]
         graph_summary = graph.summary()
         mermaid = graph.to_mermaid()
+        executive_summary = _build_executive_summary(steps, objective_met)
 
         report_json = {
             "objective": objective.model_dump(),
             "starting_conditions": initial_state,
+            "executive_summary": executive_summary,
             "steps_taken": steps_taken,
             "steps": steps,
             "allowed_actions": allowed_actions,
@@ -118,6 +120,9 @@ class ReportGenerator:
             "# MVP Report",
             "",
             f"Objective: {objective.description}",
+            "",
+            "## Executive Summary",
+            f"```\n{executive_summary}\n```",
             "",
             "## Starting Conditions",
             f"```\n{initial_state}\n```",
@@ -161,3 +166,50 @@ class ReportGenerator:
         ]
 
         return {"json": report_json, "markdown": "\n".join(markdown)}
+
+
+def _build_executive_summary(steps: list[Dict], objective_met: bool) -> Dict:
+    summary = {
+        "initial_identity": None,
+        "assumed_role": None,
+        "final_resource": None,
+        "execution_mode": None,
+        "real_api_called": None,
+        "proof": None,
+        "objective_met": objective_met,
+    }
+
+    for step in steps:
+        observation = step.get("observation") or {}
+        details = observation.get("details") or {}
+        action = step.get("action") or {}
+
+        if summary["initial_identity"] is None:
+            aws_identity = details.get("aws_identity")
+            if aws_identity:
+                summary["initial_identity"] = aws_identity.get("arn")
+            else:
+                summary["initial_identity"] = action.get("actor")
+
+        if summary["assumed_role"] is None and details.get("granted_role"):
+            summary["assumed_role"] = details.get("granted_role")
+
+        if summary["final_resource"] is None and action.get("target"):
+            summary["final_resource"] = action.get("target")
+
+        if details.get("execution_mode") is not None:
+            summary["execution_mode"] = details.get("execution_mode")
+
+        if details.get("real_api_called") is not None:
+            summary["real_api_called"] = details.get("real_api_called")
+
+        if summary["proof"] is None:
+            if details.get("simulated_policy_result"):
+                summary["proof"] = details.get("simulated_policy_result")
+            elif details.get("evidence"):
+                summary["proof"] = details.get("evidence")
+
+    if steps:
+        summary["final_resource"] = steps[-1].get("action", {}).get("target")
+
+    return summary
