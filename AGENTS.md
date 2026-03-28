@@ -23,27 +23,33 @@ segurança defensiva. Isso tem implicações diretas nas decisões de design.
 **Fase 0 está completa.** O loop central funciona com fixture sintético.
 Não refatore o que já está funcionando sem razão explícita.
 
-**Fase 1 está em progresso.** O trabalho atual é:
-1. Implementar `OllamaPlanner` em `src/planner/ollama_planner.py` (**completo e validado localmente**)
-2. Implementar `OpenAIPlanner` em `src/planner/openai_planner.py` (**completo no código; pendente validação com credenciais**)
-3. Implementar `ClaudePlanner` em `src/planner/claude_planner.py` (**completo no código; pendente validação com credenciais**)
-4. Adicionar `Technique` ao domain model para MITRE ATT&CK mapping (**completo**)
-5. Atualizar o Report Engine para incluir seção MITRE (**completo**)
-6. Formalizar Tool Registry com schema YAML (**completo**)
+**Fase 1 está concluída para o escopo atual do MVP.** O que foi fechado:
+1. `OllamaPlanner` implementado e validado localmente
+2. `OpenAIPlanner` implementado no código
+3. `ClaudePlanner` implementado no código
+4. `Technique` adicionada ao domain model para MITRE ATT&CK mapping
+5. Report Engine atualizado com seção MITRE
+6. Tool Registry formalizado com schema YAML
+
+Pendência residual da Fase 1:
+- validação end-to-end com credenciais reais para `OpenAIPlanner` e `ClaudePlanner`
 
 Consulte `PLAN.md` para o detalhamento completo de cada item.
 
-**Fase 2 está em progresso**: existe um cenário AWS local com autorização
+**Fase 2 está concluída para o primeiro corte AWS real**: existe um cenário AWS local com autorização
 obrigatória, `execution_policy` no report/audit, validação antecipada de
 mismatch entre `fixture`/`objective`/`scope` e enforcement por
 `allowed_services`, `allowed_regions`, `aws_account_ids` e `allowed_resources`.
 Também existe um executor AWS real mínimo no código, gated por
 `RASTRO_ENABLE_AWS_REAL=1`.
-O primeiro path AWS real já foi validado com sucesso em conta autorizada,
-primeiro com `MockPlanner` e depois com `OllamaPlanner`. O segundo path AWS
-real, com descoberta intermediária em S3, também já foi validado com
-`MockPlanner` e `OllamaPlanner`. Artefatos sanitizados devem ser preferidos
-para qualquer compartilhamento.
+O Path 1 AWS real já foi validado com sucesso em conta autorizada, primeiro
+com `MockPlanner` e depois com `OllamaPlanner`. O Path 2 AWS real, com
+descoberta intermediária em S3, também já foi validado com `MockPlanner` e
+`OllamaPlanner`. Artefatos sanitizados devem ser preferidos para qualquer
+compartilhamento.
+
+**Fase 3 está em progresso inicial.** O foco agora é expandir AWS para múltiplos
+attack paths reais, usando a base já validada dos Paths 1 e 2.
 
 **Após a Fase 2, o roadmap continua em AWS.** Não inicie Kubernetes, Linux ou
 outras superfícies antes de AWS ter múltiplos attack paths reais auditados.

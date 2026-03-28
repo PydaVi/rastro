@@ -269,11 +269,13 @@ Status atual:
 - o Path 2 AWS real, com descoberta intermediária via `s3:ListBucket`, já foi validado com `MockPlanner` e com `OllamaPlanner`
 - artefatos sanitizados agora são gerados automaticamente para runs reais
 
+Status: **concluída para o primeiro corte AWS real**
+
 ---
 
 ## Fase 3 — AWS Attack Paths Reais
 
-**Pré-requisito:** Fase 2 completa.
+**Pré-requisito:** Fase 2 completa. ✓
 
 **Objetivo:** Expandir AWS de um único demo real para múltiplos caminhos
 reais de comprometimento, ainda concentrados em IAM, STS e S3.
@@ -292,6 +294,8 @@ DONE WHEN:
 - existem múltiplos paths AWS reais auditados
 - os paths compartilham a mesma política de execução e o mesmo report
 - o planner consegue navegar entre alternativas válidas
+
+Status: **em progresso**
 
 ---
 
