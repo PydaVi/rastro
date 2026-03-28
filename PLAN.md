@@ -259,7 +259,8 @@ Status atual:
 - fixture AWS local com ARNs, `sts:GetCallerIdentity`, `iam:ListRoles`, `sts:AssumeRole` e `s3:GetObject` simulados
 - `execution_policy` agora aparece no report e no audit
 - mismatch entre `fixture`/`objective`/`scope` falha cedo antes do loop
-- ambiente dry-run filtra ações por `allowed_services` e rejeita execução direta fora da política
+- ambiente dry-run filtra ações por `allowed_services`, `allowed_regions` e `aws_account_ids`
+- ambiente dry-run rejeita execução direta fora da política com motivos explícitos de negação
 - executor AWS continua 100% local e não chama APIs reais
 
 ---

@@ -209,6 +209,40 @@ def test_aws_dry_run_lab_filters_disallowed_services() -> None:
     assert observation.success is False
     assert observation.details["reason"] == "service_not_allowed"
 
+
+def test_aws_dry_run_lab_filters_disallowed_regions_and_accounts() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture = Fixture.load(repo_root / "fixtures" / "aws_dry_run_lab.json")
+    scope = Scope.model_validate_json((repo_root / "examples" / "scope_aws_dry_run.json").read_text())
+
+    region_scope = scope.model_copy(deep=True)
+    region_scope.allowed_regions = ["eu-west-1"]
+    region_lab = AwsDryRunLab.from_fixture(fixture, region_scope)
+    assert region_lab.enumerate_actions(snapshot=None) == []
+    denied_region = Action(
+        action_type=ActionType.ENUMERATE,
+        actor="arn:aws:iam::123456789012:user/analyst",
+        target="arn:aws:iam::123456789012:root",
+        parameters={"service": "iam", "region": "us-east-1"},
+    )
+    observation = region_lab.execute(denied_region)
+    assert observation.success is False
+    assert observation.details["reason"] == "region_not_allowed"
+
+    account_scope = scope.model_copy(deep=True)
+    account_scope.aws_account_ids = ["999999999999"]
+    account_lab = AwsDryRunLab.from_fixture(fixture, account_scope)
+    assert account_lab.enumerate_actions(snapshot=None) == []
+    denied_account = Action(
+        action_type=ActionType.ENUMERATE,
+        actor="arn:aws:iam::123456789012:user/analyst",
+        target="arn:aws:iam::123456789012:root",
+        parameters={"service": "iam", "region": "us-east-1"},
+    )
+    observation = account_lab.execute(denied_account)
+    assert observation.success is False
+    assert observation.details["reason"] == "account_not_allowed"
+
 def test_aws_scope_rejects_dry_run_false() -> None:
     with pytest.raises(ValueError, match="dry_run=true"):
         Scope(

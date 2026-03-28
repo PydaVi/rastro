@@ -36,7 +36,7 @@ Consulte `PLAN.md` para o detalhamento completo de cada item.
 **Fase 2 dry-run já está em progresso**: existe um cenário AWS local com
 autorização obrigatória, `execution_policy` no report/audit, validação
 antecipada de mismatch entre `fixture`/`objective`/`scope` e enforcement
-por `allowed_services`.
+por `allowed_services`, `allowed_regions` e `aws_account_ids`.
 
 ---
 
@@ -144,7 +144,7 @@ docs/            — arquitetura e ADRs
 **Ao modificar o ambiente AWS dry-run:**
 - Continue 100% local — nenhuma chamada real a AWS nesta fase
 - Preserve `execution_mode=dry_run` e `real_api_called=false`
-- Respeite `allowed_services` tanto na enumeração quanto na execução
+- Respeite `allowed_services`, `allowed_regions` e `aws_account_ids` tanto na enumeração quanto na execução
 - Qualquer endurecimento novo precisa de teste cobrindo regressão
 
 ---

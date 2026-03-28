@@ -12,7 +12,8 @@
             "target": "arn:aws:iam::123456789012:root",
             "parameters": {
               "note": "simulate_get_caller_identity_and_list_roles",
-              "service": "iam"
+              "service": "iam",
+              "region": "us-east-1"
             },
             "technique": {
               "mitre_id": "T1087.004",
@@ -27,7 +28,8 @@
             "target": "arn:aws:iam::123456789012:role/AuditRole",
             "parameters": {
               "note": "simulate_sts_assume_role",
-              "service": "sts"
+              "service": "sts",
+              "region": "us-east-1"
             },
             "technique": {
               "mitre_id": "T1548",
@@ -84,7 +86,8 @@
               "target": "arn:aws:iam::123456789012:root",
               "parameters": {
                 "note": "simulate_get_caller_identity_and_list_roles",
-                "service": "iam"
+                "service": "iam",
+                "region": "us-east-1"
               },
               "technique": {
                 "mitre_id": "T1087.004",
@@ -103,7 +106,8 @@
               "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
               "parameters": {
                 "note": "simulate_s3_get_object",
-                "service": "s3"
+                "service": "s3",
+                "region": "us-east-1"
               },
               "technique": {
                 "mitre_id": "T1530",
