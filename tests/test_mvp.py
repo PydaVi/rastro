@@ -65,6 +65,9 @@ class FakeAwsClient:
             "Preview": "payroll-preview",
         }
 
+    def list_objects(self, region: str, bucket: str, prefix=None, credentials=None):
+        return ["payroll.csv", "notes.txt"]
+
 
 
 def test_build_execution_surface_selects_real_executor_for_non_dry_run_aws() -> None:
@@ -154,6 +157,49 @@ def test_aws_real_executor_executes_single_real_path() -> None:
     assert assume_observation.details["simulated_policy_result"]["decision"] == "allowed"
     assert access_observation.success is True
     assert access_observation.details["response_summary"]["preview"] == "payroll-preview"
+
+
+def test_aws_real_executor_supports_s3_object_discovery_path() -> None:
+    fixture = Fixture.load(Path(__file__).resolve().parents[1] / "fixtures" / "aws_s3_discovery_lab.json")
+    scope = Scope.model_construct(
+        target="aws",
+        allowed_actions=[
+            ActionType.ENUMERATE,
+            ActionType.ASSUME_ROLE,
+            ActionType.ACCESS_RESOURCE,
+        ],
+        allowed_resources=[
+            "arn:aws:iam::123456789012:root",
+            "arn:aws:iam::123456789012:role/AuditRole",
+            "arn:aws:s3:::sensitive-finance-data",
+            "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+        ],
+        max_steps=6,
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam", "sts", "s3"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+        planner=None,
+    )
+    executor = AwsRealExecutor(fixture=fixture, scope=scope, client=FakeAwsClient())
+
+    enumerate_action, assume_action = fixture.enumerate_actions(None)
+    enumerate_observation = executor.execute(enumerate_action)
+    assume_observation = executor.execute(assume_action)
+    list_bucket_action = fixture.enumerate_actions(None)[1]
+    list_bucket_observation = executor.execute(list_bucket_action)
+    access_action = fixture.enumerate_actions(None)[1]
+    access_observation = executor.execute(access_action)
+
+    assert enumerate_observation.success is True
+    assert assume_observation.success is True
+    assert list_bucket_observation.success is True
+    assert list_bucket_observation.details["request_summary"]["api_calls"] == ["s3:ListBucket"]
+    assert "payroll.csv" in list_bucket_observation.details["discovered_objects"]
+    assert access_observation.success is True
 
 def test_scope_enforcer_blocks_out_of_scope() -> None:
     scope = Scope(
@@ -566,3 +612,24 @@ def test_aws_dry_run_end_to_end(tmp_path: Path) -> None:
     assert '"execution_mode": "dry_run"' in report
     assert '"real_api_called": false' in report
     assert 'arn:aws:s3:::sensitive-finance-data/payroll.csv' in report
+
+
+def test_aws_s3_discovery_dry_run_end_to_end(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture_path = repo_root / "fixtures" / "aws_s3_discovery_lab.json"
+    objective_path = repo_root / "examples" / "objective_aws_s3_discovery.json"
+    scope_path = repo_root / "examples" / "scope_aws_s3_discovery.json"
+
+    run(
+        fixture_path=fixture_path,
+        objective_path=objective_path,
+        scope_path=scope_path,
+        output_dir=tmp_path,
+        max_steps=6,
+        seed=1,
+    )
+
+    report = (tmp_path / "report.json").read_text()
+    assert '"objective_met": true' in report
+    assert '"tool": "s3_list_bucket"' in report
+    assert '"discovered_objects"' in report

@@ -50,6 +50,15 @@ class AwsClient(Protocol):
     ) -> Dict[str, Any]:
         ...
 
+    def list_objects(
+        self,
+        region: str,
+        bucket: str,
+        prefix: Optional[str] = None,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[str]:
+        ...
+
 
 @dataclass
 class Boto3AwsClient:
@@ -127,6 +136,26 @@ class Boto3AwsClient:
             "ETag": response.get("ETag"),
             "Preview": preview.decode("utf-8", errors="replace"),
         }
+
+    def list_objects(
+        self,
+        region: str,
+        bucket: str,
+        prefix: Optional[str] = None,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[str]:
+        client = self._session(credentials).client("s3", region_name=region)
+        paginator = client.get_paginator("list_objects_v2")
+        keys: list[str] = []
+        paginate_kwargs = {"Bucket": bucket}
+        if prefix:
+            paginate_kwargs["Prefix"] = prefix
+        for page in paginator.paginate(**paginate_kwargs):
+            for obj in page.get("Contents", []):
+                key = obj.get("Key")
+                if key:
+                    keys.append(key)
+        return keys
 
     def _session(self, credentials: Optional[AwsCredentials] = None):
         import boto3

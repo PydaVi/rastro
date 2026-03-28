@@ -1,0 +1,11 @@
+name: s3_list_bucket
+description: Enumerate S3 objects in a permitted bucket
+phase: discovery
+mitre_id: T1619
+platform: S3
+preconditions:
+  - audit_role_assumed
+postconditions:
+  - s3_objects_listed
+implementation: tools/aws/s3_list_bucket.py
+safe_simulation: true

@@ -277,6 +277,10 @@ Status atual:
 **Objetivo:** Expandir AWS de um único demo real para múltiplos caminhos
 reais de comprometimento, ainda concentrados em IAM, STS e S3.
 
+Base já preparada:
+- suporte a `s3_list_bucket` no executor AWS e no dry-run
+- fixture e exemplos para um segundo path com descoberta de objetos S3 antes do acesso final
+
 Princípio da fase:
 - Rastro não cresce por integração solta de serviço, e sim por
   **attack paths completos**

@@ -43,6 +43,8 @@ class AwsRealExecutor:
                 details = self._execute_iam_list_roles(client, action)
             elif action.tool == "iam_passrole":
                 details = self._execute_iam_passrole(client, action)
+            elif action.tool == "s3_list_bucket":
+                details = self._execute_s3_list_bucket(client, action)
             elif action.tool == "s3_read_sensitive":
                 details = self._execute_s3_read_sensitive(client, action)
             else:
@@ -186,6 +188,31 @@ class AwsRealExecutor:
                 "content_length": response.get("ContentLength"),
                 "etag": response.get("ETag"),
                 "preview": response.get("Preview"),
+            },
+        }
+
+    def _execute_s3_list_bucket(self, client: AwsClient, action: Action) -> dict:
+        region = _required_parameter(action, "region")
+        bucket = _required_parameter(action, "bucket")
+        prefix = action.parameters.get("prefix")
+        keys = client.list_objects(
+            region=region,
+            bucket=bucket,
+            prefix=prefix,
+            credentials=self._assumed_credentials,
+        )
+        return {
+            "details": f"Executed s3:ListBucket against {bucket}.",
+            "discovered_objects": keys,
+            "aws_region": region,
+            "request_summary": {
+                "api_calls": ["s3:ListBucket"],
+                "bucket": bucket,
+                "prefix": prefix,
+            },
+            "response_summary": {
+                "objects_returned": len(keys),
+                "sample_keys": keys[:5],
             },
         }
 

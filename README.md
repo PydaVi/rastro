@@ -267,6 +267,10 @@ do ambiente.
 | 9 | Linux + ambiente híbrido | futura |
 | 10 | v1.0 + dataset público + Neo4j | futura |
 
+A base do segundo path AWS já existe no código:
+- `s3_list_bucket` como passo intermediário de descoberta
+- fixture e exemplos para descobrir objetos S3 antes do acesso final
+
 ---
 
 ## Cobertura MITRE ATT&CK (planejada)
