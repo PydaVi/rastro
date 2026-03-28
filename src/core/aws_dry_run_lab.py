@@ -90,6 +90,17 @@ class AwsDryRunLab:
                 },
             )
 
+        if action.target is not None and action.target not in self.scope.allowed_resources:
+            return Observation(
+                success=False,
+                details={
+                    "reason": "resource_not_allowed",
+                    "resource": action.target,
+                    "execution_mode": "dry_run",
+                    "real_api_called": False,
+                },
+            )
+
         return None
 
 

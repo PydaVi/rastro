@@ -243,6 +243,29 @@ def test_aws_dry_run_lab_filters_disallowed_regions_and_accounts() -> None:
     assert observation.success is False
     assert observation.details["reason"] == "account_not_allowed"
 
+
+def test_aws_dry_run_lab_filters_disallowed_resources() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture = Fixture.load(repo_root / "fixtures" / "aws_dry_run_lab.json")
+    scope = Scope.model_validate_json((repo_root / "examples" / "scope_aws_dry_run.json").read_text())
+    scope.allowed_resources = ["arn:aws:iam::123456789012:root"]
+    lab = AwsDryRunLab.from_fixture(fixture, scope)
+
+    actions = lab.enumerate_actions(snapshot=None)
+
+    assert actions
+    assert all(action.target == "arn:aws:iam::123456789012:root" for action in actions)
+
+    denied = Action(
+        action_type=ActionType.ACCESS_RESOURCE,
+        actor="arn:aws:iam::123456789012:role/AuditRole",
+        target="arn:aws:s3:::sensitive-finance-data/payroll.csv",
+        parameters={"service": "s3", "region": "us-east-1"},
+    )
+    observation = lab.execute(denied)
+    assert observation.success is False
+    assert observation.details["reason"] == "resource_not_allowed"
+
 def test_aws_scope_rejects_dry_run_false() -> None:
     with pytest.raises(ValueError, match="dry_run=true"):
         Scope(

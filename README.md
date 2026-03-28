@@ -34,7 +34,7 @@ pendem de validação com credenciais reais.
 **Tool Registry base já está implementado** (YAML + pré-condições).
 **Fase 2 dry-run já começou** com cenário AWS local, autorização obrigatória,
 política explícita no report/audit e enforcement por `allowed_services`,
-`allowed_regions` e `aws_account_ids`.
+`allowed_regions`, `aws_account_ids` e `allowed_resources`.
 
 Ver [PLAN.md](PLAN.md) para roadmap completo.
 
@@ -177,7 +177,8 @@ pré-condições, não por prompt livre.
 
 **Scope Enforcer** — toda ação passa por aqui antes de executar. Sem exceções.
 No fluxo AWS dry-run, o ambiente também filtra ações por `allowed_services`,
-`allowed_regions` e `aws_account_ids`, e rejeita execução direta fora da política.
+`allowed_regions`, `aws_account_ids` e `allowed_resources`, e rejeita execução
+direta fora da política.
 
 **Attack Graph** — grafo dirigido onde nós são estados de comprometimento e
 arestas são técnicas executadas. Base do relatório final e de futuras
