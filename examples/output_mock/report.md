@@ -3,9 +3,13 @@
 Objective: Demonstrate a dry-run AWS IAM escalation path to a sensitive S3 object.
 
 ## Executive Summary
-```
-{'initial_identity': 'arn:aws:iam::123456789012:user/analyst', 'assumed_role': 'arn:aws:iam::123456789012:role/AuditRole', 'final_resource': 'arn:aws:s3:::sensitive-finance-data/payroll.csv', 'execution_mode': 'dry_run', 'real_api_called': False, 'proof': {'action': 's3:GetObject', 'resource': 'arn:aws:s3:::sensitive-finance-data/payroll.csv', 'decision': 'allowed'}, 'objective_met': True}
-```
+- Initial identity: analyst
+- Assumed role: AuditRole
+- Final resource: s3://sensitive-finance-data/payroll.csv
+- Execution mode: dry_run
+- Real API called: False
+- Proof: {'action': 's3:GetObject', 'resource': 'arn:aws:s3:::sensitive-finance-data/payroll.csv', 'decision': 'allowed'}
+- Objective met: True
 
 ## Starting Conditions
 ```
@@ -17,14 +21,16 @@ Total steps: 3
 
 ## Step-by-Step
 ```
-1. ActionType.ENUMERATE arn:aws:iam::123456789012:user/analyst -> arn:aws:iam::123456789012:root (tool=iam_list_roles) | success=True | backend=mock | reason=Selected highest-priority action enumerate.
-2. ActionType.ASSUME_ROLE arn:aws:iam::123456789012:user/analyst -> arn:aws:iam::123456789012:role/AuditRole (tool=iam_passrole) | success=True | backend=mock | reason=Selected highest-priority action assume_role.
-3. ActionType.ACCESS_RESOURCE arn:aws:iam::123456789012:role/AuditRole -> arn:aws:s3:::sensitive-finance-data/payroll.csv (tool=s3_read_sensitive) | success=True | backend=mock | reason=Selected highest-priority action access_resource.
+1. ActionType.ENUMERATE analyst -> root (tool=iam_list_roles) | success=True | backend=mock | reason=Selected highest-priority action enumerate.
+2. ActionType.ASSUME_ROLE analyst -> AuditRole (tool=iam_passrole) | success=True | backend=mock | reason=Selected highest-priority action assume_role.
+3. ActionType.ACCESS_RESOURCE AuditRole -> s3://sensitive-finance-data/payroll.csv (tool=s3_read_sensitive) | success=True | backend=mock | reason=Selected highest-priority action access_resource.
 ```
 
 ## Planner Details
 ```
-[{'step': 1, 'planner_backend': 'mock', 'planner_model': None, 'fallback_used': False, 'raw_response': None}, {'step': 2, 'planner_backend': 'mock', 'planner_model': None, 'fallback_used': False, 'raw_response': None}, {'step': 3, 'planner_backend': 'mock', 'planner_model': None, 'fallback_used': False, 'raw_response': None}]
+step=1 backend=mock model=- fallback=False
+step=2 backend=mock model=- fallback=False
+step=3 backend=mock model=- fallback=False
 ```
 
 ## Allowed Actions

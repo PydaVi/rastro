@@ -98,23 +98,21 @@ class ReportGenerator:
             suffix = " | fallback=true" if step["fallback_used"] else ""
             step_lines.append(
                 f"{step['step']}. {step['action']['action_type']} "
-                f"{step['action']['actor']} -> {step['action'].get('target') or '-'} "
+                f"{_short_resource(step['action']['actor'])} -> {_short_resource(step['action'].get('target') or '-')} "
                 f"(tool={step['action'].get('tool') or '-'}) "
                 f"| success={status} | backend={backend}{suffix} "
                 f"| reason={step['reason'] or '-'}"
             )
 
-        planner_details = []
+        planner_lines = []
         for step in steps:
-            planner_details.append(
-                {
-                    "step": step["step"],
-                    "planner_backend": step["planner_backend"],
-                    "planner_model": step["planner_model"],
-                    "fallback_used": step["fallback_used"],
-                    "raw_response": step["raw_response"],
-                }
+            line = (
+                f"step={step['step']} backend={step['planner_backend'] or '-'} "
+                f"model={step['planner_model'] or '-'} fallback={step['fallback_used']}"
             )
+            if step["raw_response"]:
+                line += f" raw={step['raw_response']}"
+            planner_lines.append(line)
 
         markdown = [
             "# MVP Report",
@@ -122,7 +120,13 @@ class ReportGenerator:
             f"Objective: {objective.description}",
             "",
             "## Executive Summary",
-            f"```\n{executive_summary}\n```",
+            f"- Initial identity: {_short_resource(executive_summary['initial_identity'])}",
+            f"- Assumed role: {_short_resource(executive_summary['assumed_role'])}",
+            f"- Final resource: {_short_resource(executive_summary['final_resource'])}",
+            f"- Execution mode: {executive_summary['execution_mode']}",
+            f"- Real API called: {executive_summary['real_api_called']}",
+            f"- Proof: {executive_summary['proof']}",
+            f"- Objective met: {executive_summary['objective_met']}",
             "",
             "## Starting Conditions",
             f"```\n{initial_state}\n```",
@@ -134,7 +138,7 @@ class ReportGenerator:
             "```\n" + "\n".join(step_lines) + "\n```",
             "",
             "## Planner Details",
-            f"```\n{planner_details}\n```",
+            "```\n" + "\n".join(planner_lines) + "\n```",
             "",
             "## Allowed Actions",
             f"```\n{allowed_actions}\n```",
@@ -213,3 +217,17 @@ def _build_executive_summary(steps: list[Dict], objective_met: bool) -> Dict:
         summary["final_resource"] = steps[-1].get("action", {}).get("target")
 
     return summary
+
+
+def _short_resource(value: str | None) -> str:
+    if not value:
+        return "-"
+    if value.startswith("arn:aws:iam::"):
+        if ":user/" in value:
+            return value.split(":user/", 1)[1]
+        if ":role/" in value:
+            return value.split(":role/", 1)[1]
+        return value.rsplit(":", 1)[-1]
+    if value.startswith("arn:aws:s3:::"):
+        return value.replace("arn:aws:s3:::", "s3://", 1)
+    return value
