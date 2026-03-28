@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from app.main import run
 from core.attack_graph import AttackGraph
 from core.audit import AuditLogger
@@ -181,3 +183,35 @@ def test_report_marks_fallback_steps(tmp_path: Path) -> None:
 
     assert report["json"]["steps"][0]["fallback_used"] is True
     assert report["json"]["steps"][0]["planner_backend"] == "ollama"
+
+
+def test_aws_scope_requires_authorization_fields() -> None:
+    with pytest.raises(ValueError):
+        Scope(
+            target="aws",
+            allowed_actions=[ActionType.ENUMERATE],
+            allowed_resources=["account"],
+            dry_run=True,
+            max_steps=5,
+        )
+
+
+def test_aws_dry_run_end_to_end(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture_path = repo_root / "fixtures" / "aws_dry_run_lab.json"
+    objective_path = repo_root / "examples" / "objective_aws_dry_run.json"
+    scope_path = repo_root / "examples" / "scope_aws_dry_run.json"
+
+    run(
+        fixture_path=fixture_path,
+        objective_path=objective_path,
+        scope_path=scope_path,
+        output_dir=tmp_path,
+        max_steps=5,
+        seed=1,
+    )
+
+    report = (tmp_path / "report.json").read_text()
+    assert '"execution_mode": "dry_run"' in report
+    assert '"real_api_called": false' in report
+    assert 'arn:aws:s3:::sensitive-finance-data/payroll.csv' in report

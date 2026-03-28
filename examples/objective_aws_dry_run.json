@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate a dry-run AWS IAM escalation path to a sensitive S3 object.",
+  "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+  "success_criteria": {
+    "flag": "priv_esc"
+  }
+}

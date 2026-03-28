@@ -254,6 +254,11 @@ DONE WHEN:
 - Modo `--dry-run` funcional
 - Relatório inclui evidências reais (ARNs, timestamps, respostas da API)
 
+Status atual:
+- groundwork de `dry-run` iniciado
+- `target=aws` já valida autorização e exige `dry_run=true`
+- executor AWS continua 100% local e não chama APIs reais
+
 ---
 
 ## Fase 3 — Kubernetes Attack Paths

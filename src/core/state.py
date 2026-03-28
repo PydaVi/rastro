@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple
+from typing import Dict, List, Protocol, Tuple
 
 from core.domain import Action, Observation, Objective, Scope
 from core.tool_registry import ToolRegistry
-from core.fixture import Fixture
+
+
+class StateSurface(Protocol):
+    def state_copy(self) -> Dict:
+        ...
+
+    def has_flag(self, flag: str) -> bool:
+        ...
 
 
 @dataclass
@@ -28,7 +35,7 @@ class StateManager:
         self,
         objective: Objective,
         scope: Scope,
-        fixture: Fixture,
+        fixture: StateSurface,
         tool_registry: ToolRegistry | None = None,
     ) -> None:
         self._objective = objective

@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+from typing import Protocol
+
 from core.domain import Action, Observation
-from core.fixture import Fixture
+
+
+class ExecutionSurface(Protocol):
+    def execute(self, action: Action) -> Observation:
+        ...
 
 
 class Executor:
-    def __init__(self, fixture: Fixture) -> None:
-        self._fixture = fixture
+    def __init__(self, surface: ExecutionSurface) -> None:
+        self._surface = surface
 
     def execute(self, action: Action) -> Observation:
-        # Only executes simulated transitions inside the fixture.
-        return self._fixture.execute(action)
+        # Only executes simulated transitions inside the configured surface.
+        return self._surface.execute(action)

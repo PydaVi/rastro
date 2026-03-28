@@ -6,7 +6,8 @@ from typing import Optional
 
 import typer
 
-from core.domain import Objective, Scope
+from core.domain import Objective, Scope, TargetType
+from core.aws_dry_run_lab import AwsDryRunLab
 from core.state import StateManager
 from core.fixture import Fixture
 from core.tool_registry import ToolRegistry
@@ -36,9 +37,12 @@ def run(
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    fixture = Fixture.load(fixture_path)
     objective = Objective.model_validate_json(objective_path.read_text())
     scope = Scope.model_validate_json(scope_path.read_text())
+    fixture = Fixture.load(fixture_path)
+    environment = fixture
+    if scope.target == TargetType.AWS:
+        environment = AwsDryRunLab.from_fixture(fixture)
 
     tool_registry = None
     tools_path = Path("tools")
@@ -48,7 +52,7 @@ def run(
     state = StateManager(
         objective=objective,
         scope=scope,
-        fixture=fixture,
+        fixture=environment,
         tool_registry=tool_registry,
     )
     planner_cfg = scope.planner
@@ -68,7 +72,7 @@ def run(
 
     planner: Planner = get_planner(backend=backend, **planner_kwargs)
     scope_enforcer = ScopeEnforcer(scope)
-    executor = Executor(fixture)
+    executor = Executor(environment)
     graph = AttackGraph()
     audit = AuditLogger(output_dir / "audit.jsonl")
     reporter = ReportGenerator(output_dir)
@@ -80,14 +84,14 @@ def run(
         {
             "objective": objective.model_dump(),
             "scope": scope.model_dump(),
-            "fixture": fixture.metadata(),
+            "fixture": environment.metadata(),
             "max_steps": effective_max_steps,
         },
     )
 
     for step in range(effective_max_steps):
         snapshot = state.snapshot()
-        available_actions = fixture.enumerate_actions(snapshot)
+        available_actions = environment.enumerate_actions(snapshot)
         if tool_registry is not None:
             available_actions = tool_registry.filter_actions(
                 available_actions, snapshot.fixture_state.get("flags", [])

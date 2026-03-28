@@ -112,6 +112,16 @@ python -m app.main \
   --out outputs
 ```
 
+Executar o fluxo AWS em `dry-run` (sem chamadas reais):
+
+```bash
+python -m app.main \
+  --fixture fixtures/aws_dry_run_lab.json \
+  --objective examples/objective_aws_dry_run.json \
+  --scope examples/scope_aws_dry_run.json \
+  --out outputs
+```
+
 Outputs gerados:
 
 ```
