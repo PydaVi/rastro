@@ -24,9 +24,9 @@ segurança defensiva. Isso tem implicações diretas nas decisões de design.
 Não refatore o que já está funcionando sem razão explícita.
 
 **Fase 1 está em progresso.** O trabalho atual é:
-1. Implementar `OllamaPlanner` em `src/planner/ollama_planner.py`
-2. Implementar `OpenAIPlanner` em `src/planner/openai_planner.py`
-3. Implementar `ClaudePlanner` em `src/planner/claude_planner.py`
+1. Implementar `OllamaPlanner` em `src/planner/ollama_planner.py` (**completo e validado localmente**)
+2. Implementar `OpenAIPlanner` em `src/planner/openai_planner.py` (**completo no código; pendente validação com credenciais**)
+3. Implementar `ClaudePlanner` em `src/planner/claude_planner.py` (**completo no código; pendente validação com credenciais**)
 4. Adicionar `Technique` ao domain model para MITRE ATT&CK mapping (**completo**)
 5. Atualizar o Report Engine para incluir seção MITRE (**completo**)
 6. Formalizar Tool Registry com schema YAML (**completo**)

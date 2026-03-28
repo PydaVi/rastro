@@ -26,8 +26,9 @@ audit log: completo
 **Fase 0 completa.** Loop central funcionando com fixture sintético IAM.
 Scope Enforcer, Audit Logger, Attack Graph e Report Engine implementados.
 
-**Fase 1 em progresso.** LLM Planner plugável (Ollama / OpenAI-compatible /
-Claude) + MITRE ATT&CK mapping + Tool Registry declarativo.
+**Fase 1 em progresso.** `OllamaPlanner` validado end-to-end com modelo local.
+`OpenAIPlanner` e `ClaudePlanner` já estão implementados no código, mas ainda
+pendem de validação com credenciais reais.
 
 **MITRE mapping no MVP já está implementado** (techniques no fixture + relatório).
 **Tool Registry base já está implementado** (YAML + pré-condições).
@@ -133,7 +134,7 @@ outputs/
 │      ▲                       │                   │
 │      │ estado                ▼                   │
 │  Attack Graph ◀──────── Tool Registry            │
-│  (networkx)             (YAML plugins)           │
+│  (estrutura própria)    (YAML plugins)           │
 └─────────────────────────────────────────────────┘
          │
          ▼
@@ -143,7 +144,7 @@ outputs/
 
 **Planner** — orquestrador LLM com memória de sessão. Recebe o estado atual
 do grafo e decide qual ação executar em seguida. Backend configurável:
-Ollama (padrão), qualquer API OpenAI-compatible, ou Anthropic.
+mock, Ollama (padrão), qualquer API OpenAI-compatible, ou Anthropic.
 
 **Tool Registry** — cada técnica ofensiva é um plugin YAML com nome, fase
 MITRE, pré-condições e pós-condições. O Planner seleciona tools por
@@ -216,7 +217,7 @@ do ambiente.
 - **Python 3.12** — ecossistema de segurança ofensiva (boto3, impacket,
   kubernetes-client, nuclei-python)
 - **Ollama** — LLM self-hosted padrão; qualquer modelo local compatível
-- **networkx** — attack graph em memória; Neo4j na v1.0
+- **Estrutura própria** — attack graph em memória; Neo4j pode entrar na v1.0
 - **pytest** — testes sem dependências externas
 
 ---

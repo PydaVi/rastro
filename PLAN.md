@@ -29,10 +29,8 @@ O que foi construído:
 - Suite de testes com pytest, sem dependências externas
 
 O que não foi construído ainda (intencionalmente):
-- LLM real no Planner
 - Ferramentas ofensivas reais (boto3, nmap, nuclei)
 - Acesso a ambientes reais
-- MITRE ATT&CK mapping no relatório
 
 ---
 
@@ -103,6 +101,8 @@ DONE WHEN:
 - Raciocínio do LLM aparece no audit log e no relatório
 - Mock planner continua funcionando para testes sem Ollama instalado
 
+Status: **completa**
+
 ---
 
 ### 1.2 — OpenAI-compatible Planner
@@ -115,6 +115,8 @@ DONE WHEN:
 - `rastro run --planner openai` funciona com `OPENAI_API_KEY` no ambiente
 - Mesma interface, mesmo comportamento esperado do Ollama Planner
 
+Status: **implementada no código; pendente validação end-to-end com credenciais**
+
 ---
 
 ### 1.3 — Claude Planner (opcional)
@@ -124,6 +126,8 @@ Não é o padrão, não é recomendado para ambientes sensíveis.
 
 DONE WHEN:
 - `rastro run --planner claude` funciona com `ANTHROPIC_API_KEY` no ambiente
+
+Status: **implementada no código; pendente validação end-to-end com credenciais**
 
 ---
 
@@ -191,9 +195,10 @@ Status: **completa**
 **Fase 1 completa quando:**
 1. `rastro run --planner ollama` executa com LLM local
 2. `rastro run --planner openai` executa com API externa
-3. Relatório inclui raciocínio do agente + mapping MITRE
-4. Tool Registry tem estrutura YAML funcional
-5. Todos os testes da Fase 0 continuam passando sem Ollama instalado
+3. `rastro run --planner claude` executa com API externa
+4. Relatório inclui raciocínio do agente + mapping MITRE
+5. Tool Registry tem estrutura YAML funcional
+6. Todos os testes da Fase 0 continuam passando sem dependências externas
 
 ---
 
