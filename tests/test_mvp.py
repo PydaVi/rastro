@@ -521,6 +521,67 @@ def test_state_tracks_active_assumed_roles_with_progress_actions() -> None:
     assert snapshot.active_branch_action_count > 0
 
 
+def test_state_exposes_candidate_paths_with_failed_status() -> None:
+    fixture_path = Path(__file__).resolve().parents[1] / "fixtures" / "aws_role_choice_lab.json"
+    fixture = Fixture.load(fixture_path)
+    objective = Objective(
+        description="test objective",
+        target="arn:aws:s3:::sensitive-finance-data/payroll.csv",
+        success_criteria={"flag": "priv_esc"},
+    )
+    scope = Scope(
+        target="aws",
+        allowed_actions=[
+            ActionType.ENUMERATE,
+            ActionType.ANALYZE,
+            ActionType.ASSUME_ROLE,
+            ActionType.ACCESS_RESOURCE,
+        ],
+        allowed_resources=[
+            "arn:aws:iam::123456789012:root",
+            "arn:aws:iam::123456789012:role/AuditRole",
+            "arn:aws:iam::123456789012:role/BucketReaderRole",
+            "arn:aws:s3:::sensitive-finance-data",
+            "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+            "arn:aws:s3:::public-reports",
+        ],
+        max_steps=6,
+        dry_run=True,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam", "sts", "s3"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+    )
+    state = StateManager(objective=objective, scope=scope, fixture=fixture)
+
+    wrong_assume = Action(
+        action_type=ActionType.ASSUME_ROLE,
+        actor="arn:aws:iam::123456789012:user/analyst",
+        target="arn:aws:iam::123456789012:role/BucketReaderRole",
+        parameters={},
+    )
+    wrong_observation = fixture.execute(wrong_assume)
+    state.apply_observation(wrong_assume, wrong_observation, "picked wrong role")
+
+    decoy_enum = Action(
+        action_type=ActionType.ENUMERATE,
+        actor="arn:aws:iam::123456789012:role/BucketReaderRole",
+        target="arn:aws:s3:::public-reports",
+        parameters={},
+    )
+    decoy_observation = fixture.execute(decoy_enum)
+    state.apply_observation(decoy_enum, decoy_observation, "enumerated decoy bucket")
+
+    snapshot = state.snapshot()
+    candidate_paths = {path.target: path for path in snapshot.candidate_paths}
+
+    assert candidate_paths["arn:aws:iam::123456789012:role/BucketReaderRole"].status == "failed"
+    assert candidate_paths["arn:aws:iam::123456789012:role/BucketReaderRole"].times_tested == 1
+    assert candidate_paths["arn:aws:iam::123456789012:role/AuditRole"].status == "untested"
+
+
 def test_snapshot_exposes_guidance_for_commit_to_pivot() -> None:
     fixture_path = Path(__file__).resolve().parents[1] / "fixtures" / "aws_role_choice_lab.json"
     fixture = Fixture.load(fixture_path)
@@ -656,6 +717,47 @@ def test_shape_available_actions_prefers_active_branch_progress() -> None:
     )
 
 
+def test_shape_available_actions_backtracks_to_untested_candidate_role() -> None:
+    actions = [
+        Action(
+            action_type=ActionType.ASSUME_ROLE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target="arn:aws:iam::123456789012:role/BucketReaderRole",
+            parameters={},
+        ),
+        Action(
+            action_type=ActionType.ASSUME_ROLE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target="arn:aws:iam::123456789012:role/AuditRole",
+            parameters={},
+        ),
+        Action(
+            action_type=ActionType.ENUMERATE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target="arn:aws:iam::123456789012:root",
+            parameters={},
+        ),
+    ]
+
+    class CandidatePath:
+        def __init__(self, target: str, status: str) -> None:
+            self.target = target
+            self.status = status
+
+    class Snapshot:
+        active_assumed_roles = []
+        candidate_paths = [
+            CandidatePath("arn:aws:iam::123456789012:role/BucketReaderRole", "failed"),
+            CandidatePath("arn:aws:iam::123456789012:role/AuditRole", "untested"),
+        ]
+
+    shaped = shape_available_actions(Snapshot(), actions)
+
+    assert len(shaped) == 1
+    assert shaped[0].action_type == ActionType.ASSUME_ROLE
+    assert shaped[0].target == "arn:aws:iam::123456789012:role/AuditRole"
+
+
 def test_mock_planner_avoids_failed_assume_role() -> None:
     planner = DeterministicPlanner(seed=1)
     actions = [
@@ -676,6 +778,41 @@ def test_mock_planner_avoids_failed_assume_role() -> None:
     class Snapshot:
         observations = []
         failed_assume_roles = ["arn:aws:iam::123456789012:role/BucketReaderRole"]
+
+    decision = planner.decide(Snapshot(), actions)
+
+    assert decision.action.target == "arn:aws:iam::123456789012:role/AuditRole"
+
+
+def test_mock_planner_prefers_untested_candidate_path() -> None:
+    planner = DeterministicPlanner(seed=1)
+    actions = [
+        Action(
+            action_type=ActionType.ASSUME_ROLE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target="arn:aws:iam::123456789012:role/BucketReaderRole",
+            parameters={},
+        ),
+        Action(
+            action_type=ActionType.ASSUME_ROLE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target="arn:aws:iam::123456789012:role/AuditRole",
+            parameters={},
+        ),
+    ]
+
+    class CandidatePath:
+        def __init__(self, target: str, status: str) -> None:
+            self.target = target
+            self.status = status
+
+    class Snapshot:
+        observations = []
+        failed_assume_roles = []
+        candidate_paths = [
+            CandidatePath("arn:aws:iam::123456789012:role/BucketReaderRole", "tested"),
+            CandidatePath("arn:aws:iam::123456789012:role/AuditRole", "untested"),
+        ]
 
     decision = planner.decide(Snapshot(), actions)
 
@@ -966,3 +1103,30 @@ def test_aws_role_choice_dry_run_end_to_end(tmp_path: Path) -> None:
     assert '"rejected_roles": [' in report
     assert 'BucketReaderRole' in report_md
     assert 'candidate assume_role' in report_md
+
+
+def test_aws_backtracking_dry_run_end_to_end(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture_path = repo_root / "fixtures" / "aws_backtracking_lab.json"
+    objective_path = repo_root / "examples" / "objective_aws_backtracking.json"
+    scope_path = repo_root / "examples" / "scope_aws_backtracking.json"
+
+    run(
+        fixture_path=fixture_path,
+        objective_path=objective_path,
+        scope_path=scope_path,
+        output_dir=tmp_path,
+        max_steps=8,
+        seed=1,
+    )
+
+    report = (tmp_path / "report.json").read_text()
+    report_md = (tmp_path / "report.md").read_text()
+
+    assert '"objective_met": true' in report
+    assert '"arn:aws:iam::123456789012:role/A-DeadEndRole"' in report
+    assert '"arn:aws:iam::123456789012:role/Z-SensitiveRole"' in report
+    assert '"tool": "s3_list_bucket"' in report
+    assert '"tool": "s3_read_sensitive"' in report
+    assert 'A-DeadEndRole' in report_md
+    assert 'Z-SensitiveRole' in report_md

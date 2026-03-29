@@ -17,6 +17,14 @@ class StateSurface(Protocol):
 
 
 @dataclass
+class CandidatePath:
+    target: str
+    status: str = "untested"
+    times_tested: int = 0
+    has_progress_actions: bool = False
+
+
+@dataclass
 class StateSnapshot:
     objective: Objective
     scope: Scope
@@ -36,6 +44,7 @@ class StateSnapshot:
     should_commit_to_pivot: bool = False
     should_explore_current_branch: bool = False
     candidate_roles: List[str] = field(default_factory=list)
+    candidate_paths: List[CandidatePath] = field(default_factory=list)
 
 
 class StateManager:
@@ -80,6 +89,7 @@ class StateManager:
             should_commit_to_pivot=self._should_commit_to_pivot(),
             should_explore_current_branch=self._should_explore_current_branch(),
             candidate_roles=self._candidate_roles(),
+            candidate_paths=self._candidate_paths(),
         )
 
     def initial_state(self) -> Dict:
@@ -189,3 +199,41 @@ class StateManager:
 
     def _should_explore_current_branch(self) -> bool:
         return self._active_branch_action_count() > 0
+
+    def _candidate_paths(self) -> List[CandidatePath]:
+        active_roles = set(self._active_assumed_roles())
+        failed_roles = set(self._failed_assume_roles)
+        tested_roles = set(self._tested_assume_roles)
+        identities = self._fixture.state_copy().get("identities", {})
+        candidate_paths: List[CandidatePath] = []
+
+        for role in self._candidate_roles():
+            available_actions = identities.get(role, {}).get("available_actions", [])
+            has_progress_actions = any(
+                action.get("action_type") in {"enumerate", "access_resource"}
+                for action in available_actions
+            )
+            if role in active_roles:
+                status = "active"
+            elif role in failed_roles:
+                status = "failed"
+            elif role in tested_roles:
+                status = "tested"
+            else:
+                status = "untested"
+
+            times_tested = sum(
+                1
+                for action in self._actions_taken
+                if action.action_type.value == "assume_role" and action.target == role
+            )
+            candidate_paths.append(
+                CandidatePath(
+                    target=role,
+                    status=status,
+                    times_tested=times_tested,
+                    has_progress_actions=has_progress_actions,
+                )
+            )
+
+        return candidate_paths

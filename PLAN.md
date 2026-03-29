@@ -316,6 +316,7 @@ Progresso atual:
 - engine agora possui: memória de tentativa, guidance de pivô, action shaping
 - EXP-004: reavaliar OllamaPlanner após as mesmas mudanças
 - EXP-005: backtracking estruturado com candidate path tracking
+- Path 4 dry-run adicionado para forçar backtracking após dead-end branch
 - ver `docs/path-3-role-choice-learning.md`
 - ver `docs/experiments/EXP-003-path3-role-choice.md`
 

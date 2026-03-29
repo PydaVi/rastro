@@ -69,11 +69,22 @@ def build_prompt(snapshot, available_actions: List[Action]) -> str:
         "candidate_roles": candidate_roles,
         "failed_assume_roles": failed_assume_roles,
         "tested_assume_roles": tested_assume_roles,
+        "candidate_paths": [
+            {
+                "target": path.target,
+                "status": path.status,
+                "times_tested": path.times_tested,
+                "has_progress_actions": path.has_progress_actions,
+            }
+            for path in getattr(snapshot, "candidate_paths", [])
+        ],
         "guidance": (
             "If enumeration_sufficient is true and assume_role actions are available, "
             "prefer a non-failed assume_role instead of repeating enumerate. "
             "If should_explore_current_branch is true, prefer an action from active_assumed_roles "
-            "before opening a new pivot. Never choose a role listed in failed_assume_roles."
+            "before opening a new pivot. Never choose a role listed in failed_assume_roles. "
+            "If no active branch has progress, backtrack to an untested candidate path before "
+            "revisiting tested or failed pivots."
         ),
         "enumerate_action_count": len(enumeration_actions),
         "assume_role_action_count": len(assume_actions),
@@ -90,6 +101,7 @@ def build_prompt(snapshot, available_actions: List[Action]) -> str:
                 "tested_assume_roles": tested_assume_roles,
                 "failed_assume_roles": failed_assume_roles,
                 "active_assumed_roles": active_assumed_roles,
+                "candidate_paths": planner_guidance["candidate_paths"],
             },
             "planner_guidance": planner_guidance,
             "available_actions": [
