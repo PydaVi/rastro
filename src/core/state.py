@@ -22,6 +22,7 @@ class CandidatePath:
     status: str = "untested"
     times_tested: int = 0
     has_progress_actions: bool = False
+    path_score: int = 0
 
 
 @dataclass
@@ -233,7 +234,29 @@ class StateManager:
                     status=status,
                     times_tested=times_tested,
                     has_progress_actions=has_progress_actions,
+                    path_score=self._path_score(
+                        status=status,
+                        times_tested=times_tested,
+                        has_progress_actions=has_progress_actions,
+                    ),
                 )
             )
 
         return candidate_paths
+
+    def _path_score(self, status: str, times_tested: int, has_progress_actions: bool) -> int:
+        score = 0
+        if status == "active":
+            score += 50
+        elif status == "untested":
+            score += 20
+        elif status == "tested":
+            score += 5
+        elif status == "failed":
+            score -= 100
+
+        if has_progress_actions:
+            score += 15
+
+        score -= times_tested * 5
+        return score

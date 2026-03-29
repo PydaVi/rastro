@@ -1181,6 +1181,64 @@ def test_aws_multi_branch_backtracking_dry_run_end_to_end(tmp_path: Path) -> Non
     assert 'RoleQ' in report_md
 
 
+def test_action_shaping_orders_untested_candidate_paths_by_score_then_target() -> None:
+    fixture = Fixture.load(
+        Path(__file__).resolve().parents[1] / "fixtures" / "aws_permuted_branching_roleq_success_lab.json"
+    )
+    objective = Objective.model_validate_json(
+        (
+            Path(__file__).resolve().parents[1]
+            / "examples"
+            / "objective_aws_permuted_branching.json"
+        ).read_text()
+    )
+    scope = Scope.model_validate_json(
+        (
+            Path(__file__).resolve().parents[1]
+            / "examples"
+            / "scope_aws_permuted_branching.json"
+        ).read_text()
+    )
+    state = StateManager(objective=objective, scope=scope, fixture=AwsDryRunLab.from_fixture(fixture, scope))
+
+    snapshot = state.snapshot()
+    shaped = shape_available_actions(snapshot, AwsDryRunLab.from_fixture(fixture, scope).enumerate_actions(snapshot))
+
+    assume_targets = [action.target for action in shaped if action.action_type == ActionType.ASSUME_ROLE]
+    assert assume_targets == [
+        "arn:aws:iam::123456789012:role/RoleA",
+        "arn:aws:iam::123456789012:role/RoleM",
+        "arn:aws:iam::123456789012:role/RoleQ",
+    ]
+
+
+def test_candidate_paths_expose_path_score() -> None:
+    fixture = Fixture.load(
+        Path(__file__).resolve().parents[1] / "fixtures" / "aws_multi_branch_backtracking_lab.json"
+    )
+    objective = Objective.model_validate_json(
+        (
+            Path(__file__).resolve().parents[1]
+            / "examples"
+            / "objective_aws_multi_branch_backtracking.json"
+        ).read_text()
+    )
+    scope = Scope.model_validate_json(
+        (
+            Path(__file__).resolve().parents[1]
+            / "examples"
+            / "scope_aws_multi_branch_backtracking.json"
+        ).read_text()
+    )
+    state = StateManager(objective=objective, scope=scope, fixture=AwsDryRunLab.from_fixture(fixture, scope))
+
+    snapshot = state.snapshot()
+
+    assert snapshot.candidate_paths
+    assert all(hasattr(path, "path_score") for path in snapshot.candidate_paths)
+    assert all(path.path_score == 20 for path in snapshot.candidate_paths)
+
+
 @pytest.mark.parametrize(
     ("fixture_name", "successful_role"),
     [

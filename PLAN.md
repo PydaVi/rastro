@@ -327,11 +327,15 @@ Progresso atual:
 - EXP-007 com OpenAIPlanner: falhou com `max_steps=5` por budget insuficiente, sem regressao para loop
 - EXP-007 com OpenAIPlanner: passou nas tres permutacoes com `max_steps=8`
 - principal achado do EXP-007: convergencia robusta sob permutacao, mas forte sensibilidade a ordem de `available_actions`
+- EXP-008: primeiro corte de `path_score` implementado no estado e no `action shaping`
+- EXP-008 com OpenAIPlanner: melhorou de 8 para 6 passos em duas das tres variantes do EXP-007
+- principal achado do EXP-008: order sensitivity reduzida, mas nao eliminada
 - ver `docs/path-3-role-choice-learning.md`
 - ver `docs/experiments/EXP-003-path3-role-choice.md`
 - ver `docs/experiments/EXP-005-backtracking-first-cut.md`
 - ver `docs/experiments/EXP-006-multi-branch-backtracking.md`
 - ver `docs/experiments/EXP-007-order-and-label-permutation.md`
+- ver `docs/experiments/EXP-008-path-scoring-order-invariance.md`
 
 ---
 
