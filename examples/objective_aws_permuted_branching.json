@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate robustness to action-order and role-label permutations in a three-branch AWS backtracking scenario.",
+  "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+  "success_criteria": {
+    "flag": "multi_branch_backtracking"
+  }
+}

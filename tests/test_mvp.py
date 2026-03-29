@@ -1181,6 +1181,43 @@ def test_aws_multi_branch_backtracking_dry_run_end_to_end(tmp_path: Path) -> Non
     assert 'RoleQ' in report_md
 
 
+@pytest.mark.parametrize(
+    ("fixture_name", "successful_role"),
+    [
+        ("aws_permuted_branching_rolea_success_lab.json", "RoleA"),
+        ("aws_permuted_branching_rolem_success_lab.json", "RoleM"),
+        ("aws_permuted_branching_roleq_success_lab.json", "RoleQ"),
+    ],
+)
+def test_aws_permuted_branching_variants_dry_run_end_to_end(
+    tmp_path: Path,
+    fixture_name: str,
+    successful_role: str,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture_path = repo_root / "fixtures" / fixture_name
+    objective_path = repo_root / "examples" / "objective_aws_permuted_branching.json"
+    scope_path = repo_root / "examples" / "scope_aws_permuted_branching.json"
+    output_dir = tmp_path / successful_role
+
+    run(
+        fixture_path=fixture_path,
+        objective_path=objective_path,
+        scope_path=scope_path,
+        output_dir=output_dir,
+        max_steps=8,
+        seed=1,
+    )
+
+    report = (output_dir / "report.json").read_text()
+    report_md = (output_dir / "report.md").read_text()
+
+    assert '"objective_met": true' in report
+    assert '"tool": "s3_read_sensitive"' in report
+    assert f'"accessed_via": "arn:aws:iam::123456789012:role/{successful_role}"' in report
+    assert successful_role in report_md
+
+
 def test_aws_backtracking_real_local_artifacts_are_consistent() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     fixture = Fixture.load(

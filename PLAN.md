@@ -323,10 +323,15 @@ Progresso atual:
 - EXP-006: Path 5 com tres pivots concorrentes, dois dead-ends e um branch correto
 - Path 5 endurecido: exigiu neutralizacao semantica e aumento de `max_steps` para expor backtracking repetido
 - Path 5 dry-run com OpenAIPlanner: passou apos dois dead-ends consecutivos e convergencia no terceiro pivo
+- EXP-007: permutacao de ordem das `assume_role` e do branch correto
+- EXP-007 com OpenAIPlanner: falhou com `max_steps=5` por budget insuficiente, sem regressao para loop
+- EXP-007 com OpenAIPlanner: passou nas tres permutacoes com `max_steps=8`
+- principal achado do EXP-007: convergencia robusta sob permutacao, mas forte sensibilidade a ordem de `available_actions`
 - ver `docs/path-3-role-choice-learning.md`
 - ver `docs/experiments/EXP-003-path3-role-choice.md`
 - ver `docs/experiments/EXP-005-backtracking-first-cut.md`
 - ver `docs/experiments/EXP-006-multi-branch-backtracking.md`
+- ver `docs/experiments/EXP-007-order-and-label-permutation.md`
 
 ---
 
