@@ -4,7 +4,7 @@
 - ID: EXP-005
 - Fase: 3
 - Pré-requisito: EXP-003 concluído
-- Status: primeiro corte implementado; validado offline e em Path 4 dry-run com OpenAIPlanner
+- Status: primeiro corte implementado; validado offline, em Path 4 dry-run com OpenAIPlanner, e em Path 4 AWS real como convergência end-to-end
 
 ## Contexto
 O EXP-003 mostrou que memória mínima e `action shaping` foram suficientes para
@@ -43,6 +43,7 @@ alternativo e alcançar o objetivo final.
 - rerun do Path 3 real com `OpenAIPlanner`
 - Path 4 dry-run com `MockPlanner`
 - Path 4 dry-run com `OpenAIPlanner`
+- Path 4 AWS real com `OpenAIPlanner`
 
 ### Critério de sucesso
 - o estado expõe caminhos candidatos com status explícito
@@ -139,6 +140,35 @@ Resultado:
 - pivotou para o candidate path alternativo
 - alcançou o objetivo final
 
+### Path 4 AWS real com OpenAIPlanner
+O Path 4 real foi então executado com `OpenAIPlanner`.
+
+Houve um falso negativo inicial no ambiente real:
+
+- o run ficou preso em `assume_role`
+- a causa não foi o planner em si, e sim o `ToolRegistry`
+- as tools `s3_list_bucket` e `s3_read_sensitive` exigiam o flag `audit_role_assumed`
+- o fixture real do Path 4 adicionava apenas `finance_audit_role_assumed` e `data_ops_role_assumed`
+- isso fazia com que as ações de progresso do branch ativo fossem filtradas, apesar de existirem no estado
+
+Após corrigir o fixture real para também adicionar `audit_role_assumed`, o Path 4 real convergiu:
+
+1. `iam_list_roles`
+2. `assume_role -> Z-DataOpsRole`
+3. `s3_read_sensitive -> payroll.csv`
+
+Resultado:
+
+- `objective_met: True`
+- `real_api_called: True`
+
+Interpretação específica do run real:
+
+- o ambiente real ficou consistente de ponta a ponta
+- o executor real, o fixture local de suporte, o `ToolRegistry` e o `action shaping` passaram a operar sem conflito
+- esse run validou a convergência real do cenário
+- esse run não validou backtracking real, porque o planner escolheu a role correta de primeira
+
 ## Interpretação
 H1 foi confirmada no primeiro corte:
 
@@ -161,34 +191,51 @@ O falso negativo intermediário também foi útil:
 - provou que desalinhamento entre fixture e scope pode simular uma falha de planner
 - reforçou que parte da metodologia experimental precisa validar o espaço de ações disponível, não apenas o output do LLM
 
+O falso negativo do ambiente real adicionou uma segunda lição metodológica:
+
+- além de fixture e scope, o conjunto de flags esperado pelo `ToolRegistry` também faz parte da validade experimental
+- uma falha de alinhamento entre transições do fixture e precondições das tools pode se manifestar como erro aparente de planner
+
 ## Implicações arquiteturais
 - `candidate path tracking` deixa de ser apenas requisito de roadmap e vira estrutura do estado
 - backtracking sai do prompt e entra na policy do engine
 - cenários de branch concorrente agora podem ser projetados e auditados com causa isolável
 - alinhamento entre fixture e scope vira requisito explícito de validade experimental
+- alinhamento entre flags do fixture e precondições do `ToolRegistry` vira requisito explícito de validade experimental
 
 ## Ameaças à validade
 - a validação principal de backtracking forte ainda foi em `dry_run`, não em AWS real
 - o mecanismo atual continua heurístico; não é um planejador de árvore completo
 - o Path 4 foi desenhado para induzir um tipo específico de dead-end, não uma família ampla de dead-ends
+- o run real do Path 4 validou convergência end-to-end, mas não exigiu erro inicial de pivô
 
 ## Conclusão
 O EXP-005 primeiro corte foi suficiente para introduzir backtracking básico,
-preservar a estabilidade do Path 3 e demonstrar backtracking explícito em um
-cenário dedicado do Path 4 com `OpenAIPlanner`.
+preservar a estabilidade do Path 3, demonstrar backtracking explícito em um
+cenário dedicado do Path 4 com `OpenAIPlanner` em `dry_run`, e validar a
+consistência end-to-end do mesmo cenário em AWS real.
 
 O problema central desta etapa deixou de ser apenas "o planner escolhe certo?"
 e passou a ser "o engine mantém estado suficiente para retornar a um ponto de
 decisão com alternativas ainda válidas?". Nesta formulação, o resultado foi
 positivo.
 
+Ao mesmo tempo, a evidência final ficou separada em duas camadas:
+
+- `dry_run`: prova forte de backtracking
+- AWS real: prova de consistência end-to-end do cenário, sem backtracking obrigatório no run observado
+
 ## Próximos passos
 - repetir a ideia de Path 4 em cenários com mais de dois pivôs
 - testar dead-ends com profundidade maior que um único passo de exploração
-- validar o mesmo comportamento em ambiente AWS real quando o lab correspondente existir
+- se necessário, endurecer um cenário AWS real futuro para aumentar a chance de erro inicial de pivô sem transformar o teste em script
 
 ## Artefatos
 - `fixtures/aws_backtracking_lab.json`
 - `examples/objective_aws_backtracking.json`
 - `examples/scope_aws_backtracking.json`
 - `examples/scope_aws_backtracking_openai.json`
+- `terraform_local_lab/rastro_local/aws_backtracking_lab.local.json`
+- `terraform_local_lab/rastro_local/objective_aws_backtracking.local.json`
+- `terraform_local_lab/rastro_local/scope_aws_backtracking_real.local.json`
+- `terraform_local_lab/rastro_local/scope_aws_backtracking_openai.local.json`

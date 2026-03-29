@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate an AWS IAM path in a real lab where a plausible dead-end role must be abandoned before reaching the sensitive S3 object.",
+  "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+  "success_criteria": {
+    "flag": "priv_esc"
+  }
+}

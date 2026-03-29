@@ -13,6 +13,7 @@ from reporting.report import ReportGenerator
 from execution.scope_enforcer import ScopeEnforcer
 from core.fixture import Fixture
 from core.sanitizer import write_sanitized_artifacts
+from core.tool_registry import ToolRegistry
 from planner.action_shaping import shape_available_actions
 from planner.ollama_planner import OllamaPlanner
 from planner.openai_planner import _parse_response as parse_openai_response
@@ -1150,3 +1151,90 @@ def test_aws_backtracking_openai_scope_keeps_assume_role_actions_available() -> 
         action.target == "arn:aws:iam::123456789012:role/Z-DataOpsRole"
         for action in actions
     )
+
+
+def test_aws_backtracking_real_local_artifacts_are_consistent() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture = Fixture.load(
+        repo_root / "terraform_local_lab" / "rastro_local" / "aws_backtracking_lab.local.json"
+    )
+    scope = Scope.model_validate_json(
+        (
+            repo_root
+            / "terraform_local_lab"
+            / "rastro_local"
+            / "scope_aws_backtracking_openai.local.json"
+        ).read_text()
+    )
+    objective = Objective.model_validate_json(
+        (
+            repo_root
+            / "terraform_local_lab"
+            / "rastro_local"
+            / "objective_aws_backtracking.local.json"
+        ).read_text()
+    )
+    lab = AwsDryRunLab.from_fixture(fixture, scope)
+
+    actions = lab.enumerate_actions(snapshot=None)
+
+    assert objective.target == "arn:aws:s3:::sensitive-finance-data/payroll.csv"
+    assert any(
+        action.target == "arn:aws:iam::550192603632:role/A-FinanceAuditRole"
+        for action in actions
+    )
+    assert any(
+        action.target == "arn:aws:iam::550192603632:role/Z-DataOpsRole"
+        for action in actions
+    )
+
+
+def test_aws_backtracking_real_local_exposes_progress_after_assume_role() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture = Fixture.load(
+        repo_root / "terraform_local_lab" / "rastro_local" / "aws_backtracking_lab.local.json"
+    )
+    scope = Scope.model_validate_json(
+        (
+            repo_root
+            / "terraform_local_lab"
+            / "rastro_local"
+            / "scope_aws_backtracking_openai.local.json"
+        ).read_text()
+    )
+    objective = Objective.model_validate_json(
+        (
+            repo_root
+            / "terraform_local_lab"
+            / "rastro_local"
+            / "objective_aws_backtracking.local.json"
+        ).read_text()
+    )
+    state = StateManager(objective=objective, scope=scope, fixture=fixture)
+    tool_registry = ToolRegistry.load(repo_root / "tools")
+
+    initial_actions = fixture.enumerate_actions(None)
+    enum_action = next(action for action in initial_actions if action.tool == "iam_list_roles")
+    enum_obs = fixture.execute(enum_action)
+    state.apply_observation(enum_action, enum_obs, "enum", {})
+
+    assume_action = next(
+        action
+        for action in tool_registry.filter_actions(
+            fixture.enumerate_actions(state.snapshot()),
+            state.snapshot().fixture_state.get("flags", []),
+        )
+        if action.target == "arn:aws:iam::550192603632:role/Z-DataOpsRole"
+    )
+    assume_obs = fixture.execute(assume_action)
+    state.apply_observation(assume_action, assume_obs, "assume", {})
+
+    available = tool_registry.filter_actions(
+        fixture.enumerate_actions(state.snapshot()),
+        state.snapshot().fixture_state.get("flags", []),
+    )
+    shaped = shape_available_actions(state.snapshot(), available)
+
+    assert any(action.tool == "s3_read_sensitive" for action in available)
+    assert len(shaped) == 1
+    assert shaped[0].tool == "s3_read_sensitive"
