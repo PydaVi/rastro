@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate branch prioritization when the correct AWS path requires two discovery steps before sensitive S3 access.",
+  "target": "arn:aws:s3:::sensitive-finance-data/finance/payroll.csv",
+  "success_criteria": {
+    "flag": "deep_branch_success"
+  }
+}

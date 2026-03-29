@@ -1355,6 +1355,30 @@ def test_aws_permuted_branching_variants_dry_run_end_to_end(
     assert successful_role in report_md
 
 
+def test_aws_deeper_branching_dry_run_end_to_end(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture_path = repo_root / "fixtures" / "aws_deeper_branching_lab.json"
+    objective_path = repo_root / "examples" / "objective_aws_deeper_branching.json"
+    scope_path = repo_root / "examples" / "scope_aws_deeper_branching.json"
+
+    run(
+        fixture_path=fixture_path,
+        objective_path=objective_path,
+        scope_path=scope_path,
+        output_dir=tmp_path,
+        max_steps=10,
+        seed=1,
+    )
+
+    report = (tmp_path / "report.json").read_text()
+    report_md = (tmp_path / "report.md").read_text()
+
+    assert '"objective_met": true' in report
+    assert '"finance/payroll.csv"' in report
+    assert '"tool": "s3_read_sensitive"' in report
+    assert 'RoleQ' in report_md
+
+
 def test_aws_backtracking_real_local_artifacts_are_consistent() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     fixture = Fixture.load(

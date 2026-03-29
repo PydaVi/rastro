@@ -58,10 +58,20 @@ class Fixture:
                 transition["action_type"] == action.action_type.value
                 and transition["actor"] == action.actor
                 and transition.get("target") == action.target
+                and self._parameters_match(
+                    transition.get("parameters"),
+                    action.parameters,
+                )
             ):
                 self._apply_transition(transition)
                 return Observation(success=True, details=transition.get("observation", {}))
         return Observation(success=False, details={"reason": "no_transition"})
+
+    @staticmethod
+    def _parameters_match(expected: Dict | None, actual: Dict) -> bool:
+        if not expected:
+            return True
+        return expected == actual
 
     def _apply_transition(self, transition: Dict) -> None:
         state = self.data.setdefault("state", {})

@@ -336,6 +336,11 @@ Progresso atual:
 - EXP-010: `path_score` com `lookahead_signals`
 - EXP-010 com OpenAIPlanner: as tres variantes convergiram em 4 passos
 - principal achado do EXP-010: lookahead-aware scoring resolveu a order sensitivity do benchmark atual
+- EXP-011: benchmark de branch profundo com duas etapas de descoberta antes do acesso final
+- EXP-011 falhou inicialmente por limitacao do simulador: `Fixture.execute()` nao diferenciava transicoes pelo `parameters`
+- correcao aplicada: matching de transicao passou a considerar `parameters` quando definidos
+- EXP-011 com OpenAIPlanner: passou em 5 passos (`RoleQ -> list finance/ -> list finance/payroll -> read`)
+- principal achado do EXP-011: lookahead-aware scoring generaliza para branch profundo quando o simulador representa transicoes multiestagio corretamente
 - ver `docs/path-3-role-choice-learning.md`
 - ver `docs/experiments/EXP-003-path3-role-choice.md`
 - ver `docs/experiments/EXP-005-backtracking-first-cut.md`
@@ -344,6 +349,7 @@ Progresso atual:
 - ver `docs/experiments/EXP-008-path-scoring-order-invariance.md`
 - ver `docs/experiments/EXP-009-evidence-aware-path-scoring.md`
 - ver `docs/experiments/EXP-010-lookahead-path-scoring.md`
+- ver `docs/experiments/EXP-011-deeper-branch-lookahead.md`
 
 ---
 

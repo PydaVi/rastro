@@ -1,0 +1,33 @@
+{
+  "target": "aws",
+  "allowed_actions": [
+    "enumerate",
+    "analyze",
+    "assume_role",
+    "access_resource"
+  ],
+  "allowed_resources": [
+    "arn:aws:iam::123456789012:root",
+    "arn:aws:iam::123456789012:role/RoleA",
+    "arn:aws:iam::123456789012:role/RoleM",
+    "arn:aws:iam::123456789012:role/RoleQ",
+    "arn:aws:s3:::sensitive-finance-data",
+    "arn:aws:s3:::sensitive-finance-data/finance/payroll.csv"
+  ],
+  "max_steps": 10,
+  "dry_run": true,
+  "aws_account_ids": [
+    "123456789012"
+  ],
+  "allowed_regions": [
+    "us-east-1"
+  ],
+  "allowed_services": [
+    "iam",
+    "sts",
+    "s3"
+  ],
+  "authorized_by": "Demo Operator",
+  "authorized_at": "2026-03-28",
+  "authorization_document": "docs/authorization-demo.md"
+}
