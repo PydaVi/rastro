@@ -1153,6 +1153,34 @@ def test_aws_backtracking_openai_scope_keeps_assume_role_actions_available() -> 
     )
 
 
+def test_aws_multi_branch_backtracking_dry_run_end_to_end(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture_path = repo_root / "fixtures" / "aws_multi_branch_backtracking_lab.json"
+    objective_path = repo_root / "examples" / "objective_aws_multi_branch_backtracking.json"
+    scope_path = repo_root / "examples" / "scope_aws_multi_branch_backtracking.json"
+
+    run(
+        fixture_path=fixture_path,
+        objective_path=objective_path,
+        scope_path=scope_path,
+        output_dir=tmp_path,
+        max_steps=8,
+        seed=1,
+    )
+
+    report = (tmp_path / "report.json").read_text()
+    report_md = (tmp_path / "report.md").read_text()
+
+    assert '"objective_met": true' in report
+    assert '"arn:aws:iam::123456789012:role/RoleA"' in report
+    assert '"arn:aws:iam::123456789012:role/RoleM"' in report
+    assert '"arn:aws:iam::123456789012:role/RoleQ"' in report
+    assert '"tool": "s3_read_sensitive"' in report
+    assert 'RoleA' in report_md
+    assert 'RoleM' in report_md
+    assert 'RoleQ' in report_md
+
+
 def test_aws_backtracking_real_local_artifacts_are_consistent() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     fixture = Fixture.load(

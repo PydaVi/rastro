@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate an AWS IAM path with three competing assumable roles where two dead-end branches must be abandoned before the sensitive S3 object is reached.",
+  "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+  "success_criteria": {
+    "flag": "priv_esc"
+  }
+}

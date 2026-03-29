@@ -320,9 +320,13 @@ Progresso atual:
 - Path 4 dry-run com OpenAIPlanner: passou e demonstrou backtracking explicito
 - Path 4 em AWS real com OpenAIPlanner: passou como validacao end-to-end, sem backtracking obrigatorio no run observado
 - Path 4 endurecido para tornar o pivô errado inicialmente mais atraente sem tornar o pivô correto impossível
+- EXP-006: Path 5 com tres pivots concorrentes, dois dead-ends e um branch correto
+- Path 5 endurecido: exigiu neutralizacao semantica e aumento de `max_steps` para expor backtracking repetido
+- Path 5 dry-run com OpenAIPlanner: passou apos dois dead-ends consecutivos e convergencia no terceiro pivo
 - ver `docs/path-3-role-choice-learning.md`
 - ver `docs/experiments/EXP-003-path3-role-choice.md`
 - ver `docs/experiments/EXP-005-backtracking-first-cut.md`
+- ver `docs/experiments/EXP-006-multi-branch-backtracking.md`
 
 ---
 
