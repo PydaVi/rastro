@@ -76,6 +76,8 @@ def build_prompt(snapshot, available_actions: List[Action]) -> str:
                 "times_tested": path.times_tested,
                 "has_progress_actions": path.has_progress_actions,
                 "path_score": path.path_score,
+                "observed_resources": path.observed_resources,
+                "lookahead_signals": path.lookahead_signals,
             }
             for path in getattr(snapshot, "candidate_paths", [])
         ],
@@ -86,7 +88,10 @@ def build_prompt(snapshot, available_actions: List[Action]) -> str:
             "before opening a new pivot. Never choose a role listed in failed_assume_roles. "
             "If no active branch has progress, backtrack to an untested candidate path before "
             "revisiting tested or failed pivots. When multiple pivots are available, prefer the "
-            "candidate path with the highest path_score rather than following presentation order."
+            "candidate path with the highest path_score rather than following presentation order. "
+            "Treat observed_resources that closely match the objective target as strong evidence. "
+            "Also treat lookahead_signals from actions available in a branch as useful evidence "
+            "when ranking pivots before exploring them."
         ),
         "enumerate_action_count": len(enumeration_actions),
         "assume_role_action_count": len(assume_actions),

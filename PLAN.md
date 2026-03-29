@@ -330,12 +330,20 @@ Progresso atual:
 - EXP-008: primeiro corte de `path_score` implementado no estado e no `action shaping`
 - EXP-008 com OpenAIPlanner: melhorou de 8 para 6 passos em duas das tres variantes do EXP-007
 - principal achado do EXP-008: order sensitivity reduzida, mas nao eliminada
+- EXP-009: `path_score` com evidencia observada de branch
+- EXP-009 com OpenAIPlanner: melhorou `rolea_success` de 6 para 4 passos, mas nao resolveu o pior caso
+- principal achado do EXP-009: evidence-aware scoring ajuda quando o branch correto revela sinal cedo, mas falha em cenarios `evidence-starved`
+- EXP-010: `path_score` com `lookahead_signals`
+- EXP-010 com OpenAIPlanner: as tres variantes convergiram em 4 passos
+- principal achado do EXP-010: lookahead-aware scoring resolveu a order sensitivity do benchmark atual
 - ver `docs/path-3-role-choice-learning.md`
 - ver `docs/experiments/EXP-003-path3-role-choice.md`
 - ver `docs/experiments/EXP-005-backtracking-first-cut.md`
 - ver `docs/experiments/EXP-006-multi-branch-backtracking.md`
 - ver `docs/experiments/EXP-007-order-and-label-permutation.md`
 - ver `docs/experiments/EXP-008-path-scoring-order-invariance.md`
+- ver `docs/experiments/EXP-009-evidence-aware-path-scoring.md`
+- ver `docs/experiments/EXP-010-lookahead-path-scoring.md`
 
 ---
 

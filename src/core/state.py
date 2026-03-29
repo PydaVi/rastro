@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from pathlib import PurePosixPath
 from typing import Dict, List, Protocol, Tuple
 
 from core.domain import Action, Observation, Objective, Scope
@@ -23,6 +24,8 @@ class CandidatePath:
     times_tested: int = 0
     has_progress_actions: bool = False
     path_score: int = 0
+    observed_resources: List[str] = field(default_factory=list)
+    lookahead_signals: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -234,7 +237,10 @@ class StateManager:
                     status=status,
                     times_tested=times_tested,
                     has_progress_actions=has_progress_actions,
+                    observed_resources=self._observed_resources_for_role(role),
+                    lookahead_signals=self._lookahead_signals_for_role(role),
                     path_score=self._path_score(
+                        role=role,
                         status=status,
                         times_tested=times_tested,
                         has_progress_actions=has_progress_actions,
@@ -244,7 +250,13 @@ class StateManager:
 
         return candidate_paths
 
-    def _path_score(self, status: str, times_tested: int, has_progress_actions: bool) -> int:
+    def _path_score(
+        self,
+        role: str,
+        status: str,
+        times_tested: int,
+        has_progress_actions: bool,
+    ) -> int:
         score = 0
         if status == "active":
             score += 50
@@ -259,4 +271,120 @@ class StateManager:
             score += 15
 
         score -= times_tested * 5
+        score += self._objective_relevance_score(role)
+        score += self._lookahead_relevance_score(role)
+        return score
+
+    def _observed_resources_for_role(self, role: str) -> List[str]:
+        observed: List[str] = []
+        for action, observation in zip(self._actions_taken, self._observations):
+            actor = action.actor
+            if ":assumed-role/" in actor:
+                role_name = actor.split(":assumed-role/", 1)[1].split("/", 1)[0]
+                account = actor.split("::", 1)[1].split(":", 1)[0]
+                actor = f"arn:aws:iam::{account}:role/{role_name}"
+            if actor != role:
+                continue
+            observed.extend(observation.details.get("discovered_objects", []))
+            evidence = observation.details.get("evidence", {})
+            object_key = evidence.get("object_key")
+            if object_key:
+                observed.append(object_key)
+        return list(dict.fromkeys(observed))
+
+    def _objective_relevance_score(self, role: str) -> int:
+        observed = self._observed_resources_for_role(role)
+        if not observed:
+            return 0
+
+        target_name = PurePosixPath(self._objective.target).name.lower()
+        target_tokens = {token for token in target_name.replace(".", "-").split("-") if token}
+        score = 0
+        for resource in observed:
+            resource_name = PurePosixPath(resource).name.lower()
+            if resource_name == target_name:
+                score += 100
+                continue
+            resource_tokens = {token for token in resource_name.replace(".", "-").split("-") if token}
+            score += 10 * len(target_tokens & resource_tokens)
+        return score
+
+    def _lookahead_signals_for_role(self, role: str) -> List[str]:
+        identities = self._fixture.state_copy().get("identities", {})
+        available_actions = identities.get(role, {}).get("available_actions", [])
+        signals: List[str] = []
+        for action in available_actions:
+            parameters = action.get("parameters", {})
+            target = action.get("target")
+            if action.get("action_type") == "access_resource" and target:
+                signals.append(target)
+            prefix = parameters.get("prefix")
+            if prefix:
+                signals.append(prefix)
+            object_key = parameters.get("object_key")
+            if object_key:
+                signals.append(object_key)
+        if signals:
+            return list(dict.fromkeys(signals))
+
+        fixture_transitions = self._fixture_transitions()
+        for transition in fixture_transitions:
+            if transition.get("action_type") != "assume_role":
+                continue
+            if transition.get("target") != role:
+                continue
+            future_identity = transition.get("update_identities", {}).get(role, {})
+            for action in future_identity.get("available_actions", []):
+                parameters = action.get("parameters", {})
+                target = action.get("target")
+                if action.get("action_type") == "access_resource" and target:
+                    signals.append(target)
+                prefix = parameters.get("prefix")
+                if prefix:
+                    signals.append(prefix)
+                object_key = parameters.get("object_key")
+                if object_key:
+                    signals.append(object_key)
+                for nested_transition in fixture_transitions:
+                    if nested_transition.get("actor") != role:
+                        continue
+                    if nested_transition.get("action_type") != action.get("action_type"):
+                        continue
+                    if nested_transition.get("target") != target:
+                        continue
+                    observation = nested_transition.get("observation", {})
+                    signals.extend(observation.get("discovered_objects", []))
+                    nested_identity = nested_transition.get("update_identities", {}).get(role, {})
+                    for nested_action in nested_identity.get("available_actions", []):
+                        nested_target = nested_action.get("target")
+                        nested_params = nested_action.get("parameters", {})
+                        if nested_action.get("action_type") == "access_resource" and nested_target:
+                            signals.append(nested_target)
+                        nested_object_key = nested_params.get("object_key")
+                        if nested_object_key:
+                            signals.append(nested_object_key)
+        return list(dict.fromkeys(signals))
+
+    def _fixture_transitions(self) -> List[Dict]:
+        if hasattr(self._fixture, "fixture") and hasattr(self._fixture.fixture, "data"):
+            return self._fixture.fixture.data.get("transitions", [])
+        if hasattr(self._fixture, "data"):
+            return self._fixture.data.get("transitions", [])
+        return []
+
+    def _lookahead_relevance_score(self, role: str) -> int:
+        signals = self._lookahead_signals_for_role(role)
+        if not signals:
+            return 0
+
+        target_name = PurePosixPath(self._objective.target).name.lower()
+        target_tokens = {token for token in target_name.replace(".", "-").split("-") if token}
+        score = 0
+        for signal in signals:
+            signal_name = PurePosixPath(signal).name.lower()
+            if signal_name == target_name:
+                score += 120
+                continue
+            signal_tokens = {token for token in signal_name.replace(".", "-").split("-") if token}
+            score += 12 * len(target_tokens & signal_tokens)
         return score

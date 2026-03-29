@@ -1239,6 +1239,85 @@ def test_candidate_paths_expose_path_score() -> None:
     assert all(path.path_score == 20 for path in snapshot.candidate_paths)
 
 
+def test_candidate_paths_gain_objective_relevance_score_from_observed_resources() -> None:
+    fixture = Fixture.load(
+        Path(__file__).resolve().parents[1] / "fixtures" / "aws_multi_branch_backtracking_lab.json"
+    )
+    objective = Objective.model_validate_json(
+        (
+            Path(__file__).resolve().parents[1]
+            / "examples"
+            / "objective_aws_multi_branch_backtracking.json"
+        ).read_text()
+    )
+    scope = Scope.model_validate_json(
+        (
+            Path(__file__).resolve().parents[1]
+            / "examples"
+            / "scope_aws_multi_branch_backtracking.json"
+        ).read_text()
+    )
+    lab = AwsDryRunLab.from_fixture(fixture, scope)
+    state = StateManager(objective=objective, scope=scope, fixture=lab)
+
+    enumerate_action = lab.enumerate_actions(state.snapshot())[0]
+    enumerate_observation = lab.execute(enumerate_action)
+    state.apply_observation(enumerate_action, enumerate_observation, "test")
+
+    assume_role_q = next(
+        action
+        for action in lab.enumerate_actions(state.snapshot())
+        if action.action_type == ActionType.ASSUME_ROLE
+        and action.target == "arn:aws:iam::123456789012:role/RoleQ"
+    )
+    assume_observation = lab.execute(assume_role_q)
+    state.apply_observation(assume_role_q, assume_observation, "test")
+
+    list_action = next(
+        action
+        for action in lab.enumerate_actions(state.snapshot())
+        if action.actor == "arn:aws:iam::123456789012:role/RoleQ"
+        and action.action_type == ActionType.ENUMERATE
+    )
+    list_observation = lab.execute(list_action)
+    state.apply_observation(list_action, list_observation, "test")
+
+    snapshot = state.snapshot()
+    role_q = next(path for path in snapshot.candidate_paths if path.target.endswith("/RoleQ"))
+    role_a = next(path for path in snapshot.candidate_paths if path.target.endswith("/RoleA"))
+
+    assert "payroll.csv" in role_q.observed_resources
+    assert role_q.path_score > role_a.path_score
+
+
+def test_candidate_paths_gain_lookahead_score_before_branch_is_tested() -> None:
+    fixture = Fixture.load(
+        Path(__file__).resolve().parents[1] / "fixtures" / "aws_permuted_branching_rolea_success_lab.json"
+    )
+    objective = Objective.model_validate_json(
+        (
+            Path(__file__).resolve().parents[1]
+            / "examples"
+            / "objective_aws_permuted_branching.json"
+        ).read_text()
+    )
+    scope = Scope.model_validate_json(
+        (
+            Path(__file__).resolve().parents[1]
+            / "examples"
+            / "scope_aws_permuted_branching.json"
+        ).read_text()
+    )
+    state = StateManager(objective=objective, scope=scope, fixture=AwsDryRunLab.from_fixture(fixture, scope))
+
+    snapshot = state.snapshot()
+    role_a = next(path for path in snapshot.candidate_paths if path.target.endswith("/RoleA"))
+    role_m = next(path for path in snapshot.candidate_paths if path.target.endswith("/RoleM"))
+
+    assert any("payroll.csv" in signal for signal in role_a.lookahead_signals)
+    assert role_a.path_score > role_m.path_score
+
+
 @pytest.mark.parametrize(
     ("fixture_name", "successful_role"),
     [
