@@ -231,6 +231,25 @@ def test_fixture_transition() -> None:
     assert fixture.state_copy()["identities"]["AuditRole"]["available_actions"]
 
 
+def test_role_choice_fixture_retains_recovery_actions_after_wrong_role() -> None:
+    fixture_path = Path(__file__).resolve().parents[1] / "fixtures" / "aws_role_choice_lab.json"
+    fixture = Fixture.load(fixture_path)
+    action = Action(
+        action_type=ActionType.ASSUME_ROLE,
+        actor="arn:aws:iam::123456789012:user/analyst",
+        target="arn:aws:iam::123456789012:role/BucketReaderRole",
+        parameters={},
+    )
+    observation = fixture.execute(action)
+    assert observation.success is True
+
+    analyst_actions = fixture.state_copy()["identities"]["arn:aws:iam::123456789012:user/analyst"][
+        "available_actions"
+    ]
+    targets = [item.get("target") for item in analyst_actions]
+    assert "arn:aws:iam::123456789012:role/AuditRole" in targets
+    assert "arn:aws:iam::123456789012:role/BucketReaderRole" in targets
+
 
 def test_write_sanitized_artifacts_redacts_real_aws_outputs(tmp_path: Path) -> None:
     report_json = {
@@ -249,6 +268,10 @@ def test_write_sanitized_artifacts_redacts_real_aws_outputs(tmp_path: Path) -> N
                             "object_key": "payroll.csv",
                             "accessed_via": "arn:aws:iam::550192603632:role/AuditRole",
                         },
+                        "candidate_roles": [
+                            "arn:aws:iam::550192603632:role/AuditRole",
+                            "arn:aws:iam::550192603632:role/BucketReaderRole",
+                        ],
                         "response_summary": {
                             "preview": "employee_id,name,salary",
                         },
@@ -257,9 +280,18 @@ def test_write_sanitized_artifacts_redacts_real_aws_outputs(tmp_path: Path) -> N
             }
         ]
     }
-    markdown = "identity arn:aws:iam::550192603632:user/brainctl-user bucket s3://sensitive-finance-data/payroll.csv"
+    markdown = (
+        "identity arn:aws:iam::550192603632:user/brainctl-user "
+        "roles AuditRole BucketReaderRole "
+        "bucket s3://sensitive-finance-data/payroll.csv"
+    )
     audit_path = tmp_path / "audit.jsonl"
-    audit_path.write_text('{"payload":{"real_api_called":true,"identity":"arn:aws:iam::550192603632:user/brainctl-user","bucket":"sensitive-finance-data","preview":"employee_id,name,salary"}}\n')
+    audit_path.write_text(
+        '{"payload":{"real_api_called":true,"identity":"arn:aws:iam::550192603632:user/brainctl-user",'
+        '"selected":"arn:aws:iam::550192603632:role/AuditRole",'
+        '"rejected":"arn:aws:iam::550192603632:role/BucketReaderRole",'
+        '"bucket":"sensitive-finance-data","preview":"employee_id,name,salary"}}\n'
+    )
 
     write_sanitized_artifacts(tmp_path, report_json, markdown, audit_path)
 
@@ -278,8 +310,11 @@ def test_write_sanitized_artifacts_redacts_real_aws_outputs(tmp_path: Path) -> N
     assert "<REDACTED_USER>" in sanitized_md
     assert "brainctl-user" not in sanitized_md
     assert "AuditRole" not in sanitized_md
+    assert "BucketReaderRole" not in sanitized_md
     assert "sensitive-finance-data" not in sanitized_md
     assert "payroll.csv" not in sanitized_md
+    assert "<REDACTED_ROLE>" in sanitized_report
+    assert "<REDACTED_ROLE>_2" in sanitized_report
     assert "<REDACTED_CONTENT_PREVIEW>" in sanitized_audit
 
 def test_end_to_end_run(tmp_path: Path) -> None:
@@ -376,6 +411,106 @@ def test_ollama_parser_falls_back_on_invalid_selection() -> None:
 
     assert decision.action.action_type == ActionType.ENUMERATE
     assert "Fallback para enumerate" in decision.reason
+
+
+def test_state_tracks_tested_and_failed_assume_roles() -> None:
+    fixture_path = Path(__file__).resolve().parents[1] / "fixtures" / "aws_role_choice_lab.json"
+    fixture = Fixture.load(fixture_path)
+    objective = Objective(
+        description="test objective",
+        target="arn:aws:s3:::sensitive-finance-data/payroll.csv",
+        success_criteria={"flag": "priv_esc"},
+    )
+    scope = Scope(
+        target="aws",
+        allowed_actions=[
+            ActionType.ENUMERATE,
+            ActionType.ANALYZE,
+            ActionType.ASSUME_ROLE,
+            ActionType.ACCESS_RESOURCE,
+        ],
+        allowed_resources=[
+            "arn:aws:iam::123456789012:root",
+            "arn:aws:iam::123456789012:role/AuditRole",
+            "arn:aws:iam::123456789012:role/BucketReaderRole",
+            "arn:aws:s3:::sensitive-finance-data",
+            "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+            "arn:aws:s3:::public-reports",
+        ],
+        max_steps=6,
+        dry_run=True,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam", "sts", "s3"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+    )
+    state = StateManager(objective=objective, scope=scope, fixture=fixture)
+
+    wrong_assume = Action(
+        action_type=ActionType.ASSUME_ROLE,
+        actor="arn:aws:iam::123456789012:user/analyst",
+        target="arn:aws:iam::123456789012:role/BucketReaderRole",
+        parameters={},
+    )
+    wrong_observation = fixture.execute(wrong_assume)
+    state.apply_observation(wrong_assume, wrong_observation, "picked wrong role")
+
+    decoy_enum = Action(
+        action_type=ActionType.ENUMERATE,
+        actor="arn:aws:iam::123456789012:role/BucketReaderRole",
+        target="arn:aws:s3:::public-reports",
+        parameters={},
+    )
+    decoy_observation = fixture.execute(decoy_enum)
+    state.apply_observation(decoy_enum, decoy_observation, "enumerated decoy bucket")
+
+    snapshot = state.snapshot()
+    assert "arn:aws:iam::123456789012:role/BucketReaderRole" in snapshot.tested_assume_roles
+    assert "arn:aws:iam::123456789012:role/BucketReaderRole" in snapshot.failed_assume_roles
+
+
+def test_ollama_prompt_includes_path_memory() -> None:
+    planner = OllamaPlanner.__new__(OllamaPlanner)
+    actions = [
+        Action(
+            action_type=ActionType.ENUMERATE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target="arn:aws:iam::123456789012:root",
+            parameters={},
+        )
+    ]
+    fixture_path = Path(__file__).resolve().parents[1] / "fixtures" / "aws_role_choice_lab.json"
+    fixture = Fixture.load(fixture_path)
+    objective = Objective(
+        description="test objective",
+        target="arn:aws:s3:::sensitive-finance-data/payroll.csv",
+        success_criteria={"flag": "priv_esc"},
+    )
+    scope = Scope(
+        target="aws",
+        allowed_actions=[ActionType.ENUMERATE],
+        allowed_resources=["arn:aws:iam::123456789012:root"],
+        max_steps=5,
+        dry_run=True,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+    )
+    state = StateManager(objective=objective, scope=scope, fixture=fixture)
+    state._tested_assume_roles = ["arn:aws:iam::123456789012:role/BucketReaderRole"]
+    state._failed_assume_roles = ["arn:aws:iam::123456789012:role/BucketReaderRole"]
+
+    prompt = planner._build_prompt(state.snapshot(), actions)
+
+    assert '"path_memory"' in prompt
+    assert '"tested_assume_roles"' in prompt
+    assert '"failed_assume_roles"' in prompt
+    assert 'BucketReaderRole' in prompt
 
 
 def test_report_marks_fallback_steps(tmp_path: Path) -> None:

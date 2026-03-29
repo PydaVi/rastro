@@ -29,6 +29,11 @@ You will receive:
 
 Your task: choose the single best next action to advance toward the objective.
 
+Important:
+- avoid repeating pivots already marked as failed unless there is new evidence
+- if multiple roles are assumable, prefer the role that best advances toward the objective
+- after a failed pivot, try a different valid branch instead of looping on the same discovery step
+
 You MUST respond with valid JSON only. No explanation, no markdown, no preamble.
 
 Response schema:
@@ -117,6 +122,10 @@ class OllamaPlanner(Planner):
                 },
                 "flags": snapshot.fixture_state.get("flags", []),
                 "steps_taken": snapshot.steps_taken,
+                "path_memory": {
+                    "tested_assume_roles": getattr(snapshot, "tested_assume_roles", []),
+                    "failed_assume_roles": getattr(snapshot, "failed_assume_roles", []),
+                },
                 "available_actions": [
                     {"index": idx, **action} for idx, action in enumerate(actions_repr)
                 ],

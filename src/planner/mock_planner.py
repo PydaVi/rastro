@@ -23,16 +23,41 @@ class DeterministicPlanner(Planner):
                 reason="No available actions; defaulting to analyze.",
             )
 
-        # Simple deterministic heuristic: prefer assume_role, then access_resource, then enumerate.
-        priority = {
-            ActionType.ASSUME_ROLE: 0,
-            ActionType.ACCESS_RESOURCE: 1,
-            ActionType.ENUMERATE: 2,
-            ActionType.ANALYZE: 3,
-        }
+        active_role_actors = set()
+        if snapshot is not None:
+            for observation in snapshot.observations:
+                granted_role = observation.details.get("granted_role")
+                if granted_role:
+                    active_role_actors.add(granted_role)
+
+        # Prefer progressing from an already-assumed role before pivoting again.
+        def action_priority(action: Action) -> tuple[int, int, str, str]:
+            if action.actor in active_role_actors:
+                priority = {
+                    ActionType.ACCESS_RESOURCE: 0,
+                    ActionType.ENUMERATE: 1,
+                    ActionType.ASSUME_ROLE: 2,
+                    ActionType.ANALYZE: 3,
+                }
+                actor_rank = 0
+            else:
+                priority = {
+                    ActionType.ASSUME_ROLE: 0,
+                    ActionType.ACCESS_RESOURCE: 1,
+                    ActionType.ENUMERATE: 2,
+                    ActionType.ANALYZE: 3,
+                }
+                actor_rank = 1
+            return (
+                actor_rank,
+                priority.get(action.action_type, 9),
+                action.actor,
+                action.target or "",
+            )
+
         sorted_actions = sorted(
             available_actions,
-            key=lambda a: (priority.get(a.action_type, 9), a.actor, a.target or ""),
+            key=action_priority,
         )
         action = sorted_actions[0]
         return Decision(

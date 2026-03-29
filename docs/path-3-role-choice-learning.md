@@ -130,6 +130,115 @@ Mas ainda nao consegue, de forma robusta:
 
 ---
 
+## Explicacao Ludica
+
+Uma forma simples de explicar essa descoberta para publico de produto ou
+negocios e pensar no agente como um explorador dentro de um castelo.
+
+### Antes
+
+O agente sabia:
+
+- olhar a proxima porta
+- escolher uma porta
+- entrar
+- continuar andando
+
+Mas ele ainda nao tinha memoria estrategica suficiente para registrar com
+clareza que uma porta ja tinha sido testada e nao levava ao tesouro.
+
+Entao, quando errava, podia voltar para o corredor e ficar repetindo partes do
+processo sem realmente melhorar de decisao.
+
+### O exemplo do castelo
+
+```text
+               [Tesouro]
+                   ^
+                   |
+            [Torre Certa]
+               ^
+               |
+[Entrada] --> [Salao] --> [Torre Errada]
+```
+
+No salao existem duas torres:
+
+- `Torre Certa`
+- `Torre Errada`
+
+As duas parecem plausiveis no inicio.
+
+### O comportamento antigo
+
+1. o agente entra no salao
+2. escolhe uma torre
+3. se escolhe a torre errada, percebe que nao encontrou o tesouro
+4. volta, mas sem uma memoria forte de que aquele ramo ja falhou
+
+Isso cria um agente que age, mas ainda nao aprende de forma estruturada com a
+propria tentativa.
+
+### O comportamento que comecamos a construir
+
+Agora o agente ganhou um caderno de campo.
+
+Nesse caderno ele registra algo como:
+
+```text
+Torres vistas:
+- Torre Certa
+- Torre Errada
+
+Torres testadas:
+- Torre Errada
+
+Torres falhas:
+- Torre Errada
+```
+
+Com isso, o fluxo muda:
+
+1. ele chega ao salao
+2. testa a `Torre Errada`
+3. observa que nao levou ao tesouro
+4. registra que esse branch falhou
+5. volta ao ponto de decisao
+6. evita insistir cegamente na mesma torre
+7. tenta a `Torre Certa`
+8. chega ao tesouro
+
+### Em linguagem de negocios
+
+A transicao e esta:
+
+- antes: sistema bom para seguir trilhos lineares
+- agora: sistema com memoria minima de tentativa
+- depois: sistema capaz de testar hipoteses, abandonar branches ruins e
+  convergir para o objetivo final
+
+Em outras palavras, o produto precisa sair de:
+
+- "escolher a proxima acao"
+
+para:
+
+- "testar caminhos, aprender com erro local e replanejar"
+
+### O que ja foi feito
+
+O primeiro passo dessa evolucao ja entrou no engine:
+
+- registrar pivos testados
+- registrar branches falhos
+- expor essa memoria ao planner
+- preservar no estado opcoes de recuperacao apos um erro
+
+Isso ainda nao e aprendizado completo, mas ja e o inicio da transicao de um
+agente reativo para um agente com memoria de tentativa.
+
+---
+
 ## Interpretacao
 
 Essa descoberta nao invalida os resultados anteriores. Pelo contrario:

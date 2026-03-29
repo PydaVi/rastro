@@ -89,6 +89,10 @@ def _build_prompt(snapshot, available_actions: List[Action]) -> str:
             },
             "flags": snapshot.fixture_state.get("flags", []),
             "steps_taken": snapshot.steps_taken,
+            "path_memory": {
+                "tested_assume_roles": getattr(snapshot, "tested_assume_roles", []),
+                "failed_assume_roles": getattr(snapshot, "failed_assume_roles", []),
+            },
             "available_actions": [
                 {"index": idx, **action} for idx, action in enumerate(actions_repr)
             ],

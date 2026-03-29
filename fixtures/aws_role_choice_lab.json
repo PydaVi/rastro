@@ -121,6 +121,46 @@
                 "platform": "AWS"
               },
               "tool": "iam_list_roles"
+            },
+            {
+              "action_type": "assume_role",
+              "target": "arn:aws:iam::123456789012:role/AuditRole",
+              "parameters": {
+                "note": "simulate_sts_assume_role_sensitive_path",
+                "service": "sts",
+                "region": "us-east-1",
+                "role_arn": "arn:aws:iam::123456789012:role/AuditRole",
+                "session_name": "rastro-audit-session",
+                "policy_action": "s3:ListBucket",
+                "policy_resource": "arn:aws:s3:::sensitive-finance-data"
+              },
+              "technique": {
+                "mitre_id": "T1548",
+                "mitre_name": "Abuse Elevation Control Mechanism",
+                "tactic": "privilege-escalation",
+                "platform": "AWS IAM"
+              },
+              "tool": "iam_passrole"
+            },
+            {
+              "action_type": "assume_role",
+              "target": "arn:aws:iam::123456789012:role/BucketReaderRole",
+              "parameters": {
+                "note": "simulate_sts_assume_role_decoy_path",
+                "service": "sts",
+                "region": "us-east-1",
+                "role_arn": "arn:aws:iam::123456789012:role/BucketReaderRole",
+                "session_name": "rastro-reader-session",
+                "policy_action": "s3:ListBucket",
+                "policy_resource": "arn:aws:s3:::public-reports"
+              },
+              "technique": {
+                "mitre_id": "T1548",
+                "mitre_name": "Abuse Elevation Control Mechanism",
+                "tactic": "privilege-escalation",
+                "platform": "AWS IAM"
+              },
+              "tool": "iam_passrole"
             }
           ]
         },
@@ -182,6 +222,46 @@
                 "platform": "AWS"
               },
               "tool": "iam_list_roles"
+            },
+            {
+              "action_type": "assume_role",
+              "target": "arn:aws:iam::123456789012:role/AuditRole",
+              "parameters": {
+                "note": "simulate_sts_assume_role_sensitive_path",
+                "service": "sts",
+                "region": "us-east-1",
+                "role_arn": "arn:aws:iam::123456789012:role/AuditRole",
+                "session_name": "rastro-audit-session",
+                "policy_action": "s3:ListBucket",
+                "policy_resource": "arn:aws:s3:::sensitive-finance-data"
+              },
+              "technique": {
+                "mitre_id": "T1548",
+                "mitre_name": "Abuse Elevation Control Mechanism",
+                "tactic": "privilege-escalation",
+                "platform": "AWS IAM"
+              },
+              "tool": "iam_passrole"
+            },
+            {
+              "action_type": "assume_role",
+              "target": "arn:aws:iam::123456789012:role/BucketReaderRole",
+              "parameters": {
+                "note": "simulate_sts_assume_role_decoy_path",
+                "service": "sts",
+                "region": "us-east-1",
+                "role_arn": "arn:aws:iam::123456789012:role/BucketReaderRole",
+                "session_name": "rastro-reader-session",
+                "policy_action": "s3:ListBucket",
+                "policy_resource": "arn:aws:s3:::public-reports"
+              },
+              "technique": {
+                "mitre_id": "T1548",
+                "mitre_name": "Abuse Elevation Control Mechanism",
+                "tactic": "privilege-escalation",
+                "platform": "AWS IAM"
+              },
+              "tool": "iam_passrole"
             }
           ]
         },
