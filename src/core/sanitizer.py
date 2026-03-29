@@ -8,7 +8,7 @@ from typing import Any
 ACCOUNT_ID_RE = re.compile(r"\b\d{12}\b")
 IAM_USER_ARN_RE = re.compile(r"arn:aws:iam::\d{12}:user/[^\s'\"]+")
 IAM_ROLE_ARN_RE = re.compile(r"arn:aws:iam::\d{12}:role/[^\s'\"]+")
-STS_ASSUMED_ROLE_ARN_RE = re.compile(r"arn:aws:sts::\d{12}:assumed-role/[^/\s'\"]+/[^\s'\"]+")
+STS_ASSUMED_ROLE_ARN_RE = re.compile(r"arn:aws:sts::\d{12}:assumed-role/([^/\s'\"]+)/([^\s'\"]+)")
 S3_ARN_RE = re.compile(r"arn:aws:s3:::[^/\s'\"]+/[^\s'\"]+")
 S3_URI_RE = re.compile(r"s3://[^/\s'\"]+/[^\s'\"]+")
 IAM_USER_PATH_RE = re.compile(r":user/([^\s'\"]+)")

@@ -13,6 +13,7 @@ from reporting.report import ReportGenerator
 from execution.scope_enforcer import ScopeEnforcer
 from core.fixture import Fixture
 from core.sanitizer import write_sanitized_artifacts
+from planner.action_shaping import shape_available_actions
 from planner.ollama_planner import OllamaPlanner
 from planner.openai_planner import _parse_response as parse_openai_response
 from planner.mock_planner import DeterministicPlanner
@@ -471,6 +472,99 @@ def test_state_tracks_tested_and_failed_assume_roles() -> None:
     assert "arn:aws:iam::123456789012:role/BucketReaderRole" in snapshot.failed_assume_roles
 
 
+def test_state_tracks_active_assumed_roles_with_progress_actions() -> None:
+    fixture_path = Path(__file__).resolve().parents[1] / "fixtures" / "aws_role_choice_lab.json"
+    fixture = Fixture.load(fixture_path)
+    objective = Objective(
+        description="test objective",
+        target="arn:aws:s3:::sensitive-finance-data/payroll.csv",
+        success_criteria={"flag": "priv_esc"},
+    )
+    scope = Scope(
+        target="aws",
+        allowed_actions=[
+            ActionType.ENUMERATE,
+            ActionType.ANALYZE,
+            ActionType.ASSUME_ROLE,
+            ActionType.ACCESS_RESOURCE,
+        ],
+        allowed_resources=[
+            "arn:aws:iam::123456789012:root",
+            "arn:aws:iam::123456789012:role/AuditRole",
+            "arn:aws:iam::123456789012:role/BucketReaderRole",
+            "arn:aws:s3:::sensitive-finance-data",
+            "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+            "arn:aws:s3:::public-reports",
+        ],
+        max_steps=6,
+        dry_run=True,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam", "sts", "s3"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+    )
+    state = StateManager(objective=objective, scope=scope, fixture=fixture)
+
+    assume = Action(
+        action_type=ActionType.ASSUME_ROLE,
+        actor="arn:aws:iam::123456789012:user/analyst",
+        target="arn:aws:iam::123456789012:role/AuditRole",
+        parameters={},
+    )
+    observation = fixture.execute(assume)
+    state.apply_observation(assume, observation, "picked right role")
+
+    snapshot = state.snapshot()
+    assert "arn:aws:iam::123456789012:role/AuditRole" in snapshot.active_assumed_roles
+    assert snapshot.active_branch_action_count > 0
+
+
+def test_snapshot_exposes_guidance_for_commit_to_pivot() -> None:
+    fixture_path = Path(__file__).resolve().parents[1] / "fixtures" / "aws_role_choice_lab.json"
+    fixture = Fixture.load(fixture_path)
+    objective = Objective(
+        description="test objective",
+        target="arn:aws:s3:::sensitive-finance-data/payroll.csv",
+        success_criteria={"flag": "priv_esc"},
+    )
+    scope = Scope(
+        target="aws",
+        allowed_actions=[
+            ActionType.ENUMERATE,
+            ActionType.ANALYZE,
+            ActionType.ASSUME_ROLE,
+            ActionType.ACCESS_RESOURCE,
+        ],
+        allowed_resources=[
+            "arn:aws:iam::123456789012:root",
+            "arn:aws:iam::123456789012:role/AuditRole",
+            "arn:aws:iam::123456789012:role/BucketReaderRole",
+            "arn:aws:s3:::sensitive-finance-data",
+            "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+            "arn:aws:s3:::public-reports",
+        ],
+        max_steps=6,
+        dry_run=True,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam", "sts", "s3"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+    )
+    state = StateManager(objective=objective, scope=scope, fixture=fixture)
+    state._steps_taken = 1
+
+    snapshot = state.snapshot()
+
+    assert snapshot.enumeration_sufficient is True
+    assert snapshot.should_commit_to_pivot is True
+    assert "arn:aws:iam::123456789012:role/AuditRole" in snapshot.candidate_roles
+    assert "arn:aws:iam::123456789012:role/BucketReaderRole" in snapshot.candidate_roles
+
+
 def test_ollama_prompt_includes_path_memory() -> None:
     planner = OllamaPlanner.__new__(OllamaPlanner)
     actions = [
@@ -478,6 +572,12 @@ def test_ollama_prompt_includes_path_memory() -> None:
             action_type=ActionType.ENUMERATE,
             actor="arn:aws:iam::123456789012:user/analyst",
             target="arn:aws:iam::123456789012:root",
+            parameters={},
+        ),
+        Action(
+            action_type=ActionType.ASSUME_ROLE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target="arn:aws:iam::123456789012:role/AuditRole",
             parameters={},
         )
     ]
@@ -504,6 +604,8 @@ def test_ollama_prompt_includes_path_memory() -> None:
     state = StateManager(objective=objective, scope=scope, fixture=fixture)
     state._tested_assume_roles = ["arn:aws:iam::123456789012:role/BucketReaderRole"]
     state._failed_assume_roles = ["arn:aws:iam::123456789012:role/BucketReaderRole"]
+    state._steps_taken = 1
+    state._tested_assume_roles.append("arn:aws:iam::123456789012:role/AuditRole")
 
     prompt = planner._build_prompt(state.snapshot(), actions)
 
@@ -511,6 +613,73 @@ def test_ollama_prompt_includes_path_memory() -> None:
     assert '"tested_assume_roles"' in prompt
     assert '"failed_assume_roles"' in prompt
     assert 'BucketReaderRole' in prompt
+    assert '"planner_guidance"' in prompt
+    assert '"enumeration_sufficient": true' in prompt
+    assert '"should_commit_to_pivot": true' in prompt
+    assert '"should_explore_current_branch"' in prompt
+
+
+def test_shape_available_actions_prefers_active_branch_progress() -> None:
+    actions = [
+        Action(
+            action_type=ActionType.ASSUME_ROLE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target="arn:aws:iam::123456789012:role/BucketReaderRole",
+            parameters={},
+        ),
+        Action(
+            action_type=ActionType.ENUMERATE,
+            actor="arn:aws:iam::123456789012:role/AuditRole",
+            target="arn:aws:s3:::sensitive-finance-data",
+            parameters={},
+        ),
+        Action(
+            action_type=ActionType.ACCESS_RESOURCE,
+            actor="arn:aws:iam::123456789012:role/AuditRole",
+            target="arn:aws:s3:::sensitive-finance-data/payroll.csv",
+            parameters={},
+        ),
+    ]
+
+    class Snapshot:
+        active_assumed_roles = ["arn:aws:iam::123456789012:role/AuditRole"]
+
+    shaped = shape_available_actions(Snapshot(), actions)
+
+    assert [action.action_type for action in shaped] == [
+        ActionType.ENUMERATE,
+        ActionType.ACCESS_RESOURCE,
+    ]
+    assert all(
+        action.actor == "arn:aws:iam::123456789012:role/AuditRole"
+        for action in shaped
+    )
+
+
+def test_mock_planner_avoids_failed_assume_role() -> None:
+    planner = DeterministicPlanner(seed=1)
+    actions = [
+        Action(
+            action_type=ActionType.ASSUME_ROLE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target="arn:aws:iam::123456789012:role/BucketReaderRole",
+            parameters={},
+        ),
+        Action(
+            action_type=ActionType.ASSUME_ROLE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target="arn:aws:iam::123456789012:role/AuditRole",
+            parameters={},
+        ),
+    ]
+
+    class Snapshot:
+        observations = []
+        failed_assume_roles = ["arn:aws:iam::123456789012:role/BucketReaderRole"]
+
+    decision = planner.decide(Snapshot(), actions)
+
+    assert decision.action.target == "arn:aws:iam::123456789012:role/AuditRole"
 
 
 def test_report_marks_fallback_steps(tmp_path: Path) -> None:

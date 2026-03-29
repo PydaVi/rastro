@@ -21,7 +21,7 @@ from typing import List
 
 from core.domain import Action, ActionType, Decision
 from planner.interface import Planner
-from planner.ollama_planner import _SYSTEM_PROMPT  # reusa o mesmo system prompt
+from planner.prompting import SYSTEM_PROMPT, build_prompt
 
 
 class OpenAIPlanner(Planner):
@@ -56,12 +56,12 @@ class OpenAIPlanner(Planner):
                 reason="No available actions; halting step.",
             )
 
-        user_message = _build_prompt(snapshot, available_actions)
+        user_message = build_prompt(snapshot, available_actions)
 
         response = self._client.chat.completions.create(
             model=self._model,
             messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_message},
             ],
             response_format={"type": "json_object"},
@@ -77,28 +77,6 @@ class OpenAIPlanner(Planner):
             }
         )
         return decision
-
-
-def _build_prompt(snapshot, available_actions: List[Action]) -> str:
-    actions_repr = [a.model_dump() for a in available_actions]
-    return json.dumps(
-        {
-            "objective": {
-                "description": snapshot.objective.description,
-                "target": snapshot.objective.target,
-            },
-            "flags": snapshot.fixture_state.get("flags", []),
-            "steps_taken": snapshot.steps_taken,
-            "path_memory": {
-                "tested_assume_roles": getattr(snapshot, "tested_assume_roles", []),
-                "failed_assume_roles": getattr(snapshot, "failed_assume_roles", []),
-            },
-            "available_actions": [
-                {"index": idx, **action} for idx, action in enumerate(actions_repr)
-            ],
-        },
-        indent=2,
-    )
 
 
 def _parse_response(raw: str, available_actions: List[Action]) -> Decision:

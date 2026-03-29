@@ -16,35 +16,7 @@ from typing import List
 
 from core.domain import Action, ActionType, Decision
 from planner.interface import Planner
-
-# Prompt do sistema enviado a cada decisão.
-# Instrui o modelo a retornar JSON estruturado — nunca texto livre.
-_SYSTEM_PROMPT = """\
-You are an autonomous red team agent reasoning about attack paths.
-
-You will receive:
-- The current objective
-- The current attack graph state
-- A list of available actions with their parameters
-
-Your task: choose the single best next action to advance toward the objective.
-
-Important:
-- avoid repeating pivots already marked as failed unless there is new evidence
-- if multiple roles are assumable, prefer the role that best advances toward the objective
-- after a failed pivot, try a different valid branch instead of looping on the same discovery step
-
-You MUST respond with valid JSON only. No explanation, no markdown, no preamble.
-
-Response schema:
-{
-  "action_index": <integer index from available_actions>,
-  "reason": "<one sentence explaining why this action advances the objective>"
-}
-
-If no action is viable, respond with action_index -1 and explain in reason.
-"""
-
+from planner.prompting import SYSTEM_PROMPT, build_prompt
 
 class OllamaPlanner(Planner):
     """
@@ -112,26 +84,7 @@ class OllamaPlanner(Planner):
     # ------------------------------------------------------------------
 
     def _build_prompt(self, snapshot, available_actions: List[Action]) -> str:
-        actions_repr = [a.model_dump() for a in available_actions]
-
-        return json.dumps(
-            {
-                "objective": {
-                    "description": snapshot.objective.description,
-                    "target": snapshot.objective.target,
-                },
-                "flags": snapshot.fixture_state.get("flags", []),
-                "steps_taken": snapshot.steps_taken,
-                "path_memory": {
-                    "tested_assume_roles": getattr(snapshot, "tested_assume_roles", []),
-                    "failed_assume_roles": getattr(snapshot, "failed_assume_roles", []),
-                },
-                "available_actions": [
-                    {"index": idx, **action} for idx, action in enumerate(actions_repr)
-                ],
-            },
-            indent=2,
-        )
+        return build_prompt(snapshot, available_actions)
 
     def _call_ollama(self, user_message: str) -> str:
         import httpx
@@ -140,7 +93,7 @@ class OllamaPlanner(Planner):
             "model": self._model,
             "stream": False,
             "messages": [
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": user_message},
             ],
             "format": "json",  # força JSON nativo no Ollama >= 0.1.9

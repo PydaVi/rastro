@@ -98,6 +98,280 @@ O planner:
 Esse resultado foi importante porque isolou uma falha de planejamento, nao de
 infraestrutura.
 
+### Com `OpenAIPlanner` (`gpt-4o-mini`) - primeira tentativa
+
+O Path 3 real tambem falhou na primeira tentativa com OpenAI.
+
+O planner:
+
+- nao escolhia um pivô
+- repetia `iam_list_roles`
+- ficava preso em discovery
+
+Isso mostrou que o problema nao era apenas "modelo pequeno local". O framing
+do planner ainda favorecia enumeracao excessiva mesmo quando o espaco de
+decisao ja tinha informacao suficiente para abrir um branch.
+
+### Com `OpenAIPlanner` (`gpt-4o-mini`) - apos memoria minima e guidance
+
+Depois dos primeiros ajustes no engine, o comportamento mudou, mas ainda
+falhava.
+
+O planner passou a:
+
+- enumerar
+- assumir a role correta
+- depois abrir a role distratora
+- voltar a assumir roles repetidamente
+
+Ou seja, saiu do loop de discovery, mas ainda nao explorava o branch ativo.
+
+Esse foi um erro diferente do erro do `phi3:mini`:
+
+- `phi3:mini`: escolhia o pivô errado
+- `gpt-4o-mini`: abria pivôs, mas nao descia a arvore
+
+### Com `OpenAIPlanner` (`gpt-4o-mini`) - apos action shaping
+
+Depois da introducao de uma camada geral de `action shaping`, o Path 3 real
+passou.
+
+O planner executou:
+
+1. `iam_list_roles`
+2. `iam_passrole` para a role correta
+3. `s3_list_bucket`
+4. `s3_read_sensitive`
+
+Resultado:
+
+- `objective_met: True`
+- `real_api_called: True`
+- escolha correta do pivô
+- exploracao correta do branch ate o objeto final
+
+Esse ponto foi decisivo porque mostrou que prompt-only nao bastava. O engine
+precisava de uma policy layer geral para organizar o espaco de acoes antes da
+decisao do LLM.
+
+---
+
+## Erros, Intervencoes e Motivos
+
+Esta secao registra a sequencia de erros observados, a intervencao aplicada e
+o motivo arquitetural de cada mudanca.
+
+### Erro 1 - role errada sem recuperacao util
+
+Sintoma:
+
+- o `OllamaPlanner` escolheu `BucketReaderRole`
+- depois o engine nao oferecia um caminho de recuperacao suficiente
+- o run podia ficar preso em repeticao de enumeracao
+
+Intervencao:
+
+- preservar acoes de recuperacao no fixture do Path 3
+- manter assumiveis alternativas mesmo apos um pivô errado
+
+Motivo:
+
+- um agente que nao pode errar e tentar de novo nao tem como demonstrar
+  aprendizado operacional
+
+### Erro 2 - sanitizacao colapsando roles distintas
+
+Sintoma:
+
+- `AuditRole` e `BucketReaderRole` podiam aparecer como o mesmo
+  `<REDACTED_ROLE>`
+- isso enfraquecia a leitura do experimento
+
+Intervencao:
+
+- sanitizacao com aliases estaveis e distintos por role
+
+Motivo:
+
+- sem observabilidade correta, a leitura do branch escolhido versus branch
+  rejeitado fica ambigua
+
+### Erro 3 - memoria zero de hipoteses
+
+Sintoma:
+
+- o planner tratava cada passo quase isoladamente
+- nao havia nocao explicita de pivôs testados e pivôs falhos
+
+Intervencao:
+
+- adicionar ao estado:
+  - `tested_assume_roles`
+  - `failed_assume_roles`
+
+Motivo:
+
+- o primeiro passo para sair de agente reativo e registrar tentativas
+
+### Erro 4 - discovery loop
+
+Sintoma:
+
+- o `OpenAIPlanner` repetia `iam_list_roles`
+- mesmo depois de ja conhecer as roles candidatas
+
+Intervencao:
+
+- reforcar o prompt com:
+  - `enumeration_sufficient`
+  - `should_commit_to_pivot`
+  - `candidate_roles`
+  - `failed_assume_roles`
+
+Motivo:
+
+- discovery nao pode dominar o run quando ja existe hipoteses suficientes para
+  pivotar
+
+### Erro 5 - troca de pivô sem explorar branch ativo
+
+Sintoma:
+
+- o planner assumia a role correta
+- depois abria a role distratora
+- voltava a assumir roles
+- nao chegava em `s3_list_bucket`
+
+Intervencao:
+
+- expor no estado:
+  - `active_assumed_roles`
+  - `active_branch_action_count`
+- reforcar o prompt com `should_explore_current_branch`
+
+Motivo:
+
+- era preciso ensinar o planner a reconhecer que um branch promissor ja estava
+  aberto
+
+### Erro 6 - prompt-only ainda insuficiente
+
+Sintoma:
+
+- mesmo com guidance melhor, o planner ainda podia trocar de pivô em vez de
+  descer a arvore
+
+Intervencao:
+
+- introduzir uma camada geral de `action shaping`
+- quando existe branch ativo com progresso possivel:
+  - priorizar acoes desse branch
+  - adiar a abertura de pivôs concorrentes naquela rodada
+
+Motivo:
+
+- o problema ja nao era apenas de linguagem; era de organizacao do espaco de
+  busca
+- isso continua sendo uma capacidade geral do engine, nao um script do Path 3
+
+### Erro 7 - bug de sanitizacao durante a iteracao
+
+Sintoma:
+
+- `IndexError` em `src/core/sanitizer.py`
+- causa: regex de STS sem grupos capturados, mas o codigo usava `group(1)` e
+  `group(2)`
+
+Intervencao:
+
+- corrigir a regex para capturar role e session
+
+Motivo:
+
+- manter os artefatos sanitizados gerados automaticamente durante os
+  experimentos reais
+
+---
+
+## Solucoes Arquiteturais Introduzidas
+
+As mudancas introduzidas ate aqui podem ser organizadas em quatro classes.
+
+### 1. Estado com memoria minima
+
+- `tested_assume_roles`
+- `failed_assume_roles`
+- `active_assumed_roles`
+- `active_branch_action_count`
+
+### 2. Prompting orientado por busca
+
+- `enumeration_sufficient`
+- `should_commit_to_pivot`
+- `should_explore_current_branch`
+- `candidate_roles`
+
+### 3. Policy layer antes do LLM
+
+- `action shaping`
+
+Regra geral:
+
+- se existe branch ativo com acoes de progresso, o planner decide primeiro
+  dentro desse subconjunto
+
+### 4. Melhor observabilidade experimental
+
+- sanitizacao com aliases distintos
+- report com `candidate_roles`, `selected_role`, `rejected_roles`
+- Mermaid mostrando branch distrator
+
+---
+
+## Linha do Tempo Experimental
+
+### Etapa 1
+
+- `MockPlanner` em AWS real: passou
+
+Interpretacao:
+
+- ambiente, executor e report estavam corretos
+
+### Etapa 2
+
+- `OllamaPlanner` (`phi3:mini`) em AWS real: falhou
+
+Interpretacao:
+
+- erro principal de selecao de pivô
+
+### Etapa 3
+
+- `OpenAIPlanner` (`gpt-4o-mini`) sem novos mecanismos: falhou
+
+Interpretacao:
+
+- discovery loop
+
+### Etapa 4
+
+- `OpenAIPlanner` com memoria minima e guidance: falhou
+
+Interpretacao:
+
+- commit-to-pivot melhorou
+- branch exploration ainda ruim
+
+### Etapa 5
+
+- `OpenAIPlanner` com `action shaping`: passou
+
+Interpretacao:
+
+- politica geral de exploracao do branch ativo foi suficiente para transformar
+  um planner oscilante em um planner convergente neste cenario
+
 ---
 
 ## Descoberta Principal
@@ -113,6 +387,16 @@ Em especial, o agente ainda nao possui de forma explicita:
 - backtracking estruturado
 - ranking de alternativas
 - estrategia de recuperacao apos decisao ruim
+
+Os experimentos posteriores mostraram que parte dessas capacidades pode ser
+introduzida em camadas:
+
+- primeiro memoria minima
+- depois prompting orientado por busca
+- depois policy layer para organizar a decisao
+
+Isso foi importante porque mostrou que "mais modelo" sozinho nao resolve todo
+o problema. Em certos pontos, o ganho vem de estrutura de busca no engine.
 
 Sem essas capacidades, o agente consegue:
 
@@ -233,6 +517,8 @@ O primeiro passo dessa evolucao ja entrou no engine:
 - registrar branches falhos
 - expor essa memoria ao planner
 - preservar no estado opcoes de recuperacao apos um erro
+- registrar branches ativos
+- adicionar `action shaping` para explorar o branch atual antes de abrir outro
 
 Isso ainda nao e aprendizado completo, mas ja e o inicio da transicao de um
 agente reativo para um agente com memoria de tentativa.
@@ -255,6 +541,69 @@ Ele revelou a diferenca entre:
 
 Essa diferenca e central para a evolucao do Rastro em direcao a um agente mais
 proximo de um pentester real.
+
+Os resultados tambem mostram uma divisao util entre tres camadas:
+
+- qualidade do modelo
+- estrutura do prompt
+- politica de busca do engine
+
+O Path 3 mostrou que:
+
+- modelo pequeno pode falhar na escolha de pivô
+- modelo melhor ainda pode falhar sem policy suficiente
+- uma policy geral de busca pode destravar convergencia sem hardcodar o
+  cenario
+
+---
+
+## Implicacoes Arquiteturais
+
+O Path 3 deixa explicito que o engine precisa evoluir como sistema de busca,
+nao apenas como wrapper de LLM.
+
+Implicacoes praticas:
+
+- planners devem receber estado enriquecido
+- o loop precisa suportar backtracking e branching reais
+- o engine pode precisar de policy layers antes do LLM
+- a avaliacao de progresso deve considerar branch ativo, branch falho e custo
+  de reabrir pivôs
+- documentacao experimental precisa registrar falhas e iteracoes, nao apenas
+  runs bem-sucedidos
+
+---
+
+## Ameacas a Validade
+
+- o Path 3 ainda tem espaco de decisao pequeno
+- o experimento atual usa um unico objetivo final em S3
+- `action shaping` ainda e uma heuristica simples, nao um planejador completo
+- `gpt-4o-mini` passou neste cenario, mas isso nao garante desempenho igual em
+  cenarios mais profundos
+- `OllamaPlanner` ainda precisa ser reavaliado apos as mesmas mudancas
+
+---
+
+## Conclusao
+
+O Path 3 comecou como um teste de escolha entre duas roles e se tornou um
+experimento de fronteira do engine.
+
+Ele demonstrou, com evidencia incremental, que:
+
+- caminhos lineares nao exercitam o problema central de autonomia
+- memoria de tentativa e necessaria, mas nao suficiente
+- prompting melhora comportamento, mas nao resolve tudo
+- uma policy layer geral de busca pode ser decisiva
+- o Rastro precisa evoluir como engine de exploracao com branching explicito
+
+Essa descoberta passa a orientar:
+
+- o roadmap
+- a modelagem do estado
+- o desenho do planner
+- o formato dos reports cientificos do projeto
 
 ---
 

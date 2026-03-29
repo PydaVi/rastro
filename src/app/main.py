@@ -13,6 +13,7 @@ from core.state import StateManager
 from core.fixture import Fixture
 from core.tool_registry import ToolRegistry
 from planner import get_planner
+from planner.action_shaping import shape_available_actions
 from planner.interface import Planner
 from execution.scope_enforcer import ScopeEnforcer
 from execution.executor import Executor
@@ -102,7 +103,8 @@ def run(
             available_actions = tool_registry.filter_actions(
                 available_actions, snapshot.fixture_state.get("flags", [])
             )
-        decision = planner.decide(state.snapshot(), available_actions)
+        available_actions = shape_available_actions(snapshot, available_actions)
+        decision = planner.decide(snapshot, available_actions)
 
         allowed = scope_enforcer.validate(decision.action)
         if not allowed:

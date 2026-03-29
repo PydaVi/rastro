@@ -310,16 +310,14 @@ Progresso atual:
 - Path 3 em `dry_run` já validado com `OllamaPlanner`
 - report e Mermaid agora mostram `candidate_roles`, `selected_role`,
   `rejected_roles` e a role distratora como caminho alternativo
-- Path 3 em AWS real já validado com `MockPlanner`
-- Path 3 em AWS real com `OllamaPlanner` falhou ao escolher a role errada,
-  expondo a necessidade de:
-  - `candidate path tracking`
-  - `branch failure memory`
-  - `backtracking`
-  - `path scoring`
-  - `recovery-oriented state`
+- Path 3 em AWS real com MockPlanner: passou
+- Path 3 em AWS real com OllamaPlanner (`phi3:mini`): falhou — ver EXP-003
+- Path 3 em AWS real com OpenAIPlanner (`gpt-4o-mini`) após action shaping: passou
+- engine agora possui: memória de tentativa, guidance de pivô, action shaping
+- EXP-004: reavaliar OllamaPlanner após as mesmas mudanças
+- EXP-005: backtracking estruturado com candidate path tracking
 - ver `docs/path-3-role-choice-learning.md`
-- próximo passo: transformar essa descoberta em capacidade explicita do engine
+- ver `docs/experiments/EXP-003-path3-role-choice.md`
 
 ---
 

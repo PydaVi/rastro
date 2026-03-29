@@ -20,66 +20,58 @@ segurança defensiva. Isso tem implicações diretas nas decisões de design.
 
 ## Estado atual do projeto
 
-**Fase 0 está completa.** O loop central funciona com fixture sintético.
-Não refatore o que já está funcionando sem razão explícita.
+**Fase 0 — completa.** Loop central com fixture sintético funcionando.
 
-**Fase 1 está concluída para o escopo atual do MVP.** O que foi fechado:
-1. `OllamaPlanner` implementado e validado localmente
-2. `OpenAIPlanner` implementado no código
-3. `ClaudePlanner` implementado no código
-4. `Technique` adicionada ao domain model para MITRE ATT&CK mapping
-5. Report Engine atualizado com seção MITRE
-6. Tool Registry formalizado com schema YAML
+**Fase 1 — completa.** OllamaPlanner validado, Tool Registry YAML,
+MITRE mapping, dry-run funcional. OpenAIPlanner e ClaudePlanner
+implementados, pendentes de validação end-to-end com credenciais reais.
 
-Pendência residual da Fase 1:
-- validação end-to-end com credenciais reais para `OpenAIPlanner` e `ClaudePlanner`
+**Fase 2 — completa para o primeiro corte AWS real.** Executor AWS real,
+Paths 1 e 2 validados com MockPlanner e OllamaPlanner, artefatos
+sanitizados automáticos.
+
+**Fase 3 — em progresso.** Path 3 validado com MockPlanner em AWS real.
+Path 3 com OllamaPlanner falhou — documentado em EXP-003. Path 3 com
+OpenAIPlanner passou após introdução de memória mínima e action shaping.
+O engine agora possui: memória de tentativa, prompting orientado por busca,
+e policy layer de action shaping. Próximos experimentos: reavaliar
+OllamaPlanner após as mudanças (EXP-004), e backtracking estruturado
+com candidate path tracking explícito (EXP-005).
 
 Consulte `PLAN.md` para o detalhamento completo de cada item.
-
-**Descobertas arquiteturais relevantes devem virar documento em `docs/`.**
-Sempre que um experimento, path ou validacao revelar uma mudanca real de
-entendimento sobre o engine, registre isso em um documento proprio.
-
-Esse registro deve seguir uma estrutura proxima de metodo cientifico, com:
-- contexto
-- hipotese
-- desenho experimental
-- resultado observado
-- interpretacao
-- implicacoes arquiteturais
-- ameacas a validade
-- conclusao
-
-Esses documentos existem para:
-- preservar a evolucao tecnica do projeto
-- servir de base para posts futuros
-- sustentar apresentacoes publicas da solucao com rigor metodologico
-
-**Fase 2 está concluída para o primeiro corte AWS real**: existe um cenário AWS local com autorização
-obrigatória, `execution_policy` no report/audit, validação antecipada de
-mismatch entre `fixture`/`objective`/`scope` e enforcement por
-`allowed_services`, `allowed_regions`, `aws_account_ids` e `allowed_resources`.
-Também existe um executor AWS real mínimo no código, gated por
-`RASTRO_ENABLE_AWS_REAL=1`.
-O Path 1 AWS real já foi validado com sucesso em conta autorizada, primeiro
-com `MockPlanner` e depois com `OllamaPlanner`. O Path 2 AWS real, com
-descoberta intermediária em S3, também já foi validado com `MockPlanner` e
-`OllamaPlanner`. Artefatos sanitizados devem ser preferidos para qualquer
-compartilhamento.
-
-**Fase 3 está em progresso inicial.** O foco agora é expandir AWS para múltiplos
-attack paths reais, usando a base já validada dos Paths 1 e 2. O Path 3 já foi
-validado em `dry_run` com múltiplas roles assumíveis, uma role distratora e
-escolha explícita de pivô, tanto com `MockPlanner` quanto com `OllamaPlanner`.
-O próximo passo é validar esse mesmo cenário em AWS real, começando por
-`MockPlanner`.
-
-**Após a Fase 2, o roadmap continua em AWS.** Não inicie Kubernetes, Linux ou
-outras superfícies antes de AWS ter múltiplos attack paths reais auditados.
 
 ---
 
 ## Decisões de design já tomadas — não reverter
+
+## Metodologia científica — regra permanente
+
+Todo experimento, path ou descoberta que revele mudança real de
+entendimento sobre o engine deve ser documentado em
+`docs/experiments/EXP-NNN-nome.md` com a seguinte estrutura:
+
+- Identificação (ID, fase, data, status)
+- Contexto
+- Hipóteses
+- Desenho experimental (variável independente, ambiente, critério de sucesso)
+- Resultados por etapa (cada planner/configuração separado)
+- Erros, intervenções e motivos (quando aplicável)
+- Descoberta principal
+- Interpretação
+- Implicações arquiteturais
+- Ameaças à validade
+- Conclusão
+- Próximos experimentos
+
+Decisões arquiteturais relevantes viram ADR em `docs/adr/`.
+
+Resultados negativos têm a mesma obrigatoriedade de documentação que
+resultados positivos. Um experimento que falha e isola uma causa é mais
+valioso do que um que passa sem revelar nada.
+
+O Codex não espera instrução explícita para criar esses documentos.
+Sempre que um path ou validação revelar algo relevante, o documento
+é criado como parte da tarefa em andamento.
 
 ### 1. Nenhum vendor de LLM é obrigatório
 

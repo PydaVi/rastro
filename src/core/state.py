@@ -30,6 +30,12 @@ class StateSnapshot:
     observations: List[Observation]
     tested_assume_roles: List[str]
     failed_assume_roles: List[str]
+    active_assumed_roles: List[str]
+    active_branch_action_count: int
+    enumeration_sufficient: bool = False
+    should_commit_to_pivot: bool = False
+    should_explore_current_branch: bool = False
+    candidate_roles: List[str] = field(default_factory=list)
 
 
 class StateManager:
@@ -68,6 +74,12 @@ class StateManager:
             observations=list(self._observations),
             tested_assume_roles=list(self._tested_assume_roles),
             failed_assume_roles=list(self._failed_assume_roles),
+            active_assumed_roles=self._active_assumed_roles(),
+            active_branch_action_count=self._active_branch_action_count(),
+            enumeration_sufficient=self._enumeration_sufficient(),
+            should_commit_to_pivot=self._should_commit_to_pivot(),
+            should_explore_current_branch=self._should_explore_current_branch(),
+            candidate_roles=self._candidate_roles(),
         )
 
     def initial_state(self) -> Dict:
@@ -123,3 +135,57 @@ class StateManager:
             return
         if role_identity not in self._failed_assume_roles:
             self._failed_assume_roles.append(role_identity)
+
+    def _active_assumed_roles(self) -> List[str]:
+        fixture_state = self._fixture.state_copy()
+        identities = fixture_state.get("identities", {})
+        active_roles: List[str] = []
+        for role in self._tested_assume_roles:
+            if role in self._failed_assume_roles:
+                continue
+            available_actions = identities.get(role, {}).get("available_actions", [])
+            progress_actions = [
+                action
+                for action in available_actions
+                if action.get("action_type") in {"enumerate", "access_resource"}
+            ]
+            if progress_actions:
+                active_roles.append(role)
+        return active_roles
+
+    def _active_branch_action_count(self) -> int:
+        fixture_state = self._fixture.state_copy()
+        identities = fixture_state.get("identities", {})
+        total = 0
+        for role in self._active_assumed_roles():
+            available_actions = identities.get(role, {}).get("available_actions", [])
+            total += len(
+                [
+                    action
+                    for action in available_actions
+                    if action.get("action_type") in {"enumerate", "access_resource"}
+                ]
+            )
+        return total
+
+    def _candidate_roles(self) -> List[str]:
+        fixture_state = self._fixture.state_copy()
+        identities = fixture_state.get("identities", {})
+        candidate_roles: List[str] = []
+        for details in identities.values():
+            for action in details.get("available_actions", []):
+                if action.get("action_type") != "assume_role":
+                    continue
+                target = action.get("target")
+                if target and target not in candidate_roles:
+                    candidate_roles.append(target)
+        return candidate_roles
+
+    def _enumeration_sufficient(self) -> bool:
+        return bool(self._steps_taken > 0 and self._candidate_roles())
+
+    def _should_commit_to_pivot(self) -> bool:
+        return self._enumeration_sufficient()
+
+    def _should_explore_current_branch(self) -> bool:
+        return self._active_branch_action_count() > 0

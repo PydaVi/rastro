@@ -24,11 +24,13 @@ class DeterministicPlanner(Planner):
             )
 
         active_role_actors = set()
+        failed_assume_roles = set()
         if snapshot is not None:
             for observation in snapshot.observations:
                 granted_role = observation.details.get("granted_role")
                 if granted_role:
                     active_role_actors.add(granted_role)
+            failed_assume_roles = set(getattr(snapshot, "failed_assume_roles", []))
 
         # Prefer progressing from an already-assumed role before pivoting again.
         def action_priority(action: Action) -> tuple[int, int, str, str]:
@@ -49,6 +51,7 @@ class DeterministicPlanner(Planner):
                 }
                 actor_rank = 1
             return (
+                1 if action.action_type == ActionType.ASSUME_ROLE and action.target in failed_assume_roles else 0,
                 actor_rank,
                 priority.get(action.action_type, 9),
                 action.actor,

@@ -20,8 +20,8 @@ from typing import List
 
 from core.domain import Action, ActionType, Decision
 from planner.interface import Planner
-from planner.openai_planner import _build_prompt, _parse_response
-from planner.ollama_planner import _SYSTEM_PROMPT
+from planner.openai_planner import _parse_response
+from planner.prompting import SYSTEM_PROMPT, build_prompt
 
 
 class ClaudePlanner(Planner):
@@ -54,12 +54,12 @@ class ClaudePlanner(Planner):
                 reason="No available actions; halting step.",
             )
 
-        user_message = _build_prompt(snapshot, available_actions)
+        user_message = build_prompt(snapshot, available_actions)
 
         response = self._client.messages.create(
             model=self._model,
             max_tokens=512,
-            system=_SYSTEM_PROMPT,
+            system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_message}],
         )
 
