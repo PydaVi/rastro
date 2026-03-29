@@ -316,9 +316,12 @@ Progresso atual:
 - engine agora possui: memória de tentativa, guidance de pivô, action shaping
 - EXP-004: reavaliar OllamaPlanner após as mesmas mudanças
 - EXP-005: backtracking estruturado com candidate path tracking
-- Path 4 dry-run adicionado para forçar backtracking após dead-end branch
+- Path 4 dry-run com MockPlanner: passou e fecha o objetivo após dead-end
+- Path 4 dry-run com OpenAIPlanner: passou e demonstrou backtracking explicito
+- Path 4 endurecido para tornar o pivô errado inicialmente mais atraente sem tornar o pivô correto impossível
 - ver `docs/path-3-role-choice-learning.md`
 - ver `docs/experiments/EXP-003-path3-role-choice.md`
+- ver `docs/experiments/EXP-005-backtracking-first-cut.md`
 
 ---
 

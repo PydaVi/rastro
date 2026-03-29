@@ -25,15 +25,15 @@
           },
           {
             "action_type": "assume_role",
-            "target": "arn:aws:iam::123456789012:role/A-DeadEndRole",
+            "target": "arn:aws:iam::123456789012:role/A-FinanceAuditRole",
             "parameters": {
               "note": "simulate_sts_assume_role_dead_end_path",
               "service": "sts",
               "region": "us-east-1",
-              "role_arn": "arn:aws:iam::123456789012:role/A-DeadEndRole",
-              "session_name": "rastro-dead-end-session",
+              "role_arn": "arn:aws:iam::123456789012:role/A-FinanceAuditRole",
+              "session_name": "rastro-finance-audit-session",
               "policy_action": "s3:ListBucket",
-              "policy_resource": "arn:aws:s3:::public-reports"
+              "policy_resource": "arn:aws:s3:::sensitive-finance-data"
             },
             "technique": {
               "mitre_id": "T1548",
@@ -45,13 +45,13 @@
           },
           {
             "action_type": "assume_role",
-            "target": "arn:aws:iam::123456789012:role/Z-SensitiveRole",
+            "target": "arn:aws:iam::123456789012:role/Z-DataOpsRole",
             "parameters": {
               "note": "simulate_sts_assume_role_sensitive_path",
               "service": "sts",
               "region": "us-east-1",
-              "role_arn": "arn:aws:iam::123456789012:role/Z-SensitiveRole",
-              "session_name": "rastro-sensitive-session",
+              "role_arn": "arn:aws:iam::123456789012:role/Z-DataOpsRole",
+              "session_name": "rastro-data-ops-session",
               "policy_action": "s3:ListBucket",
               "policy_resource": "arn:aws:s3:::sensitive-finance-data"
             },
@@ -79,8 +79,8 @@
           "arn": "arn:aws:iam::123456789012:user/analyst"
         },
         "discovered_roles": [
-          "arn:aws:iam::123456789012:role/A-DeadEndRole",
-          "arn:aws:iam::123456789012:role/Z-SensitiveRole"
+          "arn:aws:iam::123456789012:role/A-FinanceAuditRole",
+          "arn:aws:iam::123456789012:role/Z-DataOpsRole"
         ]
       },
       "add_flags": [
@@ -90,13 +90,13 @@
     {
       "action_type": "assume_role",
       "actor": "arn:aws:iam::123456789012:user/analyst",
-      "target": "arn:aws:iam::123456789012:role/A-DeadEndRole",
+      "target": "arn:aws:iam::123456789012:role/A-FinanceAuditRole",
       "observation": {
-        "granted_role": "arn:aws:iam::123456789012:role/A-DeadEndRole",
-        "details": "Simulated sts:AssumeRole into A-DeadEndRole succeeded.",
+        "granted_role": "arn:aws:iam::123456789012:role/A-FinanceAuditRole",
+        "details": "Simulated sts:AssumeRole into A-FinanceAuditRole succeeded.",
         "simulated_policy_result": {
           "action": "s3:ListBucket",
-          "resource": "arn:aws:s3:::public-reports",
+          "resource": "arn:aws:s3:::sensitive-finance-data",
           "decision": "allowed"
         }
       },
@@ -125,15 +125,15 @@
             },
             {
               "action_type": "assume_role",
-              "target": "arn:aws:iam::123456789012:role/A-DeadEndRole",
+              "target": "arn:aws:iam::123456789012:role/A-FinanceAuditRole",
               "parameters": {
                 "note": "simulate_sts_assume_role_dead_end_path",
                 "service": "sts",
                 "region": "us-east-1",
-                "role_arn": "arn:aws:iam::123456789012:role/A-DeadEndRole",
-                "session_name": "rastro-dead-end-session",
+                "role_arn": "arn:aws:iam::123456789012:role/A-FinanceAuditRole",
+                "session_name": "rastro-finance-audit-session",
                 "policy_action": "s3:ListBucket",
-                "policy_resource": "arn:aws:s3:::public-reports"
+                "policy_resource": "arn:aws:s3:::sensitive-finance-data"
               },
               "technique": {
                 "mitre_id": "T1548",
@@ -145,13 +145,13 @@
             },
             {
               "action_type": "assume_role",
-              "target": "arn:aws:iam::123456789012:role/Z-SensitiveRole",
+              "target": "arn:aws:iam::123456789012:role/Z-DataOpsRole",
               "parameters": {
                 "note": "simulate_sts_assume_role_sensitive_path",
                 "service": "sts",
                 "region": "us-east-1",
-                "role_arn": "arn:aws:iam::123456789012:role/Z-SensitiveRole",
-                "session_name": "rastro-sensitive-session",
+                "role_arn": "arn:aws:iam::123456789012:role/Z-DataOpsRole",
+                "session_name": "rastro-data-ops-session",
                 "policy_action": "s3:ListBucket",
                 "policy_resource": "arn:aws:s3:::sensitive-finance-data"
               },
@@ -165,16 +165,16 @@
             }
           ]
         },
-        "arn:aws:iam::123456789012:role/A-DeadEndRole": {
+        "arn:aws:iam::123456789012:role/A-FinanceAuditRole": {
           "available_actions": [
             {
               "action_type": "enumerate",
-              "target": "arn:aws:s3:::public-reports",
+              "target": "arn:aws:s3:::sensitive-finance-data",
               "parameters": {
                 "note": "simulate_s3_list_bucket_dead_end",
                 "service": "s3",
                 "region": "us-east-1",
-                "bucket": "public-reports",
+                "bucket": "sensitive-finance-data",
                 "prefix": ""
               },
               "technique": {
@@ -191,19 +191,19 @@
     },
     {
       "action_type": "enumerate",
-      "actor": "arn:aws:iam::123456789012:role/A-DeadEndRole",
-      "target": "arn:aws:s3:::public-reports",
+      "actor": "arn:aws:iam::123456789012:role/A-FinanceAuditRole",
+      "target": "arn:aws:s3:::sensitive-finance-data",
       "observation": {
-        "details": "Simulated s3:ListBucket succeeded for public-reports.",
+        "details": "Simulated s3:ListBucket succeeded for sensitive-finance-data.",
         "discovered_objects": [
-          "quarterly-summary.csv"
+          "budget-summary.csv"
         ]
       },
       "add_flags": [
         "dead_end_bucket_listed"
       ],
       "update_identities": {
-        "arn:aws:iam::123456789012:role/A-DeadEndRole": {
+        "arn:aws:iam::123456789012:role/A-FinanceAuditRole": {
           "available_actions": []
         }
       }
@@ -211,10 +211,10 @@
     {
       "action_type": "assume_role",
       "actor": "arn:aws:iam::123456789012:user/analyst",
-      "target": "arn:aws:iam::123456789012:role/Z-SensitiveRole",
+      "target": "arn:aws:iam::123456789012:role/Z-DataOpsRole",
       "observation": {
-        "granted_role": "arn:aws:iam::123456789012:role/Z-SensitiveRole",
-        "details": "Simulated sts:AssumeRole into Z-SensitiveRole succeeded.",
+        "granted_role": "arn:aws:iam::123456789012:role/Z-DataOpsRole",
+        "details": "Simulated sts:AssumeRole into Z-DataOpsRole succeeded.",
         "simulated_policy_result": {
           "action": "s3:ListBucket",
           "resource": "arn:aws:s3:::sensitive-finance-data",
@@ -246,15 +246,15 @@
             },
             {
               "action_type": "assume_role",
-              "target": "arn:aws:iam::123456789012:role/A-DeadEndRole",
+              "target": "arn:aws:iam::123456789012:role/A-FinanceAuditRole",
               "parameters": {
                 "note": "simulate_sts_assume_role_dead_end_path",
                 "service": "sts",
                 "region": "us-east-1",
-                "role_arn": "arn:aws:iam::123456789012:role/A-DeadEndRole",
-                "session_name": "rastro-dead-end-session",
+                "role_arn": "arn:aws:iam::123456789012:role/A-FinanceAuditRole",
+                "session_name": "rastro-finance-audit-session",
                 "policy_action": "s3:ListBucket",
-                "policy_resource": "arn:aws:s3:::public-reports"
+                "policy_resource": "arn:aws:s3:::sensitive-finance-data"
               },
               "technique": {
                 "mitre_id": "T1548",
@@ -266,13 +266,13 @@
             },
             {
               "action_type": "assume_role",
-              "target": "arn:aws:iam::123456789012:role/Z-SensitiveRole",
+              "target": "arn:aws:iam::123456789012:role/Z-DataOpsRole",
               "parameters": {
                 "note": "simulate_sts_assume_role_sensitive_path",
                 "service": "sts",
                 "region": "us-east-1",
-                "role_arn": "arn:aws:iam::123456789012:role/Z-SensitiveRole",
-                "session_name": "rastro-sensitive-session",
+                "role_arn": "arn:aws:iam::123456789012:role/Z-DataOpsRole",
+                "session_name": "rastro-data-ops-session",
                 "policy_action": "s3:ListBucket",
                 "policy_resource": "arn:aws:s3:::sensitive-finance-data"
               },
@@ -286,7 +286,7 @@
             }
           ]
         },
-        "arn:aws:iam::123456789012:role/Z-SensitiveRole": {
+        "arn:aws:iam::123456789012:role/Z-DataOpsRole": {
           "available_actions": [
             {
               "action_type": "enumerate",
@@ -330,7 +330,7 @@
     },
     {
       "action_type": "enumerate",
-      "actor": "arn:aws:iam::123456789012:role/Z-SensitiveRole",
+      "actor": "arn:aws:iam::123456789012:role/Z-DataOpsRole",
       "target": "arn:aws:s3:::sensitive-finance-data",
       "observation": {
         "details": "Simulated s3:ListBucket succeeded for sensitive-finance-data.",
@@ -342,7 +342,7 @@
         "s3_objects_listed"
       ],
       "update_identities": {
-        "arn:aws:iam::123456789012:role/Z-SensitiveRole": {
+        "arn:aws:iam::123456789012:role/Z-DataOpsRole": {
           "available_actions": [
             {
               "action_type": "access_resource",
@@ -368,14 +368,14 @@
     },
     {
       "action_type": "access_resource",
-      "actor": "arn:aws:iam::123456789012:role/Z-SensitiveRole",
+      "actor": "arn:aws:iam::123456789012:role/Z-DataOpsRole",
       "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
       "observation": {
         "details": "Simulated s3:GetObject succeeded for payroll.csv.",
         "evidence": {
           "bucket": "sensitive-finance-data",
           "object_key": "payroll.csv",
-          "accessed_via": "arn:aws:iam::123456789012:role/Z-SensitiveRole"
+          "accessed_via": "arn:aws:iam::123456789012:role/Z-DataOpsRole"
         }
       },
       "add_flags": [

@@ -1124,8 +1124,29 @@ def test_aws_backtracking_dry_run_end_to_end(tmp_path: Path) -> None:
     report_md = (tmp_path / "report.md").read_text()
 
     assert '"objective_met": true' in report
-    assert '"arn:aws:iam::123456789012:role/A-DeadEndRole"' in report
-    assert '"arn:aws:iam::123456789012:role/Z-SensitiveRole"' in report
+    assert '"arn:aws:iam::123456789012:role/A-FinanceAuditRole"' in report
+    assert '"arn:aws:iam::123456789012:role/Z-DataOpsRole"' in report
     assert '"tool": "s3_read_sensitive"' in report
-    assert 'A-DeadEndRole' in report_md
-    assert 'Z-SensitiveRole' in report_md
+    assert 'A-FinanceAuditRole' in report_md
+    assert 'Z-DataOpsRole' in report_md
+
+
+def test_aws_backtracking_openai_scope_keeps_assume_role_actions_available() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture = Fixture.load(repo_root / "fixtures" / "aws_backtracking_lab.json")
+    scope = Scope.model_validate_json(
+        (repo_root / "examples" / "scope_aws_backtracking_openai.json").read_text()
+    )
+    lab = AwsDryRunLab.from_fixture(fixture, scope)
+
+    actions = lab.enumerate_actions(snapshot=None)
+
+    assert any(action.action_type == ActionType.ASSUME_ROLE for action in actions)
+    assert any(
+        action.target == "arn:aws:iam::123456789012:role/A-FinanceAuditRole"
+        for action in actions
+    )
+    assert any(
+        action.target == "arn:aws:iam::123456789012:role/Z-DataOpsRole"
+        for action in actions
+    )

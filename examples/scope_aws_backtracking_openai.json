@@ -11,12 +11,13 @@
     "arn:aws:iam::123456789012:role/A-FinanceAuditRole",
     "arn:aws:iam::123456789012:role/Z-DataOpsRole",
     "arn:aws:s3:::sensitive-finance-data",
-    "arn:aws:s3:::sensitive-finance-data",
     "arn:aws:s3:::sensitive-finance-data/payroll.csv"
   ],
   "max_steps": 8,
   "planner": {
-    "backend": "mock"
+    "backend": "openai",
+    "model": "gpt-4o-mini",
+    "base_url": "https://api.openai.com/v1"
   },
   "dry_run": true,
   "aws_account_ids": [
