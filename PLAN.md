@@ -341,6 +341,12 @@ Progresso atual:
 - correcao aplicada: matching de transicao passou a considerar `parameters` quando definidos
 - EXP-011 com OpenAIPlanner: passou em 5 passos (`RoleQ -> list finance/ -> list finance/payroll -> read`)
 - principal achado do EXP-011: lookahead-aware scoring generaliza para branch profundo quando o simulador representa transicoes multiestagio corretamente
+- EXP-012: nova classe de path com AWS Secrets Manager como recurso final
+- EXP-012 exigiu suporte novo no executor real: `secretsmanager:ListSecrets` e `secretsmanager:GetSecretValue`
+- EXP-012 revelou e corrigiu uma incoerencia no baseline: `MockPlanner` passou a respeitar `path_score` nos `assume_role`
+- EXP-012 em `dry_run` com OpenAIPlanner: passou em 4 passos
+- EXP-012 em AWS real com OpenAIPlanner: passou em 4 passos
+- principal achado do EXP-012: o engine generaliza para uma nova superficie AWS fora de S3
 - ver `docs/path-3-role-choice-learning.md`
 - ver `docs/experiments/EXP-003-path3-role-choice.md`
 - ver `docs/experiments/EXP-005-backtracking-first-cut.md`
@@ -350,6 +356,16 @@ Progresso atual:
 - ver `docs/experiments/EXP-009-evidence-aware-path-scoring.md`
 - ver `docs/experiments/EXP-010-lookahead-path-scoring.md`
 - ver `docs/experiments/EXP-011-deeper-branch-lookahead.md`
+- ver `docs/experiments/EXP-012-secrets-manager-branching.md`
+
+Proxima orientacao de pesquisa:
+- priorizar diversificacao de classes de attack path em `dry_run` antes de ampliar labs reais
+- usar AWS real como validacao seletiva de consistencia, nao como ferramenta principal de descoberta arquitetural
+- para cada bloco de 2 ou 3 experimentos sinteticos relevantes, executar 1 validacao real representativa
+- proxima sequencia planejada:
+  - EXP-012: novo recurso final fora de S3, preferencialmente `Secrets Manager` ou `SSM Parameter Store`, ainda em `dry_run`
+  - EXP-013: variante mais profunda e ambigua da mesma nova familia de path, ainda em `dry_run`
+  - depois: levar apenas 1 desses caminhos para AWS real como prova de generalizacao minima
 
 ---
 

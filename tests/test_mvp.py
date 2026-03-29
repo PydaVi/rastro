@@ -70,6 +70,21 @@ class FakeAwsClient:
     def list_objects(self, region: str, bucket: str, prefix=None, credentials=None):
         return ["payroll.csv", "notes.txt"]
 
+    def list_secrets(self, region: str, name_prefix=None, credentials=None):
+        if name_prefix == "prod/":
+            return ["prod/payroll-api-key"]
+        if name_prefix == "archive/":
+            return ["archive/payroll-history"]
+        return ["reports/quarterly-summary"]
+
+    def get_secret_value(self, region: str, secret_id: str, credentials=None):
+        return {
+            "ARN": f"arn:aws:secretsmanager:{region}:123456789012:secret:{secret_id}",
+            "Name": secret_id,
+            "VersionId": "example-version",
+            "SecretString": "payroll-api-key-preview",
+        }
+
 
 
 def test_build_execution_surface_selects_real_executor_for_non_dry_run_aws() -> None:
@@ -202,6 +217,69 @@ def test_aws_real_executor_supports_s3_object_discovery_path() -> None:
     assert list_bucket_observation.details["request_summary"]["api_calls"] == ["s3:ListBucket"]
     assert "payroll.csv" in list_bucket_observation.details["discovered_objects"]
     assert access_observation.success is True
+
+
+def test_aws_real_executor_supports_secretsmanager_path() -> None:
+    fixture = Fixture.load(Path(__file__).resolve().parents[1] / "fixtures" / "aws_secrets_branching_lab.json")
+    scope = Scope.model_construct(
+        target="aws",
+        allowed_actions=[
+            ActionType.ENUMERATE,
+            ActionType.ASSUME_ROLE,
+            ActionType.ACCESS_RESOURCE,
+        ],
+        allowed_resources=[
+            "arn:aws:iam::123456789012:root",
+            "arn:aws:iam::123456789012:role/RoleA",
+            "arn:aws:iam::123456789012:role/RoleM",
+            "arn:aws:iam::123456789012:role/RoleQ",
+            "arn:aws:secretsmanager:us-east-1:123456789012:secret:*",
+            "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key",
+        ],
+        max_steps=6,
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam", "sts", "secretsmanager"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+        planner=None,
+    )
+    executor = AwsRealExecutor(fixture=fixture, scope=scope, client=FakeAwsClient())
+
+    enumerate_action = fixture.enumerate_actions(None)[0]
+    enumerate_observation = executor.execute(enumerate_action)
+    assume_action = next(
+        action
+        for action in fixture.enumerate_actions(None)
+        if action.action_type == ActionType.ASSUME_ROLE
+        and action.target == "arn:aws:iam::123456789012:role/RoleM"
+    )
+    assume_observation = executor.execute(assume_action)
+    list_secret_action = next(
+        action
+        for action in fixture.enumerate_actions(None)
+        if action.actor == "arn:aws:iam::123456789012:role/RoleM"
+        and action.tool == "secretsmanager_list_secrets"
+    )
+    list_secret_observation = executor.execute(list_secret_action)
+    read_secret_action = next(
+        action
+        for action in fixture.enumerate_actions(None)
+        if action.actor == "arn:aws:iam::123456789012:role/RoleM"
+        and action.tool == "secretsmanager_read_secret"
+    )
+    read_secret_observation = executor.execute(read_secret_action)
+
+    assert enumerate_observation.success is True
+    assert assume_observation.success is True
+    assert list_secret_observation.success is True
+    assert list_secret_observation.details["request_summary"]["api_calls"] == ["secretsmanager:ListSecrets"]
+    assert "prod/payroll-api-key" in list_secret_observation.details["discovered_objects"]
+    assert read_secret_observation.success is True
+    assert read_secret_observation.details["request_summary"]["api_calls"] == ["secretsmanager:GetSecretValue"]
+    assert read_secret_observation.details["response_summary"]["preview"] == "payroll-api-key-preview"
 
 def test_scope_enforcer_blocks_out_of_scope() -> None:
     scope = Scope(
@@ -1377,6 +1455,88 @@ def test_aws_deeper_branching_dry_run_end_to_end(tmp_path: Path) -> None:
     assert '"finance/payroll.csv"' in report
     assert '"tool": "s3_read_sensitive"' in report
     assert 'RoleQ' in report_md
+
+
+def test_aws_secrets_branching_dry_run_end_to_end(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture_path = repo_root / "fixtures" / "aws_secrets_branching_lab.json"
+    objective_path = repo_root / "examples" / "objective_aws_secrets_branching.json"
+    scope_path = repo_root / "examples" / "scope_aws_secrets_branching.json"
+
+    run(
+        fixture_path=fixture_path,
+        objective_path=objective_path,
+        scope_path=scope_path,
+        output_dir=tmp_path,
+        max_steps=6,
+        seed=1,
+    )
+
+    report = (tmp_path / "report.json").read_text()
+    report_md = (tmp_path / "report.md").read_text()
+
+    assert '"objective_met": true' in report
+    assert 'prod/payroll-api-key' in report
+    assert '"tool": "secretsmanager_read_secret"' in report
+    assert 'RoleM' in report_md
+
+
+def test_aws_secrets_branching_candidate_paths_favor_secret_relevant_role() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture = Fixture.load(repo_root / "fixtures" / "aws_secrets_branching_lab.json")
+    objective = Objective.model_validate_json(
+        (repo_root / "examples" / "objective_aws_secrets_branching.json").read_text()
+    )
+    scope = Scope.model_validate_json(
+        (repo_root / "examples" / "scope_aws_secrets_branching.json").read_text()
+    )
+
+    snapshot = StateManager(
+        objective=objective,
+        scope=scope,
+        fixture=AwsDryRunLab.from_fixture(fixture, scope),
+        tool_registry=ToolRegistry.load(repo_root / "tools"),
+    ).snapshot()
+
+    scores = {path.target.rsplit("/", 1)[-1]: path.path_score for path in snapshot.candidate_paths}
+    assert scores["RoleM"] > scores["RoleA"]
+    assert scores["RoleM"] > scores["RoleQ"]
+
+
+def test_mock_planner_prefers_higher_scored_assume_role() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture = Fixture.load(repo_root / "fixtures" / "aws_secrets_branching_lab.json")
+    objective = Objective.model_validate_json(
+        (repo_root / "examples" / "objective_aws_secrets_branching.json").read_text()
+    )
+    scope = Scope.model_validate_json(
+        (repo_root / "examples" / "scope_aws_secrets_branching.json").read_text()
+    )
+    registry = ToolRegistry.load(repo_root / "tools")
+    environment = AwsDryRunLab.from_fixture(fixture, scope)
+    state = StateManager(
+        objective=objective,
+        scope=scope,
+        fixture=environment,
+        tool_registry=registry,
+    )
+
+    enumerate_action = registry.filter_actions(
+        environment.enumerate_actions(state.snapshot()),
+        state.snapshot().fixture_state.get("flags", []),
+    )[0]
+    observation = environment.execute(enumerate_action)
+    state.apply_observation(enumerate_action, observation, "seed enumeration")
+
+    snapshot = state.snapshot()
+    available_actions = registry.filter_actions(
+        environment.enumerate_actions(snapshot),
+        snapshot.fixture_state.get("flags", []),
+    )
+    shaped_actions = shape_available_actions(snapshot, available_actions)
+    decision = DeterministicPlanner(seed=1).decide(snapshot, shaped_actions)
+
+    assert decision.action.target == "arn:aws:iam::123456789012:role/RoleM"
 
 
 def test_aws_backtracking_real_local_artifacts_are_consistent() -> None:

@@ -47,6 +47,10 @@ class AwsRealExecutor:
                 details = self._execute_s3_list_bucket(client, action)
             elif action.tool == "s3_read_sensitive":
                 details = self._execute_s3_read_sensitive(client, action)
+            elif action.tool == "secretsmanager_list_secrets":
+                details = self._execute_secretsmanager_list_secrets(client, action)
+            elif action.tool == "secretsmanager_read_secret":
+                details = self._execute_secretsmanager_read_secret(client, action)
             else:
                 return Observation(
                     success=False,
@@ -213,6 +217,55 @@ class AwsRealExecutor:
             "response_summary": {
                 "objects_returned": len(keys),
                 "sample_keys": keys[:5],
+            },
+        }
+
+    def _execute_secretsmanager_list_secrets(self, client: AwsClient, action: Action) -> dict:
+        region = _required_parameter(action, "region")
+        name_prefix = action.parameters.get("name_prefix")
+        secrets = client.list_secrets(
+            region=region,
+            name_prefix=name_prefix,
+            credentials=self._assumed_credentials,
+        )
+        return {
+            "details": "Executed secretsmanager:ListSecrets against AWS.",
+            "discovered_objects": secrets,
+            "aws_region": region,
+            "request_summary": {
+                "api_calls": ["secretsmanager:ListSecrets"],
+                "name_prefix": name_prefix,
+            },
+            "response_summary": {
+                "secrets_returned": len(secrets),
+                "sample_names": secrets[:5],
+            },
+        }
+
+    def _execute_secretsmanager_read_secret(self, client: AwsClient, action: Action) -> dict:
+        region = _required_parameter(action, "region")
+        secret_id = _required_parameter(action, "secret_id")
+        response = client.get_secret_value(
+            region=region,
+            secret_id=secret_id,
+            credentials=self._assumed_credentials,
+        )
+        return {
+            "details": f"Executed secretsmanager:GetSecretValue against {secret_id}.",
+            "evidence": {
+                "secret_id": secret_id,
+                "accessed_via": self._assumed_role_arn,
+            },
+            "aws_region": region,
+            "request_summary": {
+                "api_calls": ["secretsmanager:GetSecretValue"],
+                "secret_id": secret_id,
+            },
+            "response_summary": {
+                "arn": response.get("ARN"),
+                "name": response.get("Name"),
+                "version_id": response.get("VersionId"),
+                "preview": (response.get("SecretString") or "")[:256],
             },
         }
 

@@ -59,6 +59,22 @@ class AwsClient(Protocol):
     ) -> list[str]:
         ...
 
+    def list_secrets(
+        self,
+        region: str,
+        name_prefix: Optional[str] = None,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[str]:
+        ...
+
+    def get_secret_value(
+        self,
+        region: str,
+        secret_id: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> Dict[str, Any]:
+        ...
+
 
 @dataclass
 class Boto3AwsClient:
@@ -156,6 +172,40 @@ class Boto3AwsClient:
                 if key:
                     keys.append(key)
         return keys
+
+    def list_secrets(
+        self,
+        region: str,
+        name_prefix: Optional[str] = None,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[str]:
+        client = self._session(credentials).client("secretsmanager", region_name=region)
+        paginator = client.get_paginator("list_secrets")
+        names: list[str] = []
+        paginate_kwargs = {}
+        if name_prefix:
+            paginate_kwargs["Filters"] = [{"Key": "name", "Values": [name_prefix]}]
+        for page in paginator.paginate(**paginate_kwargs):
+            for secret in page.get("SecretList", []):
+                name = secret.get("Name")
+                if name:
+                    names.append(name)
+        return names
+
+    def get_secret_value(
+        self,
+        region: str,
+        secret_id: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> Dict[str, Any]:
+        client = self._session(credentials).client("secretsmanager", region_name=region)
+        response = client.get_secret_value(SecretId=secret_id)
+        return {
+            "ARN": response.get("ARN"),
+            "Name": response.get("Name"),
+            "VersionId": response.get("VersionId"),
+            "SecretString": response.get("SecretString"),
+        }
 
     def _session(self, credentials: Optional[AwsCredentials] = None):
         import boto3

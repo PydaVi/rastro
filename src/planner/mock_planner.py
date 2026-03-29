@@ -26,6 +26,7 @@ class DeterministicPlanner(Planner):
         active_role_actors = set()
         failed_assume_roles = set()
         candidate_path_status = {}
+        candidate_path_scores = {}
         if snapshot is not None:
             for observation in snapshot.observations:
                 granted_role = observation.details.get("granted_role")
@@ -34,6 +35,10 @@ class DeterministicPlanner(Planner):
             failed_assume_roles = set(getattr(snapshot, "failed_assume_roles", []))
             candidate_path_status = {
                 path.target: path.status
+                for path in getattr(snapshot, "candidate_paths", [])
+            }
+            candidate_path_scores = {
+                path.target: getattr(path, "path_score", 0)
                 for path in getattr(snapshot, "candidate_paths", [])
             }
 
@@ -63,6 +68,9 @@ class DeterministicPlanner(Planner):
                 if action.action_type == ActionType.ASSUME_ROLE
                 and candidate_path_status.get(action.target) == "untested"
                 else 1,
+                -candidate_path_scores.get(action.target, 0)
+                if action.action_type == ActionType.ASSUME_ROLE
+                else 0,
                 actor_rank,
                 priority.get(action.action_type, 9),
                 action.actor,
