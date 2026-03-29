@@ -305,6 +305,24 @@
                 "platform": "S3"
               },
               "tool": "s3_list_bucket"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+              "parameters": {
+                "note": "simulate_s3_get_object",
+                "service": "s3",
+                "region": "us-east-1",
+                "bucket": "sensitive-finance-data",
+                "object_key": "payroll.csv"
+              },
+              "technique": {
+                "mitre_id": "T1530",
+                "mitre_name": "Data from Cloud Storage",
+                "tactic": "collection",
+                "platform": "S3"
+              },
+              "tool": "s3_read_sensitive"
             }
           ]
         }

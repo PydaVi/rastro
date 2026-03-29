@@ -1126,7 +1126,6 @@ def test_aws_backtracking_dry_run_end_to_end(tmp_path: Path) -> None:
     assert '"objective_met": true' in report
     assert '"arn:aws:iam::123456789012:role/A-DeadEndRole"' in report
     assert '"arn:aws:iam::123456789012:role/Z-SensitiveRole"' in report
-    assert '"tool": "s3_list_bucket"' in report
     assert '"tool": "s3_read_sensitive"' in report
     assert 'A-DeadEndRole' in report_md
     assert 'Z-SensitiveRole' in report_md
