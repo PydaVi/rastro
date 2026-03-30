@@ -347,6 +347,14 @@ Progresso atual:
 - EXP-012 em `dry_run` com OpenAIPlanner: passou em 4 passos
 - EXP-012 em AWS real com OpenAIPlanner: passou em 4 passos
 - principal achado do EXP-012: o engine generaliza para uma nova superficie AWS fora de S3
+- EXP-013: branch profundo em AWS Secrets Manager com duas etapas de descoberta antes do acesso final
+- EXP-013 em `dry_run` com MockPlanner: passou em 5 passos
+- EXP-013 em `dry_run` com OpenAIPlanner: passou em 5 passos
+- principal achado do EXP-013: lookahead-aware scoring tambem generaliza para branch profundo em Secrets Manager
+- EXP-014: backtracking em Secrets Manager com pivô falso dominante
+- EXP-014 em `dry_run` com MockPlanner: passou em 7 passos com pivô errado seguido de backtracking
+- EXP-014 em `dry_run` com OpenAIPlanner: passou em 7 passos com pivô errado seguido de backtracking
+- principal achado do EXP-014: backtracking se manteve robusto mesmo com sinal inicial mais forte no pivô errado
 - ver `docs/path-3-role-choice-learning.md`
 - ver `docs/experiments/EXP-003-path3-role-choice.md`
 - ver `docs/experiments/EXP-005-backtracking-first-cut.md`
@@ -357,15 +365,17 @@ Progresso atual:
 - ver `docs/experiments/EXP-010-lookahead-path-scoring.md`
 - ver `docs/experiments/EXP-011-deeper-branch-lookahead.md`
 - ver `docs/experiments/EXP-012-secrets-manager-branching.md`
+- ver `docs/experiments/EXP-013-secrets-manager-deeper-branching.md`
+- ver `docs/experiments/EXP-014-secrets-manager-backtracking.md`
 
 Proxima orientacao de pesquisa:
 - priorizar diversificacao de classes de attack path em `dry_run` antes de ampliar labs reais
 - usar AWS real como validacao seletiva de consistencia, nao como ferramenta principal de descoberta arquitetural
 - para cada bloco de 2 ou 3 experimentos sinteticos relevantes, executar 1 validacao real representativa
 - proxima sequencia planejada:
-  - EXP-012: novo recurso final fora de S3, preferencialmente `Secrets Manager` ou `SSM Parameter Store`, ainda em `dry_run`
-  - EXP-013: variante mais profunda e ambigua da mesma nova familia de path, ainda em `dry_run`
-  - depois: levar apenas 1 desses caminhos para AWS real como prova de generalizacao minima
+  - EXP-015: decidir entre validacao real seletiva do backtracking em `Secrets Manager` ou nova familia em `SSM Parameter Store`
+  - EXP-016: order sensitivity ou backtracking explicito dentro da familia `Secrets Manager`
+  - manter a regra: levar para AWS real apenas a variacao que adicionar sinal novo, nao apenas repeticao operacional
 
 ---
 

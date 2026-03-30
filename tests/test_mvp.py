@@ -1503,6 +1503,55 @@ def test_aws_secrets_branching_candidate_paths_favor_secret_relevant_role() -> N
     assert scores["RoleM"] > scores["RoleQ"]
 
 
+def test_aws_secrets_deeper_branching_dry_run_end_to_end(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture_path = repo_root / "fixtures" / "aws_secrets_deeper_branching_lab.json"
+    objective_path = repo_root / "examples" / "objective_aws_secrets_deeper_branching.json"
+    scope_path = repo_root / "examples" / "scope_aws_secrets_deeper_branching.json"
+
+    run(
+        fixture_path=fixture_path,
+        objective_path=objective_path,
+        scope_path=scope_path,
+        output_dir=tmp_path,
+        max_steps=8,
+        seed=1,
+    )
+
+    report = (tmp_path / "report.json").read_text()
+    report_md = (tmp_path / "report.md").read_text()
+
+    assert '"objective_met": true' in report
+    assert 'prod/payroll-api-key' in report
+    assert '"tool": "secretsmanager_read_secret"' in report
+    assert 'RoleQ' in report_md
+
+
+def test_aws_secrets_backtracking_dry_run_end_to_end(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture_path = repo_root / "fixtures" / "aws_secrets_backtracking_lab.json"
+    objective_path = repo_root / "examples" / "objective_aws_secrets_backtracking.json"
+    scope_path = repo_root / "examples" / "scope_aws_secrets_backtracking.json"
+
+    run(
+        fixture_path=fixture_path,
+        objective_path=objective_path,
+        scope_path=scope_path,
+        output_dir=tmp_path,
+        max_steps=7,
+        seed=1,
+    )
+
+    report = (tmp_path / "report.json").read_text()
+    report_md = (tmp_path / "report.md").read_text()
+
+    assert '"objective_met": true' in report
+    assert 'prod/payroll-api-key' in report
+    assert '"tool": "secretsmanager_read_secret"' in report
+    assert 'RoleA' in report_md
+    assert 'RoleM' in report_md
+
+
 def test_mock_planner_prefers_higher_scored_assume_role() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     fixture = Fixture.load(repo_root / "fixtures" / "aws_secrets_branching_lab.json")
