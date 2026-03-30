@@ -75,6 +75,8 @@ class ReportGenerator:
         graph_summary = graph.summary()
         choice_summary = _build_choice_summary(initial_state, steps)
         mermaid = _build_enriched_mermaid(graph, choice_summary)
+        attack_graph_dot = graph.to_dot()
+        decision_chain_dot = _build_decision_chain_dot(steps)
         executive_summary = _build_executive_summary(steps, objective_met)
         execution_policy = _build_execution_policy(snapshot.scope)
 
@@ -91,6 +93,8 @@ class ReportGenerator:
             "graph_summary": graph_summary,
             "choice_summary": choice_summary,
             "attack_graph_mermaid": mermaid,
+            "attack_graph_dot": attack_graph_dot,
+            "decision_chain_dot": decision_chain_dot,
             "mitre_techniques": mitre_techniques,
             "tool_chain": tool_chain,
             "objective_met": objective_met,
@@ -179,9 +183,14 @@ class ReportGenerator:
             "## Tool Chain",
             "```\n" + str(tool_chain) + "\n```",
             "",
-            "## Attack Graph (Mermaid)",
-            "```mermaid",
-            mermaid,
+            "## Attack Graph (DOT)",
+            "```dot",
+            attack_graph_dot,
+            "```",
+            "",
+            "## Decision Chain (DOT)",
+            "```dot",
+            decision_chain_dot,
             "```",
             "",
             "## Outcome",
@@ -236,6 +245,42 @@ def _build_executive_summary(steps: list[Dict], objective_met: bool) -> Dict:
         summary["final_resource"] = steps[-1].get("action", {}).get("target")
 
     return summary
+
+
+def _build_decision_chain_dot(steps: list[Dict]) -> str:
+    def escape(text: str) -> str:
+        return text.replace("\\", "\\\\").replace("\"", "\\\"")
+
+    def short(value: str | None) -> str:
+        if not value:
+            return "-"
+        return _short_resource(value)
+
+    lines = [
+        "digraph DecisionChain {",
+        "  rankdir=TB;",
+        "  node [shape=box, style=rounded, fontname=\"Helvetica\"];",
+    ]
+
+    for step in steps:
+        step_idx = step.get("step")
+        action = step.get("action", {})
+        action_type = action.get("action_type", "-")
+        actor = short(action.get("actor"))
+        target = short(action.get("target"))
+        reason = step.get("reason") or ""
+        if len(reason) > 120:
+            reason = reason[:117] + "..."
+        label = (
+            f"step {step_idx}\\n{action_type}\\n{actor} -> {target}\\nreason: {reason}"
+        )
+        lines.append(f"  step_{step_idx} [label=\"{escape(label)}\"];")
+
+    for idx in range(1, len(steps)):
+        lines.append(f"  step_{idx} -> step_{idx + 1};")
+
+    lines.append("}")
+    return "\n".join(lines)
 
 
 def _short_resource(value: str | None) -> str:

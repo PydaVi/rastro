@@ -93,3 +93,32 @@ class AttackGraph:
                 lines.append(f"  linkStyle {idx} stroke:#b3261e,stroke-width:2px;")
 
         return "\n".join(lines)
+
+    def to_dot(self) -> str:
+        def node_id(raw: str) -> str:
+            return "".join(ch if ch.isalnum() else "_" for ch in raw)
+
+        lines = [
+            "digraph AttackGraph {",
+            "  rankdir=LR;",
+            "  node [shape=box, style=rounded, fontname=\"Helvetica\"];",
+        ]
+        id_map: Dict[str, str] = {}
+
+        for node in self.nodes.values():
+            safe_id = node_id(node.node_id)
+            id_map[node.node_id] = safe_id
+            label = f"{node.node_type}:{node.metadata.get('name', node.node_id)}"
+            lines.append(f"  {safe_id} [label=\"{label}\"];")
+
+        for edge in self.edges:
+            label = edge.action_type
+            source = id_map.get(edge.source, node_id(edge.source))
+            target = id_map.get(edge.target, node_id(edge.target))
+            color = "#1b7f3b" if edge.metadata.get("success") else "#b3261e"
+            lines.append(
+                f"  {source} -> {target} [label=\"{label}\", color=\"{color}\"];"
+            )
+
+        lines.append("}")
+        return "\n".join(lines)

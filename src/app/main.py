@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 import os
 from pathlib import Path
 from typing import Optional
@@ -152,10 +154,14 @@ def run(
     )
     report_json_path = output_dir / "report.json"
     report_md_path = output_dir / "report.md"
-    graph_path = output_dir / "attack_graph.mmd"
+    attack_graph_path = output_dir / "attack_graph.dot"
+    decision_chain_path = output_dir / "decision_chain.dot"
     report_json_path.write_text(json.dumps(report["json"], indent=2))
     report_md_path.write_text(report["markdown"])
-    graph_path.write_text(report["json"]["attack_graph_mermaid"])
+    attack_graph_path.write_text(report["json"]["attack_graph_dot"])
+    decision_chain_path.write_text(report["json"]["decision_chain_dot"])
+    _render_graphviz_svg(attack_graph_path)
+    _render_graphviz_svg(decision_chain_path)
     write_sanitized_artifacts(output_dir, report["json"], report["markdown"], audit.path)
 
     audit.log_event(
@@ -164,14 +170,16 @@ def run(
             "objective_met": state.is_objective_met(),
             "report_json": str(report_json_path),
             "report_md": str(report_md_path),
-            "attack_graph_mermaid": str(graph_path),
+            "attack_graph_dot": str(attack_graph_path),
+            "decision_chain_dot": str(decision_chain_path),
             "execution_policy": execution_policy,
         },
     )
 
     typer.echo(f"Report JSON: {report_json_path}")
     typer.echo(f"Report MD: {report_md_path}")
-    typer.echo(f"Attack Graph: {graph_path}")
+    typer.echo(f"Attack Graph (DOT): {attack_graph_path}")
+    typer.echo(f"Decision Chain (DOT): {decision_chain_path}")
 
 
 def _build_environment(fixture: Fixture, scope: Scope):
@@ -197,6 +205,18 @@ def _build_execution_policy(scope: Scope) -> dict:
         "aws_account_ids": scope.aws_account_ids,
         "authorization_document": scope.authorization_document,
     }
+
+
+def _render_graphviz_svg(dot_path: Path) -> None:
+    if shutil.which("dot") is None:
+        return
+    svg_path = dot_path.with_suffix(".svg")
+    subprocess.run(
+        ["dot", "-Tsvg", str(dot_path), "-o", str(svg_path)],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def _validate_run_inputs(fixture: Fixture, objective: Objective, scope: Scope) -> None:
