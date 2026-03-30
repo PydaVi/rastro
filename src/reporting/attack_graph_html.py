@@ -29,19 +29,40 @@ def render_attack_graph_html(report_data: Dict, output_dir: Path) -> None:
 
 def build_graph_data(report: Dict) -> Dict:
     raw_graph = report.get("attack_graph") or {}
-    nodes = raw_graph.get("nodes", [])
+    raw_nodes = raw_graph.get("nodes", [])
     links = raw_graph.get("edges", [])
 
     objective_target = (report.get("executive_summary") or {}).get("final_resource")
     objective_id = f"resource:{objective_target}" if objective_target else None
     failed_roles = set((report.get("path_memory") or {}).get("failed_assume_roles", []))
-    failed_ids = {f"identity:{role}" for role in failed_roles}
+    rejected_roles = set((report.get("choice_summary") or {}).get("rejected_roles", []))
+    dead_end_ids = {f"identity:{role}" for role in failed_roles.union(rejected_roles)}
 
+    nodes_by_id: Dict[str, Dict] = {}
+    for node in raw_nodes:
+        node_id = node.get("id")
+        if not node_id:
+            continue
+        if node_id not in nodes_by_id:
+            nodes_by_id[node_id] = {
+                "id": node_id,
+                "label": node.get("label"),
+                "type": node.get("type", "resource"),
+                "step": node.get("step"),
+                "mitre_id": node.get("mitre_id"),
+                "depth": node.get("depth", 0),
+            }
+        else:
+            if node.get("type") == "dead_end":
+                nodes_by_id[node_id]["type"] = "dead_end"
+
+    nodes = list(nodes_by_id.values())
     for node in nodes:
+        node_id = node.get("id")
         node_type = node.get("type")
-        if objective_id and node.get("id") == objective_id:
+        if objective_id and node_id == objective_id:
             node_type = "objective"
-        elif node.get("id") in failed_ids:
+        elif node_id in dead_end_ids:
             node_type = "dead_end"
         node["type"] = node_type or "resource"
 
@@ -302,16 +323,22 @@ def _build_html(report: Dict, graph: Dict) -> str:
       svg.transition().duration(200).call(zoom.transform, d3.zoomIdentity);
     };
 
+    computeDepths(graphData.nodes, graphData.links);
     const depthGroups = d3.group(graphData.nodes, d => d.depth ?? 0);
     const maxDepth = d3.max(graphData.nodes, d => d.depth ?? 0) || 0;
     const levelGap = Math.max(160, height / (maxDepth + 1));
 
-    graphData.nodes.forEach(node => {
-      const group = depthGroups.get(node.depth ?? 0) || [];
-      const idx = group.indexOf(node);
-      const count = group.length || 1;
-      node.x = (idx + 1) * (width / (count + 1));
-      node.y = (node.depth ?? 0) * levelGap + 80;
+    depthGroups.forEach((levelNodes, depth) => {
+      const count = levelNodes.length || 1;
+      levelNodes.forEach((node, idx) => {
+        node.x = (idx + 1) * (width / (count + 1));
+        node.y = (depth * levelGap) + 80;
+      });
+    });
+
+    graphData.nodes.filter(n => n.type === "dead_end").forEach(node => {
+      node.x += 60;
+      node.y += 20;
     });
 
       const link = zoomLayer.append("g")
@@ -360,7 +387,7 @@ def _build_html(report: Dict, graph: Dict) -> str:
       .attr("stroke-width", 1);
 
     node.append("text")
-      .text(d => d.label || d.name || d.id)
+      .text(d => truncateLabel(d.label || d.name || d.id))
       .attr("text-anchor", "middle")
       .attr("dy", 4)
       .attr("fill", "$TEXT")
@@ -477,6 +504,45 @@ def _build_html(report: Dict, graph: Dict) -> str:
       panelContent.textContent = content;
       panel.classList.add("open");
     }
+
+      function truncateLabel(label, maxChars = 24) {
+      if (!label) return "";
+      if (label.length <= maxChars) return label;
+      if (label.startsWith("arn:")) {
+        const parts = label.split(":");
+        return "..." + parts.slice(-2).join(":");
+      }
+      return label.substring(0, maxChars) + "...";
+      }
+
+      function computeDepths(nodes, links) {
+      const incoming = new Map();
+      const adjacency = new Map();
+      nodes.forEach(n => {
+        incoming.set(n.id, 0);
+        adjacency.set(n.id, []);
+      });
+      links.forEach(l => {
+        if (adjacency.has(l.source) && adjacency.has(l.target)) {
+          adjacency.get(l.source).push(l.target);
+          incoming.set(l.target, (incoming.get(l.target) || 0) + 1);
+        }
+      });
+      const root = nodes.find(n => n.type === "identity" && !(incoming.get(n.id) > 0))
+        || nodes.find(n => (incoming.get(n.id) || 0) === 0);
+      if (!root) return;
+      const queue = [{ id: root.id, depth: 0 }];
+      const depthMap = {};
+      while (queue.length > 0) {
+        const { id, depth } = queue.shift();
+        if (depthMap[id] !== undefined) continue;
+        depthMap[id] = depth;
+        (adjacency.get(id) || []).forEach(tgt => queue.push({ id: tgt, depth: depth + 1 }));
+      }
+      nodes.forEach(n => {
+        n.depth = depthMap[n.id] ?? 0;
+      });
+      }
 
       function groupBy(list, keyFn) {
       const map = new Map();
