@@ -355,6 +355,9 @@ Progresso atual:
 - EXP-014 em `dry_run` com MockPlanner: passou em 7 passos com pivô errado seguido de backtracking
 - EXP-014 em `dry_run` com OpenAIPlanner: passou em 7 passos com pivô errado seguido de backtracking
 - principal achado do EXP-014: backtracking se manteve robusto mesmo com sinal inicial mais forte no pivô errado
+- EXP-015: validacao real do backtracking em Secrets Manager
+- EXP-015 em AWS real com OpenAIPlanner: passou em 7 passos com pivô errado seguido de backtracking
+- correcao aplicada: `ANALYZE` no executor real passou a ser no-op (sem chamada AWS) para nao bloquear o branch correto
 - ver `docs/path-3-role-choice-learning.md`
 - ver `docs/experiments/EXP-003-path3-role-choice.md`
 - ver `docs/experiments/EXP-005-backtracking-first-cut.md`
@@ -367,14 +370,15 @@ Progresso atual:
 - ver `docs/experiments/EXP-012-secrets-manager-branching.md`
 - ver `docs/experiments/EXP-013-secrets-manager-deeper-branching.md`
 - ver `docs/experiments/EXP-014-secrets-manager-backtracking.md`
+- ver `docs/experiments/EXP-015-secrets-manager-backtracking-real.md`
 
 Proxima orientacao de pesquisa:
 - priorizar diversificacao de classes de attack path em `dry_run` antes de ampliar labs reais
 - usar AWS real como validacao seletiva de consistencia, nao como ferramenta principal de descoberta arquitetural
 - para cada bloco de 2 ou 3 experimentos sinteticos relevantes, executar 1 validacao real representativa
 - proxima sequencia planejada:
-  - EXP-015: decidir entre validacao real seletiva do backtracking em `Secrets Manager` ou nova familia em `SSM Parameter Store`
-  - EXP-016: order sensitivity ou backtracking explicito dentro da familia `Secrets Manager`
+  - EXP-016: variar backtracking dentro de `Secrets Manager` com pivô competitivo adicional
+  - EXP-017: portar para `SSM Parameter Store` e validar em AWS real se houver sinal novo
   - manter a regra: levar para AWS real apenas a variacao que adicionar sinal novo, nao apenas repeticao operacional
 
 ---

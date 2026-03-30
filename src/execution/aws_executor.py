@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from core.domain import Action, Observation, Scope
+from core.domain import Action, ActionType, Observation, Scope
 from core.fixture import Fixture
 from execution.aws_client import AwsClient, AwsCredentials, Boto3AwsClient
 
@@ -37,6 +37,19 @@ class AwsRealExecutor:
         denial = _build_policy_denial(action, self.scope)
         if denial is not None:
             return denial
+
+        if action.action_type == ActionType.ANALYZE:
+            transition = self.fixture.execute(action)
+            details = {
+                **transition.details,
+                "details": transition.details.get(
+                    "details",
+                    "Executed analysis step without AWS API call.",
+                ),
+                "execution_mode": "real",
+                "real_api_called": False,
+            }
+            return Observation(success=transition.success, details=details)
 
         try:
             if action.tool == "iam_list_roles":
