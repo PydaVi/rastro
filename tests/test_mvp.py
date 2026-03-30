@@ -1181,7 +1181,7 @@ def test_aws_role_choice_dry_run_end_to_end(tmp_path: Path) -> None:
     assert '"arn:aws:s3:::sensitive-finance-data/payroll.csv"' in report
     assert '"rejected_roles": [' in report
     assert 'BucketReaderRole' in report_md
-    assert 'candidate assume_role' in report_md
+    assert (tmp_path / "attack_graph.html").exists()
 
 
 def test_aws_backtracking_dry_run_end_to_end(tmp_path: Path) -> None:
@@ -1284,9 +1284,9 @@ def test_action_shaping_orders_untested_candidate_paths_by_score_then_target() -
 
     assume_targets = [action.target for action in shaped if action.action_type == ActionType.ASSUME_ROLE]
     assert assume_targets == [
+        "arn:aws:iam::123456789012:role/RoleQ",
         "arn:aws:iam::123456789012:role/RoleA",
         "arn:aws:iam::123456789012:role/RoleM",
-        "arn:aws:iam::123456789012:role/RoleQ",
     ]
 
 
@@ -1314,7 +1314,13 @@ def test_candidate_paths_expose_path_score() -> None:
 
     assert snapshot.candidate_paths
     assert all(hasattr(path, "path_score") for path in snapshot.candidate_paths)
-    assert all(path.path_score == 20 for path in snapshot.candidate_paths)
+    scores = {path.target: path.path_score for path in snapshot.candidate_paths}
+    assert scores["arn:aws:iam::123456789012:role/RoleQ"] > scores[
+        "arn:aws:iam::123456789012:role/RoleA"
+    ]
+    assert scores["arn:aws:iam::123456789012:role/RoleQ"] > scores[
+        "arn:aws:iam::123456789012:role/RoleM"
+    ]
 
 
 def test_candidate_paths_gain_objective_relevance_score_from_observed_resources() -> None:

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict
 
 from core.attack_graph import AttackGraph
+from reporting.attack_graph_html import render_attack_graph_html
 from core.audit import AuditLogger
 
 
@@ -74,9 +75,8 @@ class ReportGenerator:
         observations = [o.model_dump() for o in snapshot.observations]
         graph_summary = graph.summary()
         choice_summary = _build_choice_summary(initial_state, steps)
+        choice_summary["failed_assume_roles"] = getattr(snapshot, "failed_assume_roles", [])
         mermaid = _build_enriched_mermaid(graph, choice_summary)
-        attack_graph_dot = graph.to_dot()
-        decision_chain_dot = _build_decision_chain_dot(steps)
         executive_summary = _build_executive_summary(steps, objective_met)
         execution_policy = _build_execution_policy(snapshot.scope)
 
@@ -92,13 +92,24 @@ class ReportGenerator:
             "observations": observations,
             "graph_summary": graph_summary,
             "choice_summary": choice_summary,
+            "path_memory": {
+                "tested_assume_roles": getattr(snapshot, "tested_assume_roles", []),
+                "failed_assume_roles": getattr(snapshot, "failed_assume_roles", []),
+                "active_assumed_roles": getattr(snapshot, "active_assumed_roles", []),
+            },
+            "attack_graph": _build_attack_graph_data(
+                graph,
+                steps,
+                choice_summary,
+                executive_summary,
+            ),
             "attack_graph_mermaid": mermaid,
-            "attack_graph_dot": attack_graph_dot,
-            "decision_chain_dot": decision_chain_dot,
             "mitre_techniques": mitre_techniques,
             "tool_chain": tool_chain,
             "objective_met": objective_met,
         }
+
+        render_attack_graph_html(report_json, self.output_dir)
 
         step_lines = []
         for step in steps:
@@ -183,15 +194,8 @@ class ReportGenerator:
             "## Tool Chain",
             "```\n" + str(tool_chain) + "\n```",
             "",
-            "## Attack Graph (DOT)",
-            "```dot",
-            attack_graph_dot,
-            "```",
-            "",
-            "## Decision Chain (DOT)",
-            "```dot",
-            decision_chain_dot,
-            "```",
+            "## Attack Graph (HTML)",
+            "attack_graph.html",
             "",
             "## Outcome",
             f"Objective met: {objective_met}",
@@ -247,42 +251,6 @@ def _build_executive_summary(steps: list[Dict], objective_met: bool) -> Dict:
     return summary
 
 
-def _build_decision_chain_dot(steps: list[Dict]) -> str:
-    def escape(text: str) -> str:
-        return text.replace("\\", "\\\\").replace("\"", "\\\"")
-
-    def short(value: str | None) -> str:
-        if not value:
-            return "-"
-        return _short_resource(value)
-
-    lines = [
-        "digraph DecisionChain {",
-        "  rankdir=TB;",
-        "  node [shape=box, style=rounded, fontname=\"Helvetica\"];",
-    ]
-
-    for step in steps:
-        step_idx = step.get("step")
-        action = step.get("action", {})
-        action_type = action.get("action_type", "-")
-        actor = short(action.get("actor"))
-        target = short(action.get("target"))
-        reason = step.get("reason") or ""
-        if len(reason) > 120:
-            reason = reason[:117] + "..."
-        label = (
-            f"step {step_idx}\\n{action_type}\\n{actor} -> {target}\\nreason: {reason}"
-        )
-        lines.append(f"  step_{step_idx} [label=\"{escape(label)}\"];")
-
-    for idx in range(1, len(steps)):
-        lines.append(f"  step_{idx} -> step_{idx + 1};")
-
-    lines.append("}")
-    return "\n".join(lines)
-
-
 def _short_resource(value: str | None) -> str:
     if not value:
         return "-"
@@ -308,6 +276,101 @@ def _build_execution_policy(scope) -> Dict:
         "aws_account_ids": list(scope.aws_account_ids),
         "authorization_document": scope.authorization_document,
     }
+
+
+def _build_attack_graph_data(
+    graph: AttackGraph,
+    steps: list[Dict],
+    choice_summary: Dict,
+    executive_summary: Dict,
+) -> Dict:
+    nodes = []
+    node_map: Dict[str, Dict] = {}
+
+    for node in graph.nodes.values():
+        name = node.metadata.get("name", node.node_id)
+        entry = {
+            "id": node.node_id,
+            "name": name,
+            "label": _short_resource(name),
+            "type": node.node_type,
+        }
+        node_map[node.node_id] = entry
+        nodes.append(entry)
+
+    objective_target = executive_summary.get("final_resource")
+    if objective_target:
+        obj_id = f"resource:{objective_target}"
+        if obj_id in node_map:
+            node_map[obj_id]["type"] = "objective"
+            node_map[obj_id]["label"] = "objetivo atingido"
+
+    failed_roles = set()
+    failed_roles.update((choice_summary.get("failed_assume_roles") or []))
+    for role in failed_roles:
+        role_id = f"identity:{role}"
+        if role_id in node_map:
+            node_map[role_id]["type"] = "dead_end"
+            node_map[role_id]["label"] = f"{_short_resource(role)} dead-end"
+
+    step_lookup = {}
+    for step in steps:
+        action = step.get("action") or {}
+        actor = action.get("actor")
+        target = action.get("target")
+        action_type = action.get("action_type")
+        if actor and target:
+            step_lookup[(f"identity:{actor}", f"resource:{target}", action_type)] = step
+        details = (step.get("observation") or {}).get("details") or {}
+        granted_role = details.get("granted_role")
+        if action_type == "assume_role" and granted_role:
+            step_lookup[(f"identity:{actor}", f"identity:{granted_role}", "assumed_identity")] = step
+
+    edges = []
+    for edge in graph.edges:
+        action_type = edge.action_type
+        status = "success" if edge.metadata.get("success") else "rejected"
+        if action_type == "assume_role" and edge.target.startswith("identity:"):
+            status = "assumed" if edge.metadata.get("success") else "rejected"
+        step = step_lookup.get((edge.source, edge.target, action_type))
+        if step is None and edge.target.startswith("identity:"):
+            step = step_lookup.get((edge.source, edge.target, "assumed_identity"))
+        edges.append(
+            {
+                "source": edge.source,
+                "target": edge.target,
+                "action": action_type,
+                "status": status,
+                "reason": (step or {}).get("reason"),
+                "step": (step or {}).get("step"),
+            }
+        )
+
+    for step in steps:
+        action = step.get("action") or {}
+        action_type = action.get("action_type")
+        actor = action.get("actor")
+        target = action.get("target")
+        details = (step.get("observation") or {}).get("details") or {}
+        granted_role = details.get("granted_role")
+        if actor and target:
+            node_id = f"resource:{target}"
+            if node_id in node_map and "step" not in node_map[node_id]:
+                node_map[node_id]["step"] = step.get("step")
+                node_map[node_id]["action"] = action_type
+                node_map[node_id]["reason"] = step.get("reason")
+                technique = action.get("technique") or {}
+                node_map[node_id]["mitre_id"] = technique.get("mitre_id")
+        if granted_role:
+            node_id = f"identity:{granted_role}"
+            if node_id in node_map and "step" not in node_map[node_id]:
+                node_map[node_id]["step"] = step.get("step")
+                node_map[node_id]["action"] = action_type
+                node_map[node_id]["reason"] = step.get("reason")
+                technique = action.get("technique") or {}
+                node_map[node_id]["mitre_id"] = technique.get("mitre_id")
+
+    return {"nodes": nodes, "edges": edges}
 
 
 def _aws_real_execution_enabled() -> bool:
