@@ -39,6 +39,12 @@ H2: O engine consegue abandonar dois pivôs competitivos e convergir para o cami
 - Comportamento observado: `RoleA -> enumerate`, pivot para `RoleB -> enumerate`,
   depois convergência em `RoleM` com `enumerate -> analyze -> access_resource`.
 
+### Etapa 2 — OpenAIPlanner (AWS real, gpt-4o-mini)
+- Resultado: passou em 9 passos.
+- Comportamento observado: `RoleA -> enumerate`, pivot para `RoleB -> enumerate`,
+  depois convergência em `RoleM` com `enumerate -> analyze -> access_resource`.
+- Evidência: `ssm:GetParameter` em `/prod/payroll/api_key` registrado no report/audit.
+
 ## Erros, intervenções e motivos
 - Erro: ferramentas SSM inexistentes no Tool Registry impediam ações após `assume_role`.
   - Intervenção: adicionar `ssm_list_parameters` e `ssm_read_parameter` ao Tool Registry
@@ -56,19 +62,19 @@ com ferramentas declarativas equivalentes.
 
 ## Interpretação
 - Provado: a política de backtracking funciona em SSM com dois pivôs competitivos.
-- Não provado: validação em AWS real (ainda não executada).
+- Provado: validação em AWS real no lab local.
 
 ## Implicações arquiteturais
 - Novas superfícies exigem ferramentas declarativas mínimas para não bloquear o loop.
 - A lógica de backtracking é independente da superfície desde que o toolchain exista.
 
 ## Ameaças à validade
-- Apenas dry_run; falta validação real em AWS.
+- Validação real ainda depende de um lab controlado (não ambiente cliente).
 - Sinais competitivos ainda são sintéticos.
 
 ## Conclusão
-H1 confirmada. H2 confirmada em dry_run. O engine generaliza backtracking para SSM
+H1 confirmada. H2 confirmada em AWS real. O engine generaliza backtracking para SSM
 quando a superfície é instrumentada com tools compatíveis.
 
 ## Próximos experimentos
-- Validar EXP-017 em AWS real se houver sinal novo suficiente e lab pronto.
+- Avançar para novos perfis com pivôs competitivos (expansão multi-branch).

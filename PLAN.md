@@ -67,7 +67,7 @@ Loop central validado com fixture sintético.
 Multi-branch backtracking validado, path scoring em evolução,
 diversificação de attack paths em andamento.
 
-15 experimentos concluídos — ver seção de histórico experimental abaixo.
+17 experimentos concluídos — ver seção de histórico experimental abaixo.
 
 ---
 
@@ -95,7 +95,7 @@ que resultados positivos.
 | EXP-014 | Backtracking em Secrets Manager (dry-run)         | confirmada        |
 | EXP-015 | Backtracking em Secrets Manager (AWS real)        | confirmada        |
 | EXP-016 | Backtracking com pivô competitivo adicional       | confirmada        |
-| EXP-017 | Backtracking em SSM Parameter Store (dry-run)     | confirmada        |
+| EXP-017 | Backtracking em SSM Parameter Store (AWS real)    | confirmada        |
 
 Descobertas arquiteturais principais acumuladas:
 - problema raiz de escolha de pivô era representação de estado, não modelo
@@ -152,7 +152,7 @@ Fechar maturidade do engine como sistema de validação real.
 ### Próxima sequência de experimentos
 
 - EXP-016: backtracking em Secrets Manager com pivô competitivo adicional
-- EXP-017: SSM Parameter Store — portar e validar em AWS real se houver
+- EXP-017: SSM Parameter Store — validado em AWS real (concluído)
   sinal novo
 - Regra: levar para AWS real apenas o que adicionar sinal novo,
   não repetição operacional
