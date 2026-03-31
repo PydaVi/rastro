@@ -142,6 +142,9 @@ Fechar maturidade do engine como sistema de validação real.
 - preflight obrigatório de validação de permissões
 - escopo explícito em scope.yaml com autorização documentada
 - cleanup: nenhum recurso criado permanece após o run
+- após fechar este item, iniciar implementação das camadas operacionais
+  (Target/Authorization/Profile/Campaign/Assessment) conforme
+  `docs/architecture.md`.
 
 **5. Qualidade do Produto 01**
 - relatório técnico e executivo
