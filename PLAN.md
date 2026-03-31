@@ -94,6 +94,7 @@ que resultados positivos.
 | EXP-013 | Branch profundo em Secrets Manager                | confirmada        |
 | EXP-014 | Backtracking em Secrets Manager (dry-run)         | confirmada        |
 | EXP-015 | Backtracking em Secrets Manager (AWS real)        | confirmada        |
+| EXP-016 | Backtracking com pivô competitivo adicional       | confirmada        |
 
 Descobertas arquiteturais principais acumuladas:
 - problema raiz de escolha de pivô era representação de estado, não modelo
@@ -104,6 +105,7 @@ Descobertas arquiteturais principais acumuladas:
 - simulador precisa diferenciar transições por parameters para suportar
   branch profundo
 - ANALYZE no executor real deve ser no-op para não bloquear branch correto
+- backtracking permanece robusto com dois pivôs competitivos antes do caminho correto
 
 ---
 
