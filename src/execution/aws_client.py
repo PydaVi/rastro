@@ -75,6 +75,22 @@ class AwsClient(Protocol):
     ) -> Dict[str, Any]:
         ...
 
+    def list_parameters_by_path(
+        self,
+        region: str,
+        path: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[str]:
+        ...
+
+    def get_parameter(
+        self,
+        region: str,
+        name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> Dict[str, Any]:
+        ...
+
 
 @dataclass
 class Boto3AwsClient:
@@ -205,6 +221,39 @@ class Boto3AwsClient:
             "Name": response.get("Name"),
             "VersionId": response.get("VersionId"),
             "SecretString": response.get("SecretString"),
+        }
+
+    def list_parameters_by_path(
+        self,
+        region: str,
+        path: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[str]:
+        client = self._session(credentials).client("ssm", region_name=region)
+        paginator = client.get_paginator("get_parameters_by_path")
+        names: list[str] = []
+        for page in paginator.paginate(Path=path, Recursive=True, WithDecryption=False):
+            for param in page.get("Parameters", []):
+                name = param.get("Name")
+                if name:
+                    names.append(name)
+        return names
+
+    def get_parameter(
+        self,
+        region: str,
+        name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> Dict[str, Any]:
+        client = self._session(credentials).client("ssm", region_name=region)
+        response = client.get_parameter(Name=name, WithDecryption=True)
+        parameter = response.get("Parameter", {}) if response else {}
+        return {
+            "ARN": parameter.get("ARN"),
+            "Name": parameter.get("Name"),
+            "Type": parameter.get("Type"),
+            "Value": parameter.get("Value"),
+            "Version": parameter.get("Version"),
         }
 
     def _session(self, credentials: Optional[AwsCredentials] = None):

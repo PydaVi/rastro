@@ -1,0 +1,11 @@
+name: ssm_list_parameters
+description: Enumerate SSM Parameter Store parameters by path
+phase: discovery
+mitre_id: T1526
+platform: AWS
+preconditions:
+  - audit_role_assumed
+postconditions:
+  - parameter_catalog_listed
+implementation: tools/aws/ssm_list_parameters.py
+safe_simulation: true

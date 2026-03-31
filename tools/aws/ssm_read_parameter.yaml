@@ -1,0 +1,11 @@
+name: ssm_read_parameter
+description: Read a sensitive value from AWS SSM Parameter Store
+phase: credential-access
+mitre_id: T1552
+platform: AWS
+preconditions:
+  - audit_role_assumed
+postconditions:
+  - parameter_compromised
+implementation: tools/aws/ssm_read_parameter.py
+safe_simulation: true

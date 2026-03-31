@@ -64,6 +64,10 @@ class AwsRealExecutor:
                 details = self._execute_secretsmanager_list_secrets(client, action)
             elif action.tool == "secretsmanager_read_secret":
                 details = self._execute_secretsmanager_read_secret(client, action)
+            elif action.tool == "ssm_list_parameters":
+                details = self._execute_ssm_list_parameters(client, action)
+            elif action.tool == "ssm_read_parameter":
+                details = self._execute_ssm_read_parameter(client, action)
             else:
                 return Observation(
                     success=False,
@@ -279,6 +283,56 @@ class AwsRealExecutor:
                 "name": response.get("Name"),
                 "version_id": response.get("VersionId"),
                 "preview": (response.get("SecretString") or "")[:256],
+            },
+        }
+
+    def _execute_ssm_list_parameters(self, client: AwsClient, action: Action) -> dict:
+        region = _required_parameter(action, "region")
+        path = _required_parameter(action, "path")
+        names = client.list_parameters_by_path(
+            region=region,
+            path=path,
+            credentials=self._assumed_credentials,
+        )
+        return {
+            "details": "Executed ssm:GetParametersByPath against AWS.",
+            "discovered_objects": names,
+            "aws_region": region,
+            "request_summary": {
+                "api_calls": ["ssm:GetParametersByPath"],
+                "path": path,
+            },
+            "response_summary": {
+                "parameters_returned": len(names),
+                "sample_names": names[:5],
+            },
+        }
+
+    def _execute_ssm_read_parameter(self, client: AwsClient, action: Action) -> dict:
+        region = _required_parameter(action, "region")
+        name = _required_parameter(action, "name")
+        response = client.get_parameter(
+            region=region,
+            name=name,
+            credentials=self._assumed_credentials,
+        )
+        return {
+            "details": f"Executed ssm:GetParameter against {name}.",
+            "evidence": {
+                "parameter": name,
+                "accessed_via": self._assumed_role_arn,
+            },
+            "aws_region": region,
+            "request_summary": {
+                "api_calls": ["ssm:GetParameter"],
+                "name": name,
+            },
+            "response_summary": {
+                "arn": response.get("ARN"),
+                "name": response.get("Name"),
+                "version": response.get("Version"),
+                "type": response.get("Type"),
+                "preview": (response.get("Value") or "")[:256],
             },
         }
 

@@ -95,6 +95,7 @@ que resultados positivos.
 | EXP-014 | Backtracking em Secrets Manager (dry-run)         | confirmada        |
 | EXP-015 | Backtracking em Secrets Manager (AWS real)        | confirmada        |
 | EXP-016 | Backtracking com pivô competitivo adicional       | confirmada        |
+| EXP-017 | Backtracking em SSM Parameter Store (dry-run)     | confirmada        |
 
 Descobertas arquiteturais principais acumuladas:
 - problema raiz de escolha de pivô era representação de estado, não modelo
@@ -106,6 +107,7 @@ Descobertas arquiteturais principais acumuladas:
   branch profundo
 - ANALYZE no executor real deve ser no-op para não bloquear branch correto
 - backtracking permanece robusto com dois pivôs competitivos antes do caminho correto
+- backtracking generaliza para SSM quando o toolchain minimo existe
 
 ---
 
