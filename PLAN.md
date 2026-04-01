@@ -96,6 +96,7 @@ que resultados positivos.
 | EXP-015 | Backtracking em Secrets Manager (AWS real)        | confirmada        |
 | EXP-016 | Backtracking com pivô competitivo adicional       | confirmada        |
 | EXP-017 | Backtracking em SSM Parameter Store (AWS real)    | confirmada        |
+| EXP-018 | Path scoring com evidencia ruidosa               | confirmada        |
 
 Descobertas arquiteturais principais acumuladas:
 - problema raiz de escolha de pivô era representação de estado, não modelo
@@ -159,6 +160,7 @@ Fechar maturidade do engine como sistema de validação real.
   sinal novo
 - Regra: levar para AWS real apenas o que adicionar sinal novo,
   não repetição operacional
+- EXP-018: path scoring sob permutação com evidência ruidosa (concluído)
 
 ---
 

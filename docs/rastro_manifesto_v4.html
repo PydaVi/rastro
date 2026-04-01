@@ -1,0 +1,1075 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rastro — Manifesto</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=IBM+Plex+Mono:wght@400;500&family=Fraunces:ital,wght@0,300;0,700;1,300&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a08;
+    --surface: #111110;
+    --surface2: #161614;
+    --border: #222220;
+    --border2: #1a1a18;
+    --text: #f0ede4;
+    --muted: #b8b4a8;
+    --muted2: #4a4840;
+    --accent: #c8f04a;
+    --accent2: #f04a2a;
+    --accent3: #4af0c8;
+    --amber: #f0b84a;
+    --mono: 'IBM Plex Mono', monospace;
+    --display: 'Syne', sans-serif;
+    --serif: 'Fraunces', serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--display);
+    overflow-x: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 999;
+  }
+
+  /* ── HERO ── */
+  .hero {
+    min-height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 3rem;
+    border-bottom: 1px solid var(--border);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .hero::after {
+    content: '';
+    position: absolute;
+    top: -120px; right: -120px;
+    width: 800px; height: 800px;
+    background: radial-gradient(circle, rgba(200,240,74,0.04) 0%, transparent 60%);
+    pointer-events: none;
+  }
+
+  .hero::before {
+    content: '';
+    position: absolute;
+    bottom: -200px; left: -100px;
+    width: 600px; height: 600px;
+    background: radial-gradient(circle, rgba(74,240,200,0.025) 0%, transparent 65%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    animation: up 0.7s ease both;
+    position: relative;
+    z-index: 1;
+  }
+
+  .logo { font-family: var(--mono); font-size: 0.8rem; color: var(--accent); letter-spacing: 0.2em; }
+
+  .nav-right {
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    color: var(--muted);
+    display: flex;
+    gap: 1.5rem;
+  }
+
+  .hero-center {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 4rem 0 2rem;
+    position: relative;
+    z-index: 1;
+  }
+
+  .hero-eyebrow {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    color: var(--accent3);
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    margin-bottom: 1.5rem;
+    animation: up 0.7s 0.15s ease both;
+  }
+
+  .hero-title {
+    font-size: clamp(5rem, 16vw, 13rem);
+    font-weight: 800;
+    line-height: 0.88;
+    letter-spacing: -0.03em;
+    animation: up 0.7s 0.25s ease both;
+  }
+
+  .hero-title .slash { color: var(--accent); }
+
+  .hero-tagline {
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 300;
+    font-size: clamp(1.05rem, 2.2vw, 1.55rem);
+    color: var(--muted);
+    max-width: 700px;
+    margin-top: 2.5rem;
+    line-height: 1.65;
+    animation: up 0.7s 0.4s ease both;
+  }
+
+  .hero-tagline strong { color: var(--text); font-style: normal; }
+
+  .hero-footer {
+    display: flex;
+    gap: 3rem;
+    flex-wrap: wrap;
+    padding-top: 2rem;
+    border-top: 1px solid var(--border);
+    animation: up 0.7s 0.6s ease both;
+    position: relative;
+    z-index: 1;
+  }
+
+  .stat { font-family: var(--mono); font-size: 0.68rem; color: var(--muted); }
+  .stat strong { display: block; font-family: var(--display); font-size: 1.05rem; color: var(--text); font-weight: 700; }
+
+  /* ── SECTIONS ── */
+  .section {
+    padding: 5rem 3rem;
+    border-bottom: 1px solid var(--border);
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  .section-label {
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    color: var(--accent);
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    margin-bottom: 3rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+    max-width: 160px;
+  }
+
+  /* ── PROBLEM BAND ── */
+  .problem-band {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 6rem 3rem;
+  }
+
+  .problem-inner { max-width: 1400px; margin: 0 auto; }
+
+  .problem-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0;
+    margin-top: 3rem;
+  }
+
+  .problem-item {
+    padding: 2.5rem;
+    border: 1px solid var(--border);
+    margin: -1px 0 0 -1px;
+    position: relative;
+  }
+
+  .problem-item::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 3px;
+    height: 100%;
+  }
+
+  .problem-item:nth-child(1)::before { background: var(--accent2); }
+  .problem-item:nth-child(2)::before { background: var(--amber); }
+  .problem-item:nth-child(3)::before { background: var(--accent3); }
+
+  .problem-label {
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    color: var(--muted);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    margin-bottom: 1rem;
+  }
+
+  .problem-title {
+    font-size: 1.2rem;
+    font-weight: 700;
+    margin-bottom: 0.8rem;
+    line-height: 1.2;
+  }
+
+  .problem-body {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: 0.9rem;
+    color: var(--muted);
+    line-height: 1.75;
+  }
+
+  .problem-body em { color: var(--text); font-style: italic; }
+
+  .problem-verdict {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    margin-top: 1.2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .problem-item:nth-child(1) .problem-verdict { color: var(--accent2); }
+  .problem-item:nth-child(2) .problem-verdict { color: var(--amber); }
+  .problem-item:nth-child(3) .problem-verdict { color: var(--accent3); }
+
+  /* ── TESE CENTRAL ── */
+  .tese-band {
+    border-bottom: 1px solid var(--border);
+    padding: 7rem 3rem;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .tese-band::after {
+    content: '';
+    position: absolute;
+    right: -100px; top: 50%;
+    transform: translateY(-50%);
+    width: 500px; height: 500px;
+    background: radial-gradient(circle, rgba(200,240,74,0.04) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  .tese-inner { max-width: 1400px; margin: 0 auto; }
+
+  .tese-quote {
+    font-family: var(--serif);
+    font-size: clamp(1.4rem, 3vw, 2.4rem);
+    font-weight: 300;
+    line-height: 1.5;
+    max-width: 900px;
+  }
+
+  .tese-quote strong {
+    font-weight: 700;
+    color: var(--accent);
+  }
+
+  .tese-sub {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-top: 2rem;
+    max-width: 600px;
+    line-height: 1.8;
+  }
+
+  /* ── COMO FUNCIONA ── */
+  .how-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4rem;
+    align-items: start;
+  }
+
+  .how-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border: 1px solid var(--border);
+  }
+
+  .how-step {
+    display: grid;
+    grid-template-columns: 48px 1fr;
+    border-bottom: 1px solid var(--border2);
+    transition: background 0.2s;
+  }
+
+  .how-step:last-child { border-bottom: none; }
+  .how-step:hover { background: var(--surface); }
+
+  .how-step-n {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--accent);
+    border-right: 1px solid var(--border2);
+    background: var(--surface2);
+  }
+
+  .how-step-body { padding: 1.4rem 1.5rem; }
+
+  .how-step-title {
+    font-weight: 700;
+    font-size: 0.9rem;
+    margin-bottom: 0.4rem;
+  }
+
+  .how-step-desc {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: 0.83rem;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+
+  .how-right { display: flex; flex-direction: column; gap: 2rem; }
+
+  .how-right-title {
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    color: var(--muted);
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    margin-bottom: 1rem;
+    padding-bottom: 0.8rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .distinction-row {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 1rem;
+    align-items: center;
+    padding: 0.8rem 0;
+    border-bottom: 1px solid var(--border2);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+  }
+
+  .distinction-row:last-child { border-bottom: none; }
+
+  .d-left { color: var(--muted); }
+  .d-vs { color: var(--border); font-size: 0.6rem; text-align: center; }
+  .d-right { color: var(--accent); text-align: right; }
+
+  /* ── MANIFESTO ── */
+  .manifesto-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+  }
+
+  .m-item {
+    padding: 2.5rem;
+    border: 1px solid var(--border);
+    margin: -1px 0 0 -1px;
+    transition: background 0.25s;
+  }
+
+  .m-item:hover { background: var(--surface); }
+
+  .m-num { font-family: var(--mono); font-size: 0.62rem; color: var(--accent); margin-bottom: 1rem; }
+  .m-title { font-size: 1.15rem; font-weight: 700; margin-bottom: 0.7rem; line-height: 1.2; }
+  .m-body { font-family: var(--serif); font-weight: 300; font-size: 0.9rem; color: var(--muted); line-height: 1.75; }
+  .m-body em { color: var(--text); font-style: italic; }
+
+  /* ── PRODUTOS ── */
+  .product {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .product:last-child { border-bottom: none; }
+
+  .product-left {
+    padding: 4rem 3rem;
+    border-right: 1px solid var(--border);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .product-tag {
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    padding: 0.25rem 0.7rem;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    display: inline-block;
+    margin-bottom: 2rem;
+  }
+
+  .product-1 .product-tag { border-color: rgba(200,240,74,0.3); color: var(--accent); }
+  .product-2 .product-tag { border-color: rgba(74,240,200,0.3); color: var(--accent3); }
+
+  .product-name {
+    font-size: clamp(1.8rem, 3.5vw, 2.8rem);
+    font-weight: 800;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    margin-bottom: 1.5rem;
+  }
+
+  .product-1 .product-name span { color: var(--accent); }
+  .product-2 .product-name span { color: var(--accent3); }
+
+  .product-lead {
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 300;
+    font-size: 1rem;
+    color: var(--muted);
+    line-height: 1.7;
+    max-width: 420px;
+    margin-bottom: 2rem;
+  }
+
+  .product-callout {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+    padding-top: 1.5rem;
+    line-height: 1.9;
+  }
+
+  .product-callout strong {
+    display: block;
+    font-size: 0.6rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted2);
+    margin-bottom: 0.5rem;
+  }
+
+  .product-right {
+    padding: 4rem 3rem;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .product-feature {
+    padding: 1.4rem 0;
+    border-bottom: 1px solid var(--border2);
+    display: grid;
+    grid-template-columns: 24px 1fr;
+    gap: 1rem;
+    align-items: flex-start;
+  }
+
+  .product-feature:last-child { border-bottom: none; }
+
+  .feature-icon { font-family: var(--mono); font-size: 0.65rem; color: var(--accent); padding-top: 0.15rem; }
+  .product-2 .feature-icon { color: var(--accent3); }
+
+  .feature-title { font-weight: 700; font-size: 0.9rem; margin-bottom: 0.3rem; }
+  .feature-desc { font-family: var(--serif); font-weight: 300; font-size: 0.83rem; color: var(--muted); line-height: 1.6; }
+
+  /* ── MERCADO ── */
+  .market-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+
+  .market-table th {
+    text-align: left;
+    padding: 0.7rem 1.2rem;
+    font-family: var(--mono);
+    font-size: 0.6rem;
+    color: var(--muted);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    font-weight: 400;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+  }
+
+  .market-table td {
+    padding: 0.85rem 1.2rem;
+    border-bottom: 1px solid var(--border2);
+    color: var(--muted);
+    vertical-align: middle;
+    font-size: 0.85rem;
+  }
+
+  .market-table tr:last-child td { border-bottom: none; }
+  .market-table tr:hover td { background: var(--surface); }
+  .market-table td:first-child { font-weight: 700; color: var(--text); font-family: var(--display); }
+
+  .check { color: var(--accent); font-family: var(--mono); font-size: 0.75rem; }
+  .cross { color: var(--muted2); font-family: var(--mono); font-size: 0.75rem; }
+  .partial { color: var(--amber); font-family: var(--mono); font-size: 0.75rem; }
+
+  .rastro-row td { background: rgba(200,240,74,0.03) !important; }
+  .rastro-row td:first-child { color: var(--accent) !important; }
+
+  /* ── VETORES ── */
+  .vectors {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+  }
+
+  .vector-item { background: var(--bg); padding: 2.5rem; transition: background 0.2s; }
+  .vector-item:hover { background: var(--surface); }
+
+  .vector-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+  }
+
+  .vector-name { font-size: 1.2rem; font-weight: 700; }
+
+  .vector-chip {
+    font-family: var(--mono);
+    font-size: 0.58rem;
+    padding: 0.2rem 0.6rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .chip-now { background: rgba(200,240,74,0.1); color: var(--accent); }
+  .chip-next { background: rgba(74,240,200,0.1); color: var(--accent3); }
+
+  .vector-desc {
+    font-family: var(--serif);
+    font-weight: 300;
+    font-size: 0.88rem;
+    color: var(--muted);
+    line-height: 1.7;
+    margin-bottom: 1.2rem;
+  }
+
+  .vector-tags { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
+  .vtag {
+    font-family: var(--mono);
+    font-size: 0.62rem;
+    padding: 0.2rem 0.6rem;
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+
+  /* ── FOOTER ── */
+  .footer {
+    padding: 3rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-top: 1px solid var(--border);
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  .footer-logo { font-family: var(--mono); font-size: 0.68rem; color: var(--muted); }
+  .footer-logo strong { color: var(--accent); }
+
+  @keyframes up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+
+  @media (max-width: 900px) {
+    .hero, .section { padding: 2.5rem 1.5rem; }
+    .problem-band, .tese-band { padding: 4rem 1.5rem; }
+    .problem-grid { grid-template-columns: 1fr; }
+    .how-grid { grid-template-columns: 1fr; }
+    .manifesto-grid { grid-template-columns: 1fr; }
+    .product { grid-template-columns: 1fr; }
+    .product-left { border-right: none; border-bottom: 1px solid var(--border); }
+    .vectors { grid-template-columns: 1fr; }
+    .footer { flex-direction: column; gap: 1rem; }
+  }
+</style>
+</head>
+<body>
+
+<!-- HERO -->
+<section class="hero">
+  <nav class="nav">
+    <div class="logo">rastro /</div>
+    <div class="nav-right">
+      <span>Autonomous Attack Path Validation</span>
+      <span>Apache 2.0</span>
+      <span>github.com/PydaVi/rastro</span>
+    </div>
+  </nav>
+
+  <div class="hero-center">
+    <div class="hero-eyebrow">// validação de exposição cloud — AWS · Kubernetes</div>
+    <h1 class="hero-title">RASTRO<span class="slash">.</span></h1>
+    <p class="hero-tagline">
+      O problema da segurança em cloud não é <strong>detectar risco</strong>.<br>
+      É entender quais riscos se conectam em um caminho real de comprometimento —
+      e fazer isso na <strong>mesma velocidade que um atacante moderno.</strong>
+    </p>
+  </div>
+
+  <div class="hero-footer">
+    <div class="stat"><strong>Raciocina</strong>sobre o ambiente</div>
+    <div class="stat"><strong>Valida</strong>com evidência real</div>
+    <div class="stat"><strong>Prova</strong>o caminho completo</div>
+    <div class="stat"><strong>Não lista</strong>findings isolados</div>
+    <div class="stat"><strong>Open source</strong>Apache 2.0</div>
+  </div>
+</section>
+
+<!-- PROBLEMA -->
+<div class="problem-band">
+  <div class="problem-inner">
+    <div class="section-label">01 — Por que as abordagens atuais não bastam</div>
+    <div class="problem-grid">
+
+      <div class="problem-item">
+        <div class="problem-label">pentest tradicional</div>
+        <div class="problem-title">Não escala com a cloud</div>
+        <div class="problem-body">
+          Cloud muda diariamente. IAM é combinatório. Policies, roles e
+          trust relationships criam <em>explosão de caminhos possíveis</em>
+          que nenhum humano consegue mapear manualmente com a frequência necessária.
+          Cada engajamento é uma fotografia de um ambiente em movimento constante.
+        </div>
+        <div class="problem-verdict">depende de humano → não acompanha a velocidade</div>
+      </div>
+
+      <div class="problem-item">
+        <div class="problem-label">BAS — Breach &amp; Attack Simulation</div>
+        <div class="problem-title">Testa ataques conhecidos</div>
+        <div class="problem-body">
+          Breach and Attack Simulation valida se seus controles detectam
+          ameaças já catalogadas. É útil — mas é essencialmente um teste
+          de assinatura. <em>Não raciocina sobre o seu ambiente específico.</em>
+          Não descobre que aquela combinação de permissões naquela conta
+          abre um caminho que nenhuma assinatura conhece.
+        </div>
+        <div class="problem-verdict">mecânico → não descobre, só confirma</div>
+      </div>
+
+      <div class="problem-item">
+        <div class="problem-label">CSPM / CNAPP</div>
+        <div class="problem-title">Mostra riscos, não caminhos</div>
+        <div class="problem-body">
+          Wiz, Prisma, CrowdStrike — todos mostram findings isolados e
+          grafos teóricos. <em>Nenhum prova que o caminho é realmente
+          explorável.</em> Um finding de "role com permissões excessivas"
+          fica na fila de remediação indefinidamente porque parece abstrato.
+          Rastro executa o encadeamento e entrega a prova.
+        </div>
+        <div class="problem-verdict">estático → mostra risco, não comprometimento</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- TESE CENTRAL -->
+<div class="tese-band">
+  <div class="tese-inner">
+    <div class="section-label">02 — A tese</div>
+    <p class="tese-quote">
+      Se ataques se tornam <strong>raciocínio automatizado</strong>,
+      a defesa precisa se tornar <strong>raciocínio automatizado</strong>.
+      Um agente que conhece o ambiente, formula hipóteses de comprometimento,
+      testa cada cadeia, descarta o que não funciona, e prova o que funciona —
+      com evidência auditável em cada passo.
+    </p>
+    <p class="tese-sub">
+      Não é um scanner. Não é um playbook de ataques conhecidos.<br>
+      É um engine que pensa sobre o seu ambiente específico<br>
+      da mesma forma que um atacante competente pensaria.
+    </p>
+  </div>
+</div>
+
+<!-- COMO FUNCIONA -->
+<div class="section">
+  <div class="section-label">03 — Como funciona</div>
+  <div class="how-grid">
+
+    <div>
+      <div class="how-steps">
+        <div class="how-step">
+          <div class="how-step-n">01</div>
+          <div class="how-step-body">
+            <div class="how-step-title">Conhece o ambiente</div>
+            <div class="how-step-desc">Enumera identidades, permissões efetivas, recursos e relações de trust. Não assume nada — descobre dinamicamente a partir do estado real da conta.</div>
+          </div>
+        </div>
+        <div class="how-step">
+          <div class="how-step-n">02</div>
+          <div class="how-step-body">
+            <div class="how-step-title">Formula hipóteses</div>
+            <div class="how-step-desc">Identifica candidatos a pivô, raciocina sobre qual caminho tem maior probabilidade de levar ao objetivo, e prioriza antes de agir.</div>
+          </div>
+        </div>
+        <div class="how-step">
+          <div class="how-step-n">03</div>
+          <div class="how-step-body">
+            <div class="how-step-title">Testa e descarta</div>
+            <div class="how-step-desc">Executa cada cadeia. Quando um branch não leva a lugar nenhum, marca como falho e tenta a alternativa — sem revisitar dead-ends, sem loop infinito.</div>
+          </div>
+        </div>
+        <div class="how-step">
+          <div class="how-step-n">04</div>
+          <div class="how-step-body">
+            <div class="how-step-title">Prova com evidência</div>
+            <div class="how-step-desc">Cada passo executado é logado com API call real, resultado, e raciocínio explícito. O relatório mostra exatamente o que aconteceu — não uma simulação teórica.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="how-right">
+      <div>
+        <div class="how-right-title">// rastro vs abordagens existentes</div>
+        <div class="distinction-row">
+          <div class="d-left">lista findings isolados</div>
+          <div class="d-vs">vs</div>
+          <div class="d-right">prova cadeia completa</div>
+        </div>
+        <div class="distinction-row">
+          <div class="d-left">ataques conhecidos</div>
+          <div class="d-vs">vs</div>
+          <div class="d-right">descobre caminhos possíveis</div>
+        </div>
+        <div class="distinction-row">
+          <div class="d-left">grafo teórico</div>
+          <div class="d-vs">vs</div>
+          <div class="d-right">execução com evidência real</div>
+        </div>
+        <div class="distinction-row">
+          <div class="d-left">resultado pontual</div>
+          <div class="d-vs">vs</div>
+          <div class="d-right">processo repetível</div>
+        </div>
+        <div class="distinction-row">
+          <div class="d-left">caixa preta</div>
+          <div class="d-vs">vs</div>
+          <div class="d-right">auditável, open source</div>
+        </div>
+        <div class="distinction-row">
+          <div class="d-left">R$ 200k+/ano</div>
+          <div class="d-vs">vs</div>
+          <div class="d-right">acessível</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- MANIFESTO -->
+<div class="section">
+  <div class="section-label">04 — Princípios</div>
+  <div class="manifesto-grid">
+
+    <div class="m-item">
+      <div class="m-num">// 01</div>
+      <div class="m-title">Prova, não lista</div>
+      <div class="m-body">Um finding de "permissão excessiva" não responde à pergunta que importa. <em>Isso é explorável de verdade?</em> Rastro executa o encadeamento e entrega a resposta com evidência — não uma estimativa de risco.</div>
+    </div>
+
+    <div class="m-item">
+      <div class="m-num">// 02</div>
+      <div class="m-title">O engine raciocina — não o LLM</div>
+      <div class="m-body">O LLM sugere o próximo passo. O engine decide se é válido, executa, observa, rastreia candidatos, marca branches falhos, e faz backtracking. <em>Nenhuma lógica de segurança depende do modelo de linguagem.</em></div>
+    </div>
+
+    <div class="m-item">
+      <div class="m-num">// 03</div>
+      <div class="m-title">Autorização explícita é inegociável</div>
+      <div class="m-body">Rastro só executa com escopo definido e autorização documentada. <em>Sem isso, o run não inicia.</em> Isso está no código — não apenas no README. Segurança ofensiva sem ética não é segurança.</div>
+    </div>
+
+    <div class="m-item">
+      <div class="m-num">// 04</div>
+      <div class="m-title">Open source porque acesso importa</div>
+      <div class="m-body">Ferramentas enterprise custam o que a maioria das organizações não pode pagar. <em>Rastro é livre, auditável, e self-hostável.</em> Você pode inspecionar o que está rodando no seu ambiente — não precisa confiar em uma caixa preta.</div>
+    </div>
+
+    <div class="m-item">
+      <div class="m-num">// 05</div>
+      <div class="m-title">Sem vendor de LLM obrigatório</div>
+      <div class="m-body">O backend de raciocínio é configurável. <em>Ollama self-hosted é o padrão</em> — sem internet, sem custo, sem dados de ataque saindo do seu ambiente. Para ambientes sensíveis, isso não é opcional: é arquitetura.</div>
+    </div>
+
+    <div class="m-item">
+      <div class="m-num">// 06</div>
+      <div class="m-title">Especialização, não cobertura genérica</div>
+      <div class="m-body">Dois vetores. Profundidade real em cada um. <em>AWS primeiro — com maturidade completa antes de expandir.</em> Kubernetes como segundo vetor. Rastro não tenta cobrir tudo — tenta provar attack paths reais onde a maioria das organizações está exposta.</div>
+    </div>
+
+  </div>
+</div>
+
+<!-- PRODUTOS -->
+<div style="border-bottom: 1px solid var(--border);">
+  <div style="max-width:1400px;margin:0 auto;padding:5rem 3rem 0;">
+    <div class="section-label">05 — Produtos</div>
+  </div>
+
+  <div style="max-width:1400px;margin:0 auto;">
+
+    <div class="product product-1">
+      <div class="product-left">
+        <div class="product-tag">produto 01 · consultoria</div>
+        <h2 class="product-name">Validação de<br>Exposição <span>AWS</span></h2>
+        <p class="product-lead">
+          Não é pentest. É prova de comprometimento — o caminho completo,
+          executado no seu ambiente, com cada API call logada e cada pivô
+          documentado. Você vê exatamente o que um atacante real faria
+          com o que você tem.
+        </p>
+        <div class="product-callout">
+          <strong>// diferença para pentest tradicional</strong>
+          Pentest entrega relatório de findings.<br>
+          Validação de Exposição entrega prova de comprometimento.<br>
+          Não é "essa permissão está errada".<br>
+          É "partindo dessa credencial, em 4 passos, chegamos aqui."
+        </div>
+      </div>
+      <div class="product-right">
+        <div class="product-feature">
+          <div class="feature-icon">→</div>
+          <div>
+            <div class="feature-title">Attack paths reais, não teóricos</div>
+            <div class="feature-desc">Execução controlada com evidência real — ARNs, timestamps, respostas de API. Cada passo do caminho de comprometimento é provado, não estimado.</div>
+          </div>
+        </div>
+        <div class="product-feature">
+          <div class="feature-icon">→</div>
+          <div>
+            <div class="feature-title">Raciocínio sobre cadeias complexas</div>
+            <div class="feature-desc">PassRole chains, cross-account trust abuse, instance profile para terraform state para secrets — o engine raciocina sobre encadeamentos que scanners não detectam.</div>
+          </div>
+        </div>
+        <div class="product-feature">
+          <div class="feature-icon">→</div>
+          <div>
+            <div class="feature-title">Relatório técnico + executivo com MITRE</div>
+            <div class="feature-desc">Grafo de ataque interativo, técnicas mapeadas para ATT&CK Cloud Matrix, e remediação priorizada por impacto real — não por severidade genérica.</div>
+          </div>
+        </div>
+        <div class="product-feature">
+          <div class="feature-icon">→</div>
+          <div>
+            <div class="feature-title">Para quem não faz pentest de cloud hoje</div>
+            <div class="feature-desc">Fintechs, seguradoras e healthtechs com AWS real e obrigações regulatórias crescentes — sem budget para ferramentas enterprise de R$ 200k/ano.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="product product-2">
+      <div class="product-left">
+        <div class="product-tag">produto 02 · api · saas</div>
+        <h2 class="product-name">Attack Path<br><span>em CI/CD</span></h2>
+        <p class="product-lead">
+          Antes do deploy. No pull request. Rastro simula o ambiente AWS
+          que será criado pelo Terraform, raciocina sobre attack paths
+          possíveis, e bloqueia o merge se encontrar cadeia explorável —
+          antes que chegue em produção.
+        </p>
+        <div class="product-callout">
+          <strong>// diferença para Checkov e tfsec</strong>
+          Checkov analisa resources isolados contra regras estáticas.<br>
+          Rastro raciocina sobre o estado resultante combinado<br>
+          com o que já existe na conta — e prova se abre<br>
+          uma cadeia de comprometimento real.
+        </div>
+      </div>
+      <div class="product-right">
+        <div class="product-feature">
+          <div class="feature-icon">→</div>
+          <div>
+            <div class="feature-title">Gate no PR, não auditoria pós-fato</div>
+            <div class="feature-desc">GitHub Actions, GitLab CI, qualquer pipeline. Bloqueia o merge se encontrar attack path crítico. O custo de correção no PR é zero comparado a pós-produção.</div>
+          </div>
+        </div>
+        <div class="product-feature">
+          <div class="feature-icon">→</div>
+          <div>
+            <div class="feature-title">Simulação do estado resultante</div>
+            <div class="feature-desc">Combina o Terraform plan com o estado atual da conta para projetar o ambiente resultante — e roda o engine de attack path sobre esse estado antes do deploy.</div>
+          </div>
+        </div>
+        <div class="product-feature">
+          <div class="feature-icon">→</div>
+          <div>
+            <div class="feature-title">Raciocínio sobre cadeias, não resources</div>
+            <div class="feature-desc">Uma Lambda com role permissiva + bucket com policy aberta pode criar um attack path real. O engine encontra esse encadeamento. Regra estática não encontra.</div>
+          </div>
+        </div>
+        <div class="product-feature">
+          <div class="feature-icon">→</div>
+          <div>
+            <div class="feature-title">SaaS ou self-hosted</div>
+            <div class="feature-desc">API hospedada com mensalidade por organização, ou self-hosted com Ollama para ambientes que não podem mandar contexto de infraestrutura para APIs externas.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- MERCADO -->
+<div class="section">
+  <div class="section-label">06 — Posicionamento de mercado</div>
+  <p style="font-family:var(--serif);font-style:italic;font-weight:300;font-size:0.95rem;color:var(--muted);max-width:620px;line-height:1.7;margin-bottom:2.5rem;">
+    Rastro não compete com CSPM, BAS, ou pentest tradicional.<br>
+    Ocupa a interseção que nenhum deles cobre.
+  </p>
+  <table class="market-table">
+    <thead>
+      <tr>
+        <th>Ferramenta</th>
+        <th>Raciocina sobre o ambiente</th>
+        <th>Valida execução real</th>
+        <th>Cloud-native (IAM)</th>
+        <th>Auditável / open</th>
+        <th>Acessível</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Wiz / Prisma / CrowdStrike</td>
+        <td><span class="partial">parcial</span></td>
+        <td><span class="cross">✗</span></td>
+        <td><span class="check">✓</span></td>
+        <td><span class="cross">✗</span></td>
+        <td><span class="cross">✗</span></td>
+      </tr>
+      <tr>
+        <td>Pentera / Horizon3</td>
+        <td><span class="check">✓</span></td>
+        <td><span class="check">✓</span></td>
+        <td><span class="partial">parcial</span></td>
+        <td><span class="cross">✗</span></td>
+        <td><span class="cross">✗</span></td>
+      </tr>
+      <tr>
+        <td>SafeBreach / AttackIQ</td>
+        <td><span class="cross">✗</span></td>
+        <td><span class="check">✓</span></td>
+        <td><span class="cross">✗</span></td>
+        <td><span class="cross">✗</span></td>
+        <td><span class="cross">✗</span></td>
+      </tr>
+      <tr>
+        <td>Checkov / tfsec</td>
+        <td><span class="cross">✗</span></td>
+        <td><span class="cross">✗</span></td>
+        <td><span class="partial">parcial</span></td>
+        <td><span class="check">✓</span></td>
+        <td><span class="check">✓</span></td>
+      </tr>
+      <tr>
+        <td>PMapper / Cartography</td>
+        <td><span class="partial">parcial</span></td>
+        <td><span class="cross">✗</span></td>
+        <td><span class="check">✓</span></td>
+        <td><span class="check">✓</span></td>
+        <td><span class="check">✓</span></td>
+      </tr>
+      <tr class="rastro-row">
+        <td>Rastro</td>
+        <td><span class="check">✓</span></td>
+        <td><span class="check">✓</span></td>
+        <td><span class="check">✓</span></td>
+        <td><span class="check">✓</span></td>
+        <td><span class="check">✓</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- VETORES -->
+<div class="section">
+  <div class="section-label">07 — Vetores</div>
+  <div class="vectors">
+    <div class="vector-item">
+      <div class="vector-header">
+        <div class="vector-name">AWS</div>
+        <span class="vector-chip chip-now">foco atual</span>
+      </div>
+      <div class="vector-desc">
+        Profundidade real em IAM, STS, S3, Secrets Manager, SSM —
+        e expansão progressiva para Lambda, EC2 e ambientes multi-account.
+        Cada técnica validada experimentalmente com backtracking real
+        antes de avançar para a próxima.
+      </div>
+      <div class="vector-tags">
+        <span class="vtag">IAM / STS</span>
+        <span class="vtag">S3</span>
+        <span class="vtag">Secrets Manager</span>
+        <span class="vtag">SSM</span>
+        <span class="vtag">Lambda</span>
+        <span class="vtag">EC2</span>
+        <span class="vtag">cross-account</span>
+      </div>
+    </div>
+    <div class="vector-item">
+      <div class="vector-header">
+        <div class="vector-name">Kubernetes</div>
+        <span class="vector-chip chip-next">próximo vetor</span>
+      </div>
+      <div class="vector-desc">
+        Segundo vetor após maturidade AWS comprovada. RBAC abuse,
+        container escape, service account pivot, lateral movement
+        AWS → cluster. O mesmo engine, nova superfície —
+        reutilização completa da arquitetura central.
+      </div>
+      <div class="vector-tags">
+        <span class="vtag">RBAC abuse</span>
+        <span class="vtag">container escape</span>
+        <span class="vtag">service account pivot</span>
+        <span class="vtag">secrets discovery</span>
+        <span class="vtag">AWS → K8s</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- FOOTER -->
+<footer class="footer">
+  <div class="footer-logo">
+    <strong>rastro</strong> — autonomous attack path validation<br>
+    <span style="font-size:0.6rem;">Apache 2.0 · use com autorização explícita · github.com/PydaVi/rastro</span>
+  </div>
+  <div style="font-family:var(--mono);font-size:0.62rem;color:var(--muted);text-align:right;">
+    manifesto v4<br>
+    <span style="color:var(--accent)">// rastro segue o caminho. e prova.</span>
+  </div>
+</footer>
+
+</body>
+</html>
