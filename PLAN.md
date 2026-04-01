@@ -67,7 +67,7 @@ Loop central validado com fixture sintético.
 Multi-branch backtracking validado, path scoring em evolução,
 diversificação de attack paths em andamento.
 
-17 experimentos concluídos — ver seção de histórico experimental abaixo.
+19 experimentos concluídos — ver seção de histórico experimental abaixo.
 
 ---
 
@@ -97,6 +97,7 @@ que resultados positivos.
 | EXP-016 | Backtracking com pivô competitivo adicional       | confirmada        |
 | EXP-017 | Backtracking em SSM Parameter Store (AWS real)    | confirmada        |
 | EXP-018 | Path scoring com evidencia ruidosa               | confirmada        |
+| EXP-019 | Path scoring com evidencia ambigua               | confirmada        |
 
 Descobertas arquiteturais principais acumuladas:
 - problema raiz de escolha de pivô era representação de estado, não modelo
@@ -161,6 +162,7 @@ Fechar maturidade do engine como sistema de validação real.
 - Regra: levar para AWS real apenas o que adicionar sinal novo,
   não repetição operacional
 - EXP-018: path scoring sob permutação com evidência ruidosa (concluído)
+- EXP-019: path scoring com decoys (concluído)
 
 ---
 

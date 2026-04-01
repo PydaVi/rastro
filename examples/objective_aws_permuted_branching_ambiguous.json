@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate path scoring under ambiguous evidence and decoy access paths.",
+  "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+  "success_criteria": {
+    "flag": "multi_branch_backtracking"
+  }
+}
