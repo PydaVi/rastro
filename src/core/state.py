@@ -49,6 +49,7 @@ class StateSnapshot:
     should_explore_current_branch: bool = False
     candidate_roles: List[str] = field(default_factory=list)
     candidate_paths: List[CandidatePath] = field(default_factory=list)
+    attempted_access_targets: List[Dict[str, str]] = field(default_factory=list)
 
 
 class StateManager:
@@ -72,6 +73,7 @@ class StateManager:
         self._observations: List[Observation] = []
         self._tested_assume_roles: List[str] = []
         self._failed_assume_roles: List[str] = []
+        self._attempted_access_targets: set[tuple[str, str]] = set()
 
     def snapshot(self) -> StateSnapshot:
         return StateSnapshot(
@@ -94,6 +96,10 @@ class StateManager:
             should_explore_current_branch=self._should_explore_current_branch(),
             candidate_roles=self._candidate_roles(),
             candidate_paths=self._candidate_paths(),
+            attempted_access_targets=[
+                {"actor": actor, "target": target}
+                for actor, target in sorted(self._attempted_access_targets)
+            ],
         )
 
     def initial_state(self) -> Dict:
@@ -111,6 +117,11 @@ class StateManager:
         self._action_reasons.append(reason)
         self._action_metadata.append(metadata or {})
         self._observations.append(observation)
+        if action.action_type.value == "access_resource":
+            actor = action.actor
+            target = action.target
+            if actor and target:
+                self._attempted_access_targets.add((actor, target))
         self._update_path_memory(action, observation)
 
     def record_blocked(self, action: Action, reason: str) -> None:
@@ -146,6 +157,21 @@ class StateManager:
         identities = fixture_state.get("identities", {})
         available = identities.get(role_identity, {}).get("available_actions", [])
         if available:
+            # If only repeated access_resource actions remain, mark as exhausted.
+            remaining = []
+            for action in available:
+                action_type = action.get("action_type")
+                if action_type != "access_resource":
+                    remaining.append(action)
+                    continue
+                target = action.get("target")
+                if target and self._access_attempted(role_identity, target):
+                    continue
+                remaining.append(action)
+            if remaining:
+                return
+            if role_identity not in self._failed_assume_roles:
+                self._failed_assume_roles.append(role_identity)
             return
         if role_identity not in self._failed_assume_roles:
             self._failed_assume_roles.append(role_identity)
@@ -158,11 +184,16 @@ class StateManager:
             if role in self._failed_assume_roles:
                 continue
             available_actions = identities.get(role, {}).get("available_actions", [])
-            progress_actions = [
-                action
-                for action in available_actions
-                if action.get("action_type") in {"enumerate", "access_resource"}
-            ]
+            progress_actions = []
+            for action in available_actions:
+                action_type = action.get("action_type")
+                if action_type not in {"enumerate", "access_resource", "analyze"}:
+                    continue
+                if action_type == "access_resource":
+                    target = action.get("target")
+                    if target and self._access_attempted(role, target):
+                        continue
+                progress_actions.append(action)
             if progress_actions:
                 active_roles.append(role)
         return active_roles
@@ -177,7 +208,7 @@ class StateManager:
                 [
                     action
                     for action in available_actions
-                    if action.get("action_type") in {"enumerate", "access_resource"}
+                    if action.get("action_type") in {"enumerate", "access_resource", "analyze"}
                 ]
             )
         return total
@@ -213,10 +244,17 @@ class StateManager:
 
         for role in self._candidate_roles():
             available_actions = identities.get(role, {}).get("available_actions", [])
-            has_progress_actions = any(
-                action.get("action_type") in {"enumerate", "access_resource"}
-                for action in available_actions
-            )
+            has_progress_actions = False
+            for action in available_actions:
+                action_type = action.get("action_type")
+                if action_type not in {"enumerate", "access_resource", "analyze"}:
+                    continue
+                if action_type == "access_resource":
+                    target = action.get("target")
+                    if target and self._access_attempted(role, target):
+                        continue
+                has_progress_actions = True
+                break
             if role in active_roles:
                 status = "active"
             elif role in failed_roles:
@@ -271,9 +309,16 @@ class StateManager:
             score += 15
 
         score -= times_tested * 5
+        score -= self._attempted_access_count(role) * 15
         score += self._objective_relevance_score(role)
         score += self._lookahead_relevance_score(role)
         return score
+
+    def _access_attempted(self, role: str, target: str) -> bool:
+        return (role, target) in self._attempted_access_targets
+
+    def _attempted_access_count(self, role: str) -> int:
+        return sum(1 for actor, _ in self._attempted_access_targets if actor == role)
 
     def _observed_resources_for_role(self, role: str) -> List[str]:
         observed: List[str] = []
@@ -297,15 +342,14 @@ class StateManager:
         if not observed:
             return 0
 
-        target_name = PurePosixPath(self._objective.target).name.lower()
-        target_tokens = {token for token in target_name.replace(".", "-").split("-") if token}
+        target_tokens, target_bucket, target_key = self._extract_tokens(self._objective.target)
         score = 0
         for resource in observed:
-            resource_name = PurePosixPath(resource).name.lower()
-            if resource_name == target_name:
+            resource_tokens, bucket, key = self._extract_tokens(resource)
+            if key and target_key and key == target_key:
                 score += 100
-                continue
-            resource_tokens = {token for token in resource_name.replace(".", "-").split("-") if token}
+            if bucket and target_bucket and bucket == target_bucket:
+                score += 80
             score += 10 * len(target_tokens & resource_tokens)
         return score
 
@@ -360,6 +404,28 @@ class StateManager:
                         nested_params = nested_action.get("parameters", {})
                         if nested_action.get("action_type") == "access_resource" and nested_target:
                             signals.append(nested_target)
+                        if nested_action.get("action_type") == "analyze" and nested_target:
+                            for analyze_transition in fixture_transitions:
+                                if analyze_transition.get("actor") != role:
+                                    continue
+                                if analyze_transition.get("action_type") != "analyze":
+                                    continue
+                                if analyze_transition.get("target") != nested_target:
+                                    continue
+                                analyze_identity = analyze_transition.get("update_identities", {}).get(
+                                    role, {}
+                                )
+                                for analyze_action in analyze_identity.get("available_actions", []):
+                                    analyze_target = analyze_action.get("target")
+                                    analyze_params = analyze_action.get("parameters", {})
+                                    if (
+                                        analyze_action.get("action_type") == "access_resource"
+                                        and analyze_target
+                                    ):
+                                        signals.append(analyze_target)
+                                    analyze_object_key = analyze_params.get("object_key")
+                                    if analyze_object_key:
+                                        signals.append(analyze_object_key)
                         nested_object_key = nested_params.get("object_key")
                         if nested_object_key:
                             signals.append(nested_object_key)
@@ -377,14 +443,37 @@ class StateManager:
         if not signals:
             return 0
 
-        target_name = PurePosixPath(self._objective.target).name.lower()
-        target_tokens = {token for token in target_name.replace(".", "-").split("-") if token}
+        target_tokens, target_bucket, target_key = self._extract_tokens(self._objective.target)
         score = 0
         for signal in signals:
-            signal_name = PurePosixPath(signal).name.lower()
-            if signal_name == target_name:
+            signal_tokens, bucket, key = self._extract_tokens(signal)
+            if key and target_key and key == target_key:
                 score += 120
-                continue
-            signal_tokens = {token for token in signal_name.replace(".", "-").split("-") if token}
+            if bucket and target_bucket and bucket == target_bucket:
+                score += 90
             score += 12 * len(target_tokens & signal_tokens)
         return score
+
+    def _extract_tokens(self, value: str) -> tuple[set[str], str | None, str | None]:
+        bucket, key = self._parse_s3_arn(value)
+        tokens: set[str] = set()
+        if bucket:
+            tokens.update(token for token in bucket.replace(".", "-").split("-") if token)
+        if key:
+            name = PurePosixPath(key).name.lower()
+            tokens.update(token for token in name.replace(".", "-").split("-") if token)
+        if not tokens:
+            name = PurePosixPath(value).name.lower()
+            tokens.update(token for token in name.replace(".", "-").split("-") if token)
+        return tokens, bucket, PurePosixPath(key).name.lower() if key else None
+
+    def _parse_s3_arn(self, value: str) -> tuple[str | None, str | None]:
+        if not value.startswith("arn:aws:s3:::"):
+            return None, None
+        remainder = value.split("arn:aws:s3:::", 1)[1]
+        if not remainder:
+            return None, None
+        if "/" in remainder:
+            bucket, key = remainder.split("/", 1)
+            return bucket, key
+        return remainder, None

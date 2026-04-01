@@ -98,6 +98,7 @@ que resultados positivos.
 | EXP-017 | Backtracking em SSM Parameter Store (AWS real)    | confirmada        |
 | EXP-018 | Path scoring com evidencia ruidosa               | confirmada        |
 | EXP-019 | Path scoring com evidencia ambigua               | confirmada        |
+| EXP-020 | Path scoring com branch profundo e ruido         | confirmada        |
 
 Descobertas arquiteturais principais acumuladas:
 - problema raiz de escolha de pivô era representação de estado, não modelo
@@ -108,6 +109,7 @@ Descobertas arquiteturais principais acumuladas:
 - simulador precisa diferenciar transições por parameters para suportar
   branch profundo
 - ANALYZE no executor real deve ser no-op para não bloquear branch correto
+- ANALYZE precisa contar como progresso do branch para evitar abandono do caminho correto
 - backtracking permanece robusto com dois pivôs competitivos antes do caminho correto
 - backtracking generaliza para SSM quando o toolchain minimo existe
 
@@ -163,6 +165,7 @@ Fechar maturidade do engine como sistema de validação real.
   não repetição operacional
 - EXP-018: path scoring sob permutação com evidência ruidosa (concluído)
 - EXP-019: path scoring com decoys (concluído)
+- EXP-020: path scoring com branch profundo e ruido (concluido)
 
 ---
 

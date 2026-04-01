@@ -13,6 +13,24 @@ def _ranked_candidate_paths(snapshot) -> list:
     )
 
 
+def _filter_repeated_access(snapshot, actions: List[Action]) -> List[Action]:
+    attempted = {
+        (item.get("actor"), item.get("target"))
+        for item in getattr(snapshot, "attempted_access_targets", [])
+        if item.get("actor") and item.get("target")
+    }
+    if not attempted:
+        return actions
+    filtered: List[Action] = []
+    for action in actions:
+        if action.action_type == ActionType.ACCESS_RESOURCE:
+            key = (action.actor, action.target)
+            if key in attempted:
+                continue
+        filtered.append(action)
+    return filtered
+
+
 def shape_available_actions(snapshot, available_actions: List[Action]) -> List[Action]:
     if not snapshot or not available_actions:
         return available_actions
@@ -30,7 +48,9 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
             if action.actor in active_roles and action.action_type in progress_types
         ]
         if progress_actions:
-            return progress_actions
+            filtered = _filter_repeated_access(snapshot, progress_actions)
+            if filtered:
+                return filtered
 
     candidate_paths = _ranked_candidate_paths(snapshot)
     if candidate_paths:
