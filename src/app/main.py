@@ -21,10 +21,29 @@ from execution.aws_executor import AwsRealExecutor
 from core.attack_graph import AttackGraph
 from core.audit import AuditLogger
 from core.sanitizer import write_sanitized_artifacts
+from operations.service import (
+    list_available_bundles,
+    list_available_profiles,
+    load_authorization,
+    load_target,
+    run_assessment,
+    run_campaign,
+    validate_target,
+    write_assessment_summary,
+)
 from reporting.report import ReportGenerator
 
 
 app = typer.Typer(add_completion=False)
+profile_app = typer.Typer(add_completion=False)
+target_app = typer.Typer(add_completion=False)
+campaign_app = typer.Typer(add_completion=False)
+assessment_app = typer.Typer(add_completion=False)
+
+app.add_typer(profile_app, name="profile")
+app.add_typer(target_app, name="target")
+app.add_typer(campaign_app, name="campaign")
+app.add_typer(assessment_app, name="assessment")
 
 
 @app.command()
@@ -39,6 +58,29 @@ def run(
     """
     Run the MVP agent against a synthetic fixture.
     """
+    result = execute_run(
+        fixture_path=fixture_path,
+        objective_path=objective_path,
+        scope_path=scope_path,
+        output_dir=output_dir,
+        max_steps=max_steps,
+        seed=seed,
+    )
+
+    typer.echo(f"Report JSON: {result['report_json']}")
+    typer.echo(f"Report MD: {result['report_md']}")
+    typer.echo(f"Attack Graph: {result['attack_graph']}")
+
+
+def execute_run(
+    *,
+    fixture_path: Path,
+    objective_path: Path,
+    scope_path: Path,
+    output_dir: Path,
+    max_steps: int = 5,
+    seed: Optional[int] = None,
+) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     objective = Objective.model_validate_json(objective_path.read_text())
@@ -169,9 +211,87 @@ def run(
         },
     )
 
-    typer.echo(f"Report JSON: {report_json_path}")
-    typer.echo(f"Report MD: {report_md_path}")
-    typer.echo(f"Attack Graph: {graph_path}")
+    return {
+        "objective_met": state.is_objective_met(),
+        "report_json": report_json_path,
+        "report_md": report_md_path,
+        "attack_graph": graph_path,
+    }
+
+
+@profile_app.command("list")
+def profile_list() -> None:
+    for profile in list_available_profiles():
+        typer.echo(f"{profile.name}\t{profile.bundle}\t{profile.description}")
+    for bundle, profiles in list_available_bundles().items():
+        typer.echo(f"bundle:{bundle}\t{','.join(profiles)}")
+
+
+@target_app.command("validate")
+def target_validate(
+    target_path: Path = typer.Option(..., "--target"),
+) -> None:
+    target = load_target(target_path)
+    issues = validate_target(target)
+    if issues:
+        raise typer.BadParameter("; ".join(issues))
+    typer.echo(f"Target valid: {target.name}")
+
+
+@campaign_app.command("run")
+def campaign_run(
+    profile_name: str = typer.Option(..., "--profile"),
+    target_path: Path = typer.Option(..., "--target"),
+    authorization_path: Path = typer.Option(..., "--authorization"),
+    output_dir: Path = typer.Option(..., "--out"),
+    max_steps: Optional[int] = typer.Option(None, "--max-steps"),
+    seed: Optional[int] = typer.Option(None, "--seed"),
+) -> None:
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path)
+    issues = validate_target(target)
+    if issues:
+        raise typer.BadParameter("; ".join(issues))
+    result = run_campaign(
+        profile_name=profile_name,
+        target=target,
+        authorization=authorization,
+        output_dir=output_dir,
+        runner=execute_run,
+        max_steps=max_steps,
+        seed=seed,
+    )
+    typer.echo(f"Campaign profile: {result.profile}")
+    typer.echo(f"Campaign objective_met: {result.objective_met}")
+    typer.echo(f"Campaign report: {result.report_md}")
+
+
+@assessment_app.command("run")
+def assessment_run(
+    bundle_name: str = typer.Option(..., "--bundle"),
+    target_path: Path = typer.Option(..., "--target"),
+    authorization_path: Path = typer.Option(..., "--authorization"),
+    output_dir: Path = typer.Option(..., "--out"),
+    max_steps: Optional[int] = typer.Option(None, "--max-steps"),
+    seed: Optional[int] = typer.Option(None, "--seed"),
+) -> None:
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path)
+    issues = validate_target(target)
+    if issues:
+        raise typer.BadParameter("; ".join(issues))
+    result = run_assessment(
+        bundle_name=bundle_name,
+        target=target,
+        authorization=authorization,
+        output_dir=output_dir,
+        runner=execute_run,
+        max_steps=max_steps,
+        seed=seed,
+    )
+    assessment_json, assessment_md = write_assessment_summary(result, output_dir)
+    typer.echo(f"Assessment JSON: {assessment_json}")
+    typer.echo(f"Assessment MD: {assessment_md}")
 
 
 def _build_environment(fixture: Fixture, scope: Scope):

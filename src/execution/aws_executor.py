@@ -31,6 +31,7 @@ class AwsRealExecutor:
     client: AwsClient | None = None
     _assumed_credentials: AwsCredentials | None = field(default=None, init=False)
     _assumed_role_arn: str | None = field(default=None, init=False)
+    _credentials_by_actor: dict[str, AwsCredentials] = field(default_factory=dict, init=False)
 
     def execute(self, action: Action) -> Observation:
         client = self.client or Boto3AwsClient()
@@ -126,10 +127,12 @@ class AwsRealExecutor:
         if not role_arn:
             raise ValueError("iam_passrole requires role_arn or target")
         session_name = action.parameters.get("session_name", "rastro-audit-session")
+        source_credentials = self._credentials_for_actor(action.actor)
         assumed = client.assume_role(
             region=region,
             role_arn=role_arn,
             session_name=session_name,
+            credentials=source_credentials,
         )
         credentials = assumed["Credentials"]
         self._assumed_credentials = {
@@ -138,6 +141,7 @@ class AwsRealExecutor:
             "SessionToken": credentials["SessionToken"],
         }
         self._assumed_role_arn = role_arn
+        self._credentials_by_actor[role_arn] = self._assumed_credentials
 
         policy_action = action.parameters.get("policy_action", "s3:GetObject")
         policy_resource = action.parameters.get("policy_resource")
@@ -190,14 +194,14 @@ class AwsRealExecutor:
             region=region,
             bucket=bucket,
             object_key=object_key,
-            credentials=self._assumed_credentials,
+            credentials=self._credentials_for_actor(action.actor),
         )
         return {
             "details": f"Executed s3:GetObject against {bucket}/{object_key}.",
             "evidence": {
                 "bucket": bucket,
                 "object_key": object_key,
-                "accessed_via": self._assumed_role_arn,
+                "accessed_via": action.actor,
             },
             "aws_region": region,
             "request_summary": {
@@ -220,7 +224,7 @@ class AwsRealExecutor:
             region=region,
             bucket=bucket,
             prefix=prefix,
-            credentials=self._assumed_credentials,
+            credentials=self._credentials_for_actor(action.actor),
         )
         return {
             "details": f"Executed s3:ListBucket against {bucket}.",
@@ -243,7 +247,7 @@ class AwsRealExecutor:
         secrets = client.list_secrets(
             region=region,
             name_prefix=name_prefix,
-            credentials=self._assumed_credentials,
+            credentials=self._credentials_for_actor(action.actor),
         )
         return {
             "details": "Executed secretsmanager:ListSecrets against AWS.",
@@ -265,13 +269,13 @@ class AwsRealExecutor:
         response = client.get_secret_value(
             region=region,
             secret_id=secret_id,
-            credentials=self._assumed_credentials,
+            credentials=self._credentials_for_actor(action.actor),
         )
         return {
             "details": f"Executed secretsmanager:GetSecretValue against {secret_id}.",
             "evidence": {
                 "secret_id": secret_id,
-                "accessed_via": self._assumed_role_arn,
+                "accessed_via": action.actor,
             },
             "aws_region": region,
             "request_summary": {
@@ -292,7 +296,7 @@ class AwsRealExecutor:
         names = client.list_parameters_by_path(
             region=region,
             path=path,
-            credentials=self._assumed_credentials,
+            credentials=self._credentials_for_actor(action.actor),
         )
         return {
             "details": "Executed ssm:GetParametersByPath against AWS.",
@@ -314,13 +318,13 @@ class AwsRealExecutor:
         response = client.get_parameter(
             region=region,
             name=name,
-            credentials=self._assumed_credentials,
+            credentials=self._credentials_for_actor(action.actor),
         )
         return {
             "details": f"Executed ssm:GetParameter against {name}.",
             "evidence": {
                 "parameter": name,
-                "accessed_via": self._assumed_role_arn,
+                "accessed_via": action.actor,
             },
             "aws_region": region,
             "request_summary": {
@@ -335,6 +339,9 @@ class AwsRealExecutor:
                 "preview": (response.get("Value") or "")[:256],
             },
         }
+
+    def _credentials_for_actor(self, actor: str) -> AwsCredentials | None:
+        return self._credentials_by_actor.get(actor)
 
 
 def _required_parameter(action: Action, key: str) -> str:

@@ -1,0 +1,12 @@
+{
+  "authorized_by": "Demo Operator",
+  "authorized_at": "2026-03-28",
+  "authorization_document": "docs/authorization-demo.md",
+  "permitted_profiles": [
+    "aws-iam-s3",
+    "aws-iam-secrets",
+    "aws-iam-ssm",
+    "aws-iam-role-chaining"
+  ],
+  "excluded_profiles": []
+}

@@ -116,3 +116,20 @@ exposicao, diffs entre avaliacoes e integracao com CI/CD (Produto 02).
 Rastro nao varre a conta inteira. Rastro valida, de forma controlada, as classes
 de attack path suportadas atraves de campanhas independentes, com evidencia
 auditavel e cobertura explicita.
+
+## Estado operacional atual
+O bundle `aws-foundation` agora possui cobertura validada para:
+- IAM -> S3
+- IAM -> Secrets Manager
+- IAM -> SSM Parameter Store
+- IAM -> Role chaining
+
+O MVP operacional em implementacao expõe:
+- `profile list`
+- `target validate`
+- `campaign run`
+- `assessment run`
+
+Esses comandos reutilizam o runner existente e introduzem a primeira camada
+operacional descrita acima: catalogo de profiles, validacao de target,
+execucao de campanhas e consolidacao de assessments.

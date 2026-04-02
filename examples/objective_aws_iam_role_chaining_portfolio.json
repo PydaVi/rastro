@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate an AWS IAM role chain that reaches a sensitive S3 object.",
+  "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+  "success_criteria": {
+    "flag": "role_chain_compromised"
+  }
+}

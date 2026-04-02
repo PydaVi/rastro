@@ -150,7 +150,7 @@ Status: em planejamento (próximo bloco)
 - IAM / STS / S3 / Secrets Manager / SSM
 - sempre chains completas, nunca features isoladas
 - regra: 2-3 experimentos sintéticos → 1 validação real representativa
-Status: em planejamento (portfólio MITRE Cloud/AWS)
+Status: foundation concluído; advanced/enterprise pendentes
 
 **4. Contrato de integração AWS**
 - role assumível com trust policy restrita ao ARN do executor
@@ -160,6 +160,15 @@ Status: em planejamento (portfólio MITRE Cloud/AWS)
 - após fechar este item, iniciar implementação das camadas operacionais
   (Target/Authorization/Profile/Campaign/Assessment) conforme
   `docs/architecture.md`.
+Status: em progresso
+
+**Trilha paralela — MVP operacional do foundation**
+- `profile list` para catálogo operacional
+- `target validate` para validar configuração do assessment
+- `campaign run` para executar um profile do foundation
+- `assessment run` para orquestrar bundle `aws-foundation`
+- consolidar outputs por campanha e assessment
+Status: em progresso
 
 **5. Qualidade do Produto 01**
 - relatório técnico e executivo
@@ -234,10 +243,10 @@ Formato: Classe → Sintéticos (2-3) → Validação AWS real (1)
 
 | Classe | Sintéticos | AWS real | Observações |
 |-------|-----------|---------|-------------|
-| 1. IAM → S3 | EXP-028A/B/C | EXP-028R | decoys de bucket/objeto |
-| 2. IAM → Secrets Manager | EXP-029A/B/C | EXP-029R | segredo decoy vs alvo |
-| 3. IAM → SSM Parameter Store | EXP-030A/B | EXP-030R | parameter decoy vs alvo |
-| 4. IAM → Role chaining | EXP-031A/B | EXP-031R | 2 pivôs antes do alvo |
+| 1. IAM → S3 | EXP-028A/B/C | EXP-028R | decoys de bucket/objeto (confirmado) |
+| 2. IAM → Secrets Manager | EXP-029A/B/C | EXP-029R | segredo decoy vs alvo (confirmado) |
+| 3. IAM → SSM Parameter Store | EXP-030A/B | EXP-030R | parameter decoy vs alvo (confirmado) |
+| 4. IAM → Role chaining | EXP-031A/B | EXP-031R | 2 pivôs antes do alvo (confirmado) |
 | 5. IAM → Compute → IAM | EXP-032A/B | EXP-032R | instance profile → role |
 | 6. IAM → Lambda → data | EXP-033A/B | EXP-033R | invoke/update → acesso |
 | 7. IAM → KMS → data | EXP-034A/B | EXP-034R | decrypt → S3/Secrets |
@@ -258,6 +267,7 @@ Regra: cada classe só promove para AWS real após 2-3 sintéticos estáveis.
 - EXP-030R: AWS real (IAM → SSM)
 - EXP-031A/B: Role chaining (2 pivôs)
 - EXP-031R: AWS real (role chaining)
+Status: concluído
 
 **Bloco Advanced (classes 5–8)**
 - EXP-032A/B: IAM → Compute → IAM

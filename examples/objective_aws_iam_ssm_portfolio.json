@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate an AWS IAM path that reaches a sensitive SSM parameter.",
+  "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key",
+  "success_criteria": {
+    "flag": "parameter_compromised"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate an AWS IAM path that reaches a sensitive S3 object.",
+  "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+  "success_criteria": {
+    "flag": "priv_esc"
+  }
+}

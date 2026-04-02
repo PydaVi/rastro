@@ -1,8 +1,9 @@
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
-from app.main import _build_execution_surface, run
+from app.main import _build_execution_surface, app, run
 from core.attack_graph import AttackGraph
 from core.audit import AuditLogger
 from core.domain import Action, ActionType, Decision, Objective, Observation, Scope
@@ -14,14 +15,45 @@ from execution.scope_enforcer import ScopeEnforcer
 from core.fixture import Fixture
 from core.sanitizer import write_sanitized_artifacts
 from core.tool_registry import ToolRegistry
+from operations.service import (
+    load_authorization,
+    load_target,
+    run_assessment,
+    run_campaign,
+)
 from planner.action_shaping import shape_available_actions
 from planner.ollama_planner import OllamaPlanner
 from planner.openai_planner import _parse_response as parse_openai_response
 from planner.mock_planner import DeterministicPlanner
 
 
+runner = CliRunner()
+
+
 class FakeAwsClient:
+    def __init__(self):
+        self.assume_role_calls = []
+        self.get_object_calls = []
+
     def get_caller_identity(self, region: str, credentials=None):
+        if credentials == {
+            "AccessKeyId": "AKIA-BROKER",
+            "SecretAccessKey": "secret-broker",
+            "SessionToken": "token-broker",
+        }:
+            return {
+                "Account": "123456789012",
+                "Arn": "arn:aws:sts::123456789012:assumed-role/BrokerRole/rastro-broker-session",
+            }
+        if credentials == {
+            "AccessKeyId": "AKIA-DATA",
+            "SecretAccessKey": "secret-data",
+            "SessionToken": "token-data",
+        }:
+            return {
+                "Account": "123456789012",
+                "Arn": "arn:aws:sts::123456789012:assumed-role/DataAccessRole/rastro-dataaccess-session",
+            }
         if credentials:
             return {
                 "Account": "123456789012",
@@ -36,6 +68,30 @@ class FakeAwsClient:
         return ["arn:aws:iam::123456789012:role/AuditRole"]
 
     def assume_role(self, region: str, role_arn: str, session_name: str, credentials=None):
+        self.assume_role_calls.append(
+            {
+                "region": region,
+                "role_arn": role_arn,
+                "session_name": session_name,
+                "credentials": credentials,
+            }
+        )
+        if role_arn.endswith(":role/BrokerRole"):
+            return {
+                "Credentials": {
+                    "AccessKeyId": "AKIA-BROKER",
+                    "SecretAccessKey": "secret-broker",
+                    "SessionToken": "token-broker",
+                }
+            }
+        if role_arn.endswith(":role/DataAccessRole"):
+            return {
+                "Credentials": {
+                    "AccessKeyId": "AKIA-DATA",
+                    "SecretAccessKey": "secret-data",
+                    "SessionToken": "token-data",
+                }
+            }
         return {
             "Credentials": {
                 "AccessKeyId": "AKIA...",
@@ -61,6 +117,14 @@ class FakeAwsClient:
         }
 
     def get_object(self, region: str, bucket: str, object_key: str, credentials=None):
+        self.get_object_calls.append(
+            {
+                "region": region,
+                "bucket": bucket,
+                "object_key": object_key,
+                "credentials": credentials,
+            }
+        )
         return {
             "ContentLength": 24,
             "ETag": '"etag"',
@@ -280,6 +344,153 @@ def test_aws_real_executor_supports_secretsmanager_path() -> None:
     assert read_secret_observation.success is True
     assert read_secret_observation.details["request_summary"]["api_calls"] == ["secretsmanager:GetSecretValue"]
     assert read_secret_observation.details["response_summary"]["preview"] == "payroll-api-key-preview"
+
+
+def test_aws_real_executor_uses_actor_credentials_for_role_chaining() -> None:
+    fixture = Fixture.load(
+        Path(__file__).resolve().parents[1] / "fixtures" / "aws_iam_role_chaining_direct_lab.json"
+    )
+    scope = Scope.model_construct(
+        target="aws",
+        allowed_actions=[
+            ActionType.ENUMERATE,
+            ActionType.ASSUME_ROLE,
+            ActionType.ACCESS_RESOURCE,
+        ],
+        allowed_resources=[
+            "arn:aws:iam::123456789012:root",
+            "arn:aws:iam::123456789012:role/BrokerRole",
+            "arn:aws:iam::123456789012:role/DataAccessRole",
+            "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+        ],
+        max_steps=6,
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam", "sts", "s3"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+        planner=None,
+    )
+    client = FakeAwsClient()
+    executor = AwsRealExecutor(fixture=fixture, scope=scope, client=client)
+
+    enumerate_action = fixture.enumerate_actions(None)[0]
+    first_assume_action = next(
+        action
+        for action in fixture.enumerate_actions(None)
+        if action.action_type == ActionType.ASSUME_ROLE
+        and action.target == "arn:aws:iam::123456789012:role/BrokerRole"
+    )
+
+    executor.execute(enumerate_action)
+    executor.execute(first_assume_action)
+
+    second_assume_action = next(
+        action
+        for action in fixture.enumerate_actions(None)
+        if action.action_type == ActionType.ASSUME_ROLE
+        and action.actor == "arn:aws:iam::123456789012:role/BrokerRole"
+    )
+    second_assume_observation = executor.execute(second_assume_action)
+
+    access_action = next(
+        action
+        for action in fixture.enumerate_actions(None)
+        if action.action_type == ActionType.ACCESS_RESOURCE
+    )
+    access_observation = executor.execute(access_action)
+
+    assert second_assume_observation.success is True
+    assert client.assume_role_calls[0]["credentials"] is None
+    assert client.assume_role_calls[1]["credentials"] == {
+        "AccessKeyId": "AKIA-BROKER",
+        "SecretAccessKey": "secret-broker",
+        "SessionToken": "token-broker",
+    }
+    assert access_observation.success is True
+    assert client.get_object_calls[-1]["credentials"] == {
+        "AccessKeyId": "AKIA-DATA",
+        "SecretAccessKey": "secret-data",
+        "SessionToken": "token-data",
+    }
+    assert access_observation.details["evidence"]["accessed_via"] == "arn:aws:iam::123456789012:role/DataAccessRole"
+
+
+def test_profile_list_cli_shows_foundation_bundle() -> None:
+    result = runner.invoke(app, ["profile", "list"])
+
+    assert result.exit_code == 0
+    assert "aws-iam-s3" in result.stdout
+    assert "bundle:aws-foundation" in result.stdout
+
+
+def test_target_validate_cli_accepts_foundation_target(tmp_path: Path) -> None:
+    target_path = tmp_path / "target.json"
+    target_path.write_text(
+        """
+{
+  "name": "local-aws-lab",
+  "platform": "aws",
+  "accounts": ["550192603632"],
+  "allowed_regions": ["us-east-1"],
+  "entry_roles": ["arn:aws:iam::550192603632:user/brainctl-user"]
+}
+""".strip()
+    )
+
+    result = runner.invoke(app, ["target", "validate", "--target", str(target_path)])
+
+    assert result.exit_code == 0
+    assert "Target valid: local-aws-lab" in result.stdout
+
+
+def test_campaign_and_assessment_orchestration_use_runner(tmp_path: Path) -> None:
+    target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
+    authorization_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path)
+    calls = []
+
+    def fake_runner(**kwargs):
+        calls.append(kwargs)
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        report_json = output_dir / "report.json"
+        report_md = output_dir / "report.md"
+        graph = output_dir / "attack_graph.mmd"
+        report_json.write_text("{}")
+        report_md.write_text("# report\n")
+        graph.write_text("graph TD\n")
+        return {
+            "objective_met": True,
+            "report_json": report_json,
+            "report_md": report_md,
+            "attack_graph": graph,
+        }
+
+    campaign = run_campaign(
+        profile_name="aws-iam-s3",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "campaign",
+        runner=fake_runner,
+    )
+    assessment = run_assessment(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "assessment",
+        runner=fake_runner,
+    )
+
+    assert campaign.objective_met is True
+    assert calls[0]["fixture_path"].name == "aws_role_choice_lab.local.json"
+    assert (tmp_path / "campaign" / "aws-iam-s3.scope.json").exists()
+    assert len(assessment.campaigns) == 4
 
 def test_scope_enforcer_blocks_out_of_scope() -> None:
     scope = Scope(

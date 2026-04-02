@@ -87,6 +87,17 @@ def _filter_repeated_assume(snapshot, actions: List[Action]) -> List[Action]:
     return filtered
 
 
+def _filter_failed_assume(snapshot, actions: List[Action]) -> List[Action]:
+    failed_roles = set(getattr(snapshot, "failed_assume_roles", []))
+    if not failed_roles:
+        return actions
+    return [
+        action
+        for action in actions
+        if not (action.action_type == ActionType.ASSUME_ROLE and action.target in failed_roles)
+    ]
+
+
 def _prefer_analyze(snapshot, actions: List[Action]) -> List[Action]:
     if not snapshot or not actions:
         return actions
@@ -136,6 +147,7 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
             filtered = _filter_repeated_access(snapshot, progress_actions)
             filtered = _filter_repeated_enumerate(snapshot, filtered)
             filtered = _filter_mismatched_bucket(snapshot, filtered)
+            filtered = _filter_failed_assume(snapshot, filtered)
             if filtered:
                 preferred = _prefer_analyze(snapshot, filtered)
                 return _prefer_access_on_success(snapshot, preferred)
@@ -156,7 +168,7 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
             )
         ranked_assume_actions = _filter_repeated_assume(snapshot, ranked_assume_actions)
         if ranked_assume_actions:
-            return ranked_assume_actions
+            return _filter_failed_assume(snapshot, ranked_assume_actions)
 
         non_failed_assume_actions = [
             action
@@ -170,7 +182,8 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
         ]
         non_failed_assume_actions = _filter_repeated_assume(snapshot, non_failed_assume_actions)
         if non_failed_assume_actions:
-            return non_failed_assume_actions
+            return _filter_failed_assume(snapshot, non_failed_assume_actions)
 
     filtered = _filter_repeated_assume(snapshot, available_actions)
-    return _filter_repeated_enumerate(snapshot, filtered)
+    filtered = _filter_repeated_enumerate(snapshot, filtered)
+    return _filter_failed_assume(snapshot, filtered)
