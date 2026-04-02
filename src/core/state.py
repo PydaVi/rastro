@@ -51,6 +51,7 @@ class StateSnapshot:
     candidate_roles: List[str] = field(default_factory=list)
     candidate_paths: List[CandidatePath] = field(default_factory=list)
     attempted_access_targets: List[Dict[str, str]] = field(default_factory=list)
+    attempted_enumerations: List[Dict[str, str]] = field(default_factory=list)
 
 
 class StateManager:
@@ -75,6 +76,7 @@ class StateManager:
         self._tested_assume_roles: List[str] = []
         self._failed_assume_roles: List[str] = []
         self._attempted_access_targets: set[tuple[str, str]] = set()
+        self._attempted_enumerations: set[tuple[str, str]] = set()
 
     def snapshot(self) -> StateSnapshot:
         return StateSnapshot(
@@ -102,6 +104,10 @@ class StateManager:
                 {"actor": actor, "target": target}
                 for actor, target in sorted(self._attempted_access_targets)
             ],
+            attempted_enumerations=[
+                {"actor": actor, "target": target}
+                for actor, target in sorted(self._attempted_enumerations)
+            ],
         )
 
     def initial_state(self) -> Dict:
@@ -124,6 +130,11 @@ class StateManager:
             target = action.target
             if actor and target:
                 self._attempted_access_targets.add((actor, target))
+        if action.action_type.value == "enumerate":
+            actor = action.actor
+            target = action.target
+            if actor and target:
+                self._attempted_enumerations.add((actor, target))
         self._update_path_memory(action, observation)
 
     def record_blocked(self, action: Action, reason: str) -> None:

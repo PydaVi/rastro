@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate an AWS IAM path that requires backtracking when signals are ambiguous and analyze provides no new action.",
+  "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+  "success_criteria": {
+    "flag": "priv_esc"
+  }
+}

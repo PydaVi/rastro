@@ -1,0 +1,282 @@
+{
+  "name": "aws-backtracking-loop-trap",
+  "description": "Local AWS lab that tempts the planner into repeating enumerate on a dead-end branch unless backtracking memory breaks the loop.",
+  "version": "0.1",
+  "state": {
+    "flags": [],
+    "identities": {
+      "arn:aws:iam::123456789012:user/analyst": {
+        "available_actions": [
+          {
+            "action_type": "enumerate",
+            "target": "arn:aws:iam::123456789012:root",
+            "parameters": {
+              "note": "simulate_get_caller_identity_and_list_roles",
+              "service": "iam",
+              "region": "us-east-1"
+            },
+            "technique": {
+              "mitre_id": "T1087.004",
+              "mitre_name": "Account Discovery: Cloud Account",
+              "tactic": "discovery",
+              "platform": "AWS"
+            },
+            "tool": "iam_list_roles"
+          },
+          {
+            "action_type": "assume_role",
+            "target": "arn:aws:iam::123456789012:role/RoleA",
+            "parameters": {
+              "note": "simulate_sts_assume_role_loop_trap",
+              "service": "sts",
+              "region": "us-east-1",
+              "role_arn": "arn:aws:iam::123456789012:role/RoleA",
+              "session_name": "rastro-rolea-session",
+              "policy_action": "s3:ListBucket",
+              "policy_resource": "arn:aws:s3:::finance-archives"
+            },
+            "technique": {
+              "mitre_id": "T1548",
+              "mitre_name": "Abuse Elevation Control Mechanism",
+              "tactic": "privilege-escalation",
+              "platform": "AWS IAM"
+            },
+            "tool": "iam_passrole"
+          },
+          {
+            "action_type": "assume_role",
+            "target": "arn:aws:iam::123456789012:role/RoleQ",
+            "parameters": {
+              "note": "simulate_sts_assume_role_sensitive_path",
+              "service": "sts",
+              "region": "us-east-1",
+              "role_arn": "arn:aws:iam::123456789012:role/RoleQ",
+              "session_name": "rastro-roleq-session",
+              "policy_action": "s3:ListBucket",
+              "policy_resource": "arn:aws:s3:::sensitive-finance-data"
+            },
+            "technique": {
+              "mitre_id": "T1548",
+              "mitre_name": "Abuse Elevation Control Mechanism",
+              "tactic": "privilege-escalation",
+              "platform": "AWS IAM"
+            },
+            "tool": "iam_passrole"
+          }
+        ]
+      }
+    }
+  },
+  "transitions": [
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:user/analyst",
+      "target": "arn:aws:iam::123456789012:root",
+      "observation": {
+        "details": "Simulated sts:GetCallerIdentity and iam:ListRoles completed.",
+        "aws_identity": {
+          "account_id": "123456789012",
+          "arn": "arn:aws:iam::123456789012:user/analyst"
+        },
+        "discovered_roles": [
+          "arn:aws:iam::123456789012:role/RoleA",
+          "arn:aws:iam::123456789012:role/RoleQ"
+        ]
+      },
+      "add_flags": [
+        "iam_roles_listed"
+      ]
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/analyst",
+      "target": "arn:aws:iam::123456789012:role/RoleA",
+      "observation": {
+        "granted_role": "arn:aws:iam::123456789012:role/RoleA",
+        "details": "Simulated sts:AssumeRole into RoleA succeeded.",
+        "simulated_policy_result": {
+          "action": "s3:ListBucket",
+          "resource": "arn:aws:s3:::finance-archives",
+          "decision": "allowed"
+        }
+      },
+      "add_flags": [
+        "rolea_assumed",
+        "audit_role_assumed"
+      ],
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/RoleA": {
+          "available_actions": [
+            {
+              "action_type": "enumerate",
+              "target": "arn:aws:s3:::finance-archives",
+              "parameters": {
+                "note": "simulate_s3_list_bucket_loop_trap",
+                "service": "s3",
+                "region": "us-east-1",
+                "bucket": "finance-archives",
+                "prefix": ""
+              },
+              "technique": {
+                "mitre_id": "T1619",
+                "mitre_name": "Cloud Storage Object Discovery",
+                "tactic": "discovery",
+                "platform": "S3"
+              },
+              "tool": "s3_list_bucket"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:role/RoleA",
+      "target": "arn:aws:s3:::finance-archives",
+      "observation": {
+        "details": "Simulated s3:ListBucket succeeded for finance-archives.",
+        "discovered_objects": [
+          "budget-summary.csv"
+        ]
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/RoleA": {
+          "available_actions": [
+            {
+              "action_type": "enumerate",
+              "target": "arn:aws:s3:::finance-archives",
+              "parameters": {
+                "note": "simulate_s3_list_bucket_loop_trap",
+                "service": "s3",
+                "region": "us-east-1",
+                "bucket": "finance-archives",
+                "prefix": ""
+              },
+              "technique": {
+                "mitre_id": "T1619",
+                "mitre_name": "Cloud Storage Object Discovery",
+                "tactic": "discovery",
+                "platform": "S3"
+              },
+              "tool": "s3_list_bucket"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/analyst",
+      "target": "arn:aws:iam::123456789012:role/RoleQ",
+      "observation": {
+        "granted_role": "arn:aws:iam::123456789012:role/RoleQ",
+        "details": "Simulated sts:AssumeRole into RoleQ succeeded.",
+        "simulated_policy_result": {
+          "action": "s3:ListBucket",
+          "resource": "arn:aws:s3:::sensitive-finance-data",
+          "decision": "allowed"
+        }
+      },
+      "add_flags": [
+        "roleq_assumed",
+        "audit_role_assumed"
+      ],
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/RoleQ": {
+          "available_actions": [
+            {
+              "action_type": "enumerate",
+              "target": "arn:aws:s3:::sensitive-finance-data",
+              "parameters": {
+                "note": "simulate_s3_list_bucket_sensitive",
+                "service": "s3",
+                "region": "us-east-1",
+                "bucket": "sensitive-finance-data",
+                "prefix": ""
+              },
+              "technique": {
+                "mitre_id": "T1619",
+                "mitre_name": "Cloud Storage Object Discovery",
+                "tactic": "discovery",
+                "platform": "S3"
+              },
+              "tool": "s3_list_bucket"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+              "parameters": {
+                "note": "simulate_s3_get_object",
+                "service": "s3",
+                "region": "us-east-1",
+                "bucket": "sensitive-finance-data",
+                "object_key": "payroll.csv"
+              },
+              "technique": {
+                "mitre_id": "T1530",
+                "mitre_name": "Data from Cloud Storage",
+                "tactic": "collection",
+                "platform": "S3"
+              },
+              "tool": "s3_read_sensitive"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:role/RoleQ",
+      "target": "arn:aws:s3:::sensitive-finance-data",
+      "observation": {
+        "details": "Simulated s3:ListBucket succeeded for sensitive-finance-data.",
+        "discovered_objects": [
+          "payroll.csv"
+        ]
+      },
+      "add_flags": [
+        "s3_objects_listed"
+      ],
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/RoleQ": {
+          "available_actions": [
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+              "parameters": {
+                "note": "simulate_s3_get_object",
+                "service": "s3",
+                "region": "us-east-1",
+                "bucket": "sensitive-finance-data",
+                "object_key": "payroll.csv"
+              },
+              "technique": {
+                "mitre_id": "T1530",
+                "mitre_name": "Data from Cloud Storage",
+                "tactic": "collection",
+                "platform": "S3"
+              },
+              "tool": "s3_read_sensitive"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/RoleQ",
+      "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+      "observation": {
+        "details": "Simulated s3:GetObject succeeded for payroll.csv.",
+        "evidence": {
+          "bucket": "sensitive-finance-data",
+          "object_key": "payroll.csv",
+          "accessed_via": "arn:aws:iam::123456789012:role/RoleQ"
+        }
+      },
+      "add_flags": [
+        "priv_esc"
+      ]
+    }
+  ]
+}

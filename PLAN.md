@@ -102,6 +102,10 @@ que resultados positivos.
 | EXP-021 | Path scoring adversarial sem lookahead forte     | confirmada        |
 | EXP-022 | Path scoring com limite de steps apertado        | confirmada        |
 | EXP-023 | Path scoring em AWS real (sinal novo)            | confirmada        |
+| EXP-024 | Loop trap sintetico para backtracking            | confirmada        |
+| EXP-025 | Backtracking com sinais ambiguos e analyze no-op | confirmada        |
+| EXP-026 | Backtracking com 3 pivots e branch profundo      | confirmada        |
+| EXP-027 | Backtracking em AWS real (validacao)             | confirmada        |
 
 Descobertas arquiteturais principais acumuladas:
 - problema raiz de escolha de pivô era representação de estado, não modelo

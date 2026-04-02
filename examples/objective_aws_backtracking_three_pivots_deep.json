@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate an AWS IAM path that requires backtracking after two wrong pivots before reaching a deeper sensitive S3 path.",
+  "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+  "success_criteria": {
+    "flag": "priv_esc"
+  }
+}

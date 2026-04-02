@@ -31,6 +31,24 @@ def _filter_repeated_access(snapshot, actions: List[Action]) -> List[Action]:
     return filtered
 
 
+def _filter_repeated_enumerate(snapshot, actions: List[Action]) -> List[Action]:
+    attempted = {
+        (item.get("actor"), item.get("target"))
+        for item in getattr(snapshot, "attempted_enumerations", [])
+        if item.get("actor") and item.get("target")
+    }
+    if not attempted:
+        return actions
+    filtered: List[Action] = []
+    for action in actions:
+        if action.action_type == ActionType.ENUMERATE:
+            key = (action.actor, action.target)
+            if key in attempted:
+                continue
+        filtered.append(action)
+    return filtered
+
+
 def _objective_bucket(snapshot) -> str | None:
     target = getattr(getattr(snapshot, "objective", None), "target", None)
     if not target or not target.startswith("arn:aws:s3:::"):
@@ -52,6 +70,18 @@ def _filter_mismatched_bucket(snapshot, actions: List[Action]) -> List[Action]:
             continue
         bucket = getattr(action, "parameters", {}).get("bucket")
         if bucket and bucket != objective_bucket:
+            continue
+        filtered.append(action)
+    return filtered
+
+
+def _filter_repeated_assume(snapshot, actions: List[Action]) -> List[Action]:
+    active_roles = set(getattr(snapshot, "active_assumed_roles", []))
+    if not active_roles:
+        return actions
+    filtered: List[Action] = []
+    for action in actions:
+        if action.action_type == ActionType.ASSUME_ROLE and action.target in active_roles:
             continue
         filtered.append(action)
     return filtered
@@ -104,6 +134,7 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
         ]
         if progress_actions:
             filtered = _filter_repeated_access(snapshot, progress_actions)
+            filtered = _filter_repeated_enumerate(snapshot, filtered)
             filtered = _filter_mismatched_bucket(snapshot, filtered)
             if filtered:
                 preferred = _prefer_analyze(snapshot, filtered)
@@ -123,6 +154,7 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
                     if action.action_type == ActionType.ASSUME_ROLE and action.target == path.target
                 ]
             )
+        ranked_assume_actions = _filter_repeated_assume(snapshot, ranked_assume_actions)
         if ranked_assume_actions:
             return ranked_assume_actions
 
@@ -136,7 +168,9 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
                 if getattr(path, "status", "untested") == "failed"
             }
         ]
+        non_failed_assume_actions = _filter_repeated_assume(snapshot, non_failed_assume_actions)
         if non_failed_assume_actions:
             return non_failed_assume_actions
 
-    return available_actions
+    filtered = _filter_repeated_assume(snapshot, available_actions)
+    return _filter_repeated_enumerate(snapshot, filtered)

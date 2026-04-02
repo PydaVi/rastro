@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate an AWS IAM path that must backtrack after a loop-trap enumerate on a dead-end role before reaching the sensitive S3 object.",
+  "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+  "success_criteria": {
+    "flag": "priv_esc"
+  }
+}

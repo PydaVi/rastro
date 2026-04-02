@@ -87,6 +87,26 @@ ao objetivo macro do eixo.
 
 ---
 
+## Regra para correção após falha experimental (obrigatória)
+
+Quando um experimento falhar:
+
+1. Identificar a causa raiz (não o sintoma) e registrar o que o
+   experimento revelou sobre o engine que ainda não estava provado.
+2. Separar as causas possíveis:
+   - falha de infraestrutura (fixture, executor, sanitização)
+   - falha de representação de estado
+   - falha de policy (action shaping / path scoring)
+   - falha de framing do planner (prompt)
+   - limitação genuína do modelo
+3. Documentar a descoberta em `docs/experiments/` antes de implementar
+   qualquer correção.
+4. Implementar a correção mais geral possível — válida para cenários
+   futuros, não apenas para o path atual.
+5. Validar `pytest` e garantir que o MockPlanner continua funcionando.
+
+---
+
 ## Separação de responsabilidades
 
 ```
