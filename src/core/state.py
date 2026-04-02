@@ -40,6 +40,7 @@ class StateSnapshot:
     action_metadata: List[Dict]
     blocked_actions: List[Tuple[Action, str]]
     observations: List[Observation]
+    objective_met: bool
     tested_assume_roles: List[str]
     failed_assume_roles: List[str]
     active_assumed_roles: List[str]
@@ -87,6 +88,7 @@ class StateManager:
             action_metadata=list(self._action_metadata),
             blocked_actions=list(self._blocked_actions),
             observations=list(self._observations),
+            objective_met=self.is_objective_met(),
             tested_assume_roles=list(self._tested_assume_roles),
             failed_assume_roles=list(self._failed_assume_roles),
             active_assumed_roles=self._active_assumed_roles(),
@@ -312,6 +314,8 @@ class StateManager:
         score -= self._attempted_access_count(role) * 15
         score += self._objective_relevance_score(role)
         score += self._lookahead_relevance_score(role)
+        score += self._bucket_mismatch_penalty(role)
+        score += self._analyze_unlock_bonus(role)
         return score
 
     def _access_attempted(self, role: str, target: str) -> bool:
@@ -332,6 +336,9 @@ class StateManager:
                 continue
             observed.extend(observation.details.get("discovered_objects", []))
             evidence = observation.details.get("evidence", {})
+            bucket = evidence.get("bucket")
+            if bucket:
+                observed.append(f"arn:aws:s3:::{bucket}")
             object_key = evidence.get("object_key")
             if object_key:
                 observed.append(object_key)
@@ -362,6 +369,9 @@ class StateManager:
             target = action.get("target")
             if action.get("action_type") == "access_resource" and target:
                 signals.append(target)
+            bucket = parameters.get("bucket")
+            if bucket:
+                signals.append(f"arn:aws:s3:::{bucket}")
             prefix = parameters.get("prefix")
             if prefix:
                 signals.append(prefix)
@@ -383,6 +393,9 @@ class StateManager:
                 target = action.get("target")
                 if action.get("action_type") == "access_resource" and target:
                     signals.append(target)
+                bucket = parameters.get("bucket")
+                if bucket:
+                    signals.append(f"arn:aws:s3:::{bucket}")
                 prefix = parameters.get("prefix")
                 if prefix:
                     signals.append(prefix)
@@ -423,6 +436,9 @@ class StateManager:
                                         and analyze_target
                                     ):
                                         signals.append(analyze_target)
+                                    analyze_bucket = analyze_params.get("bucket")
+                                    if analyze_bucket:
+                                        signals.append(f"arn:aws:s3:::{analyze_bucket}")
                                     analyze_object_key = analyze_params.get("object_key")
                                     if analyze_object_key:
                                         signals.append(analyze_object_key)
@@ -453,6 +469,69 @@ class StateManager:
                 score += 90
             score += 12 * len(target_tokens & signal_tokens)
         return score
+
+    def _bucket_mismatch_penalty(self, role: str) -> int:
+        objective_bucket = self._parse_s3_arn(self._objective.target)[0]
+        if not objective_bucket:
+            return 0
+
+        identities = self._fixture.state_copy().get("identities", {})
+        actions: List[Dict] = []
+        actions.extend(identities.get(role, {}).get("available_actions", []))
+
+        for transition in self._fixture_transitions():
+            if transition.get("actor") != role and transition.get("target") != role:
+                continue
+            actions.extend(transition.get("update_identities", {}).get(role, {}).get("available_actions", []))
+
+        mismatches = set()
+        for action in actions:
+            if action.get("action_type") != "access_resource":
+                continue
+            params = action.get("parameters", {})
+            bucket = params.get("bucket")
+            if not bucket:
+                continue
+            target_bucket = None
+            target = action.get("target")
+            if isinstance(target, str):
+                target_bucket = self._parse_s3_arn(target)[0]
+            if target_bucket and target_bucket != bucket:
+                mismatches.add(("target", bucket, target_bucket))
+            if objective_bucket != bucket:
+                mismatches.add(("objective", bucket, objective_bucket))
+
+        penalty = 0
+        for kind, bucket, reference in mismatches:
+            if kind == "target":
+                penalty -= 120
+            else:
+                penalty -= 200
+        return penalty
+
+    def _analyze_unlock_bonus(self, role: str) -> int:
+        objective_bucket = self._parse_s3_arn(self._objective.target)[0]
+        if not objective_bucket:
+            return 0
+        bonus = 0
+        for transition in self._fixture_transitions():
+            if transition.get("action_type") != "analyze":
+                continue
+            if transition.get("actor") != role:
+                continue
+            target_bucket = self._parse_s3_arn(transition.get("target") or "")[0]
+            if target_bucket and target_bucket == objective_bucket:
+                bonus += 80
+                analyze_identity = transition.get("update_identities", {}).get(role, {})
+                for action in analyze_identity.get("available_actions", []):
+                    if action.get("action_type") != "access_resource":
+                        continue
+                    params = action.get("parameters", {})
+                    bucket = params.get("bucket")
+                    if bucket == objective_bucket:
+                        bonus += 120
+                        return bonus
+        return bonus
 
     def _extract_tokens(self, value: str) -> tuple[set[str], str | None, str | None]:
         bucket, key = self._parse_s3_arn(value)

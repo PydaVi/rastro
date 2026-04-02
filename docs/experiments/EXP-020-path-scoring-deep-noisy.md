@@ -60,16 +60,17 @@ Artefatos:
 ## Resultados por etapa
 
 ### Etapa 1 — Execucao dry_run com OpenAIPlanner
-- Resultado: falhou nas tres variantes
-- Comportamento: o planner alternou `assume_role` entre RoleA/RoleM/RoleQ,
-  executou `enumerate` e depois acessou o decoy `public-reports/payroll.csv`.
-- Sintoma observado: nenhum `analyze` foi executado, o branch correto foi
-  abandonado antes de desbloquear o acesso real.
+- Resultado: falhou nas tres variantes.
+- Comportamento observado: alternou `assume_role` entre RoleA/RoleM/RoleQ,
+  executou `enumerate` e caiu no decoy `public-reports/payroll.csv`.
+- Sintoma: nenhum `analyze` foi executado; o branch correto foi abandonado
+  antes de desbloquear o `access_resource` real.
+- Passos: convergiu em 9 passos, mas sempre no decoy.
 
 ### Etapa 2 — Execucao dry_run com OpenAIPlanner apos ajuste no engine
-- Resultado: sucesso nas tres variantes
-- Comportamento: `enumerate -> analyze -> access_resource` no role correto,
-  objetivo atingido em 5 passos em todas as variacoes.
+- Resultado: sucesso nas tres variantes.
+- Comportamento observado: `enumerate -> analyze -> access_resource` no
+  role correto, objetivo atingido em 5 passos em todas as variacoes.
 
 ## Erros, intervencoes e motivos
 - Erro: branch ativo era descartado quando a unica acao disponivel era
