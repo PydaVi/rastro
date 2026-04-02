@@ -1,0 +1,110 @@
+{
+  "name": "internal-data-platform-iam-s3-lab",
+  "description": "Synthetic IAM to S3 environment for internal data platform variants.",
+  "version": "0.1",
+  "state": {
+    "flags": [],
+    "identities": {
+      "arn:aws:iam::123456789012:user/platform-analyst": {
+        "available_actions": [
+          {
+            "action_type": "enumerate",
+            "target": "arn:aws:iam::123456789012:root",
+            "parameters": {"service": "iam", "region": "us-east-1"},
+            "tool": "iam_list_roles"
+          },
+          {
+            "action_type": "assume_role",
+            "target": "arn:aws:iam::123456789012:role/PlatformAuditRole",
+            "parameters": {"service": "sts", "region": "us-east-1", "role_arn": "arn:aws:iam::123456789012:role/PlatformAuditRole", "session_name": "idp-audit"},
+            "tool": "iam_passrole"
+          },
+          {
+            "action_type": "assume_role",
+            "target": "arn:aws:iam::123456789012:role/ReportsBrokerRole",
+            "parameters": {"service": "sts", "region": "us-east-1", "role_arn": "arn:aws:iam::123456789012:role/ReportsBrokerRole", "session_name": "idp-reports"},
+            "tool": "iam_passrole"
+          }
+        ]
+      }
+    }
+  },
+  "transitions": [
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:root",
+      "observation": {
+        "details": "Simulated sts:GetCallerIdentity and iam:ListRoles completed.",
+        "aws_identity": {"account_id": "123456789012", "arn": "arn:aws:iam::123456789012:user/platform-analyst"},
+        "discovered_roles": ["arn:aws:iam::123456789012:role/PlatformAuditRole", "arn:aws:iam::123456789012:role/ReportsBrokerRole"]
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:role/PlatformAuditRole",
+      "observation": {"granted_role": "arn:aws:iam::123456789012:role/PlatformAuditRole", "details": "Assumed PlatformAuditRole."},
+      "add_flags": ["audit_role_assumed"],
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/PlatformAuditRole": {
+          "available_actions": [
+            {"action_type": "enumerate", "target": "arn:aws:s3:::idp-prod-payroll-data", "parameters": {"service": "s3", "region": "us-east-1", "bucket": "idp-prod-payroll-data"}, "tool": "s3_list_bucket"},
+            {"action_type": "enumerate", "target": "arn:aws:s3:::idp-prod-payroll-archive", "parameters": {"service": "s3", "region": "us-east-1", "bucket": "idp-prod-payroll-archive"}, "tool": "s3_list_bucket"},
+            {"action_type": "enumerate", "target": "arn:aws:s3:::idp-finance-summaries", "parameters": {"service": "s3", "region": "us-east-1", "bucket": "idp-finance-summaries"}, "tool": "s3_list_bucket"},
+            {"action_type": "access_resource", "target": "arn:aws:s3:::idp-prod-payroll-data/payroll/2026-03.csv", "parameters": {"service": "s3", "region": "us-east-1", "bucket": "idp-prod-payroll-data", "object_key": "payroll/2026-03.csv"}, "tool": "s3_read_sensitive"},
+            {"action_type": "access_resource", "target": "arn:aws:s3:::idp-prod-payroll-archive/payroll-archive-manifest.json", "parameters": {"service": "s3", "region": "us-east-1", "bucket": "idp-prod-payroll-archive", "object_key": "payroll-archive-manifest.json"}, "tool": "s3_read_sensitive"},
+            {"action_type": "access_resource", "target": "arn:aws:s3:::idp-finance-summaries/prod-finance-payroll-budget.csv", "parameters": {"service": "s3", "region": "us-east-1", "bucket": "idp-finance-summaries", "object_key": "prod-finance-payroll-budget.csv"}, "tool": "s3_read_sensitive"}
+          ]
+        },
+        "arn:aws:iam::123456789012:role/ReportsBrokerRole": {
+          "available_actions": [
+            {"action_type": "enumerate", "target": "arn:aws:s3:::idp-public-reports", "parameters": {"service": "s3", "region": "us-east-1", "bucket": "idp-public-reports"}, "tool": "s3_list_bucket"}
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:role/ReportsBrokerRole",
+      "observation": {"granted_role": "arn:aws:iam::123456789012:role/ReportsBrokerRole", "details": "Assumed ReportsBrokerRole."}
+    },
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:role/PlatformAuditRole",
+      "target": "arn:aws:s3:::idp-prod-payroll-data",
+      "observation": {"details": "Listed idp-prod-payroll-data.", "discovered_objects": ["payroll/2026-03.csv", "payroll/archive-2025.csv"]}
+    },
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:role/PlatformAuditRole",
+      "target": "arn:aws:s3:::idp-prod-payroll-archive",
+      "observation": {"details": "Listed idp-prod-payroll-archive.", "discovered_objects": ["payroll-archive-manifest.json"]}
+    },
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:role/PlatformAuditRole",
+      "target": "arn:aws:s3:::idp-finance-summaries",
+      "observation": {"details": "Listed idp-finance-summaries.", "discovered_objects": ["prod-finance-payroll-budget.csv"]}
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PlatformAuditRole",
+      "target": "arn:aws:s3:::idp-prod-payroll-data/payroll/2026-03.csv",
+      "observation": {"details": "Read payroll object.", "evidence": {"bucket": "idp-prod-payroll-data", "object_key": "payroll/2026-03.csv"}}
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PlatformAuditRole",
+      "target": "arn:aws:s3:::idp-prod-payroll-archive/payroll-archive-manifest.json",
+      "observation": {"details": "Read archive manifest.", "evidence": {"bucket": "idp-prod-payroll-archive", "object_key": "payroll-archive-manifest.json"}}
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PlatformAuditRole",
+      "target": "arn:aws:s3:::idp-finance-summaries/prod-finance-payroll-budget.csv",
+      "observation": {"details": "Read finance payroll budget.", "evidence": {"bucket": "idp-finance-summaries", "object_key": "prod-finance-payroll-budget.csv"}}
+    }
+  ]
+}

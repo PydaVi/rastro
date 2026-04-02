@@ -1,0 +1,315 @@
+{
+  "target": "internal-data-platform-variant-a",
+  "bundle": "aws-foundation",
+  "collected_at": "2026-04-02T23:10:00+00:00",
+  "caller_identity": {
+    "Account": "123456789012",
+    "Arn": "arn:aws:iam::123456789012:user/platform-analyst"
+  },
+  "services_scanned": [
+    "iam",
+    "s3",
+    "secretsmanager",
+    "ssm"
+  ],
+  "regions_scanned": [
+    "us-east-1"
+  ],
+  "resources": [
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/PlatformAuditRole",
+      "region": "us-east-1",
+      "metadata": {
+        "tier": "audit"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/PayrollDataAccessRole",
+      "region": "us-east-1",
+      "metadata": {
+        "tier": "data"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/FinanceBrokerRole",
+      "region": "us-east-1",
+      "metadata": {
+        "tier": "broker"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/ReportsBrokerRole",
+      "region": "us-east-1",
+      "metadata": {
+        "tier": "broker"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/QuarterlyAuditRole",
+      "region": "us-east-1",
+      "metadata": {
+        "tier": "audit"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/BillingReadRole",
+      "region": "us-east-1",
+      "metadata": {
+        "tier": "read"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/ArchiveReviewRole",
+      "region": "us-east-1",
+      "metadata": {
+        "tier": "audit"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_bucket",
+      "identifier": "arn:aws:s3:::idp-prod-payroll-data",
+      "region": "us-east-1",
+      "metadata": {},
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_object",
+      "identifier": "arn:aws:s3:::idp-prod-payroll-data/payroll/2026-03.csv",
+      "region": "us-east-1",
+      "metadata": {
+        "bucket": "idp-prod-payroll-data",
+        "object_key": "payroll/2026-03.csv"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_object",
+      "identifier": "arn:aws:s3:::idp-prod-payroll-data/payroll/archive-2025.csv",
+      "region": "us-east-1",
+      "metadata": {
+        "bucket": "idp-prod-payroll-data",
+        "object_key": "payroll/archive-2025.csv"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_object",
+      "identifier": "arn:aws:s3:::idp-finance-summaries/budget-summary.csv",
+      "region": "us-east-1",
+      "metadata": {
+        "bucket": "idp-finance-summaries",
+        "object_key": "budget-summary.csv"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_bucket",
+      "identifier": "arn:aws:s3:::idp-finance-summaries",
+      "region": "us-east-1",
+      "metadata": {},
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_bucket",
+      "identifier": "arn:aws:s3:::idp-public-reports",
+      "region": "us-east-1",
+      "metadata": {},
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_object",
+      "identifier": "arn:aws:s3:::idp-public-reports/quarterly-summary.csv",
+      "region": "us-east-1",
+      "metadata": {
+        "bucket": "idp-public-reports",
+        "object_key": "quarterly-summary.csv"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_bucket",
+      "identifier": "arn:aws:s3:::idp-tf-state",
+      "region": "us-east-1",
+      "metadata": {},
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_object",
+      "identifier": "arn:aws:s3:::idp-tf-state/dev/network/terraform.tfstate",
+      "region": "us-east-1",
+      "metadata": {
+        "bucket": "idp-tf-state",
+        "object_key": "dev/network/terraform.tfstate"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_object",
+      "identifier": "arn:aws:s3:::idp-tf-state/dev/app/terraform.tfstate",
+      "region": "us-east-1",
+      "metadata": {
+        "bucket": "idp-tf-state",
+        "object_key": "dev/app/terraform.tfstate"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_bucket",
+      "identifier": "arn:aws:s3:::idp-backups",
+      "region": "us-east-1",
+      "metadata": {},
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_object",
+      "identifier": "arn:aws:s3:::idp-backups/rds/hourly-001.bak",
+      "region": "us-east-1",
+      "metadata": {
+        "bucket": "idp-backups",
+        "object_key": "rds/hourly-001.bak"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "secretsmanager",
+      "resource_type": "secret.secrets_manager",
+      "identifier": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "prod/payroll-api-key"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "secretsmanager",
+      "resource_type": "secret.secrets_manager",
+      "identifier": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/finance-db-password",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "prod/finance-db-password"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "secretsmanager",
+      "resource_type": "secret.secrets_manager",
+      "identifier": "arn:aws:secretsmanager:us-east-1:123456789012:secret:archive/payroll-history",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "archive/payroll-history"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "secretsmanager",
+      "resource_type": "secret.secrets_manager",
+      "identifier": "arn:aws:secretsmanager:us-east-1:123456789012:secret:reports/quarterly-slack-webhook",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "reports/quarterly-slack-webhook"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "ssm",
+      "resource_type": "secret.ssm_parameter",
+      "identifier": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "/prod/payroll/api_key",
+        "path_prefix": "/prod"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "ssm",
+      "resource_type": "secret.ssm_parameter",
+      "identifier": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/finance/reporting_key",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "/prod/finance/reporting_key",
+        "path_prefix": "/prod"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "ssm",
+      "resource_type": "secret.ssm_parameter",
+      "identifier": "arn:aws:ssm:us-east-1:123456789012:parameter/shared/reporting/webhook",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "/shared/reporting/webhook",
+        "path_prefix": "/shared"
+      },
+      "source": "synthetic"
+    }
+  ],
+  "evidence": [
+    {
+      "service": "iam",
+      "api_calls": [
+        "sts:GetCallerIdentity",
+        "iam:ListRoles"
+      ]
+    },
+    {
+      "service": "s3",
+      "api_calls": [
+        "s3:ListBuckets",
+        "s3:ListBucket"
+      ]
+    },
+    {
+      "service": "secretsmanager",
+      "api_calls": [
+        "secretsmanager:ListSecrets"
+      ]
+    },
+    {
+      "service": "ssm",
+      "api_calls": [
+        "ssm:GetParametersByPath"
+      ]
+    }
+  ],
+  "summary": {
+    "roles": 7,
+    "buckets": 5,
+    "objects": 7,
+    "secrets": 4,
+    "parameters": 3
+  }
+}

@@ -1,0 +1,193 @@
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+from core.domain import Objective
+from operations.catalog import get_profile
+from operations.models import AuthorizationConfig, TargetConfig
+from operations.service import build_campaign_scope, validate_profile_access, validate_target
+
+
+def synthesize_foundation_campaigns(
+    *,
+    candidates_payload: dict,
+    target: TargetConfig,
+    authorization: AuthorizationConfig,
+    output_dir: Path,
+    max_plans_per_profile: int = 1,
+    profile_resolver=None,
+) -> tuple[Path, Path, dict]:
+    profile_resolver = profile_resolver or get_profile
+    issues = validate_target(target)
+    if issues:
+        raise ValueError("; ".join(issues))
+
+    grouped: dict[str, list[dict]] = {}
+    for candidate in candidates_payload.get("candidates", []):
+        grouped.setdefault(candidate["profile_family"], []).append(candidate)
+
+    plans: list[dict] = []
+    generated_dir = output_dir / "generated"
+    generated_dir.mkdir(parents=True, exist_ok=True)
+
+    for profile_name, candidates in grouped.items():
+        validate_profile_access(profile_name, authorization)
+        profile = profile_resolver(profile_name)
+        base_scope = build_campaign_scope(profile, target, authorization)
+        base_objective = Objective.model_validate_json(profile.objective_path.read_text())
+        ordered = sorted(candidates, key=lambda item: (-item["score"], item["resource_arn"]))
+
+        for candidate in ordered[:max_plans_per_profile]:
+            candidate_slug = _slugify(candidate["resource_arn"])
+            candidate_dir = generated_dir / profile_name / candidate_slug
+            candidate_dir.mkdir(parents=True, exist_ok=True)
+
+            objective = base_objective.model_copy(deep=True)
+            objective.target = candidate["resource_arn"]
+            objective.description = (
+                f"Auto-generated campaign for {profile_name} against {candidate['resource_arn']}"
+            )
+            success_criteria = dict(objective.success_criteria)
+            success_criteria["target_candidate_id"] = candidate["id"]
+            objective.success_criteria = success_criteria
+
+            scope_data = base_scope.model_dump()
+            allowed_resources = list(scope_data["allowed_resources"])
+            if candidate["resource_arn"] not in allowed_resources:
+                allowed_resources.append(candidate["resource_arn"])
+            scope_data["allowed_resources"] = sorted(set(allowed_resources))
+            scope_data["aws_account_ids"] = _merge_account_ids(
+                scope_data.get("aws_account_ids", []),
+                scope_data["allowed_resources"],
+                candidate["resource_arn"],
+            )
+            scope_data["allowed_regions"] = _merge_regions(
+                scope_data.get("allowed_regions", []),
+                scope_data["allowed_resources"],
+                candidate["resource_arn"],
+            )
+            scope = base_scope.model_validate(scope_data)
+
+            objective_path = candidate_dir / "objective.generated.json"
+            scope_path = candidate_dir / "scope.generated.json"
+            objective_path.write_text(json.dumps(objective.model_dump(), indent=2))
+            scope_path.write_text(json.dumps(scope.model_dump(), indent=2))
+
+            plans.append(
+                {
+                    "id": f"{profile_name}:{candidate_slug}",
+                    "profile": profile_name,
+                    "target_candidate_id": candidate["id"],
+                    "resource_arn": candidate["resource_arn"],
+                    "priority": _priority_for_score(candidate["score"]),
+                    "planned_services": scope.allowed_services,
+                    "generated_objective": str(objective_path),
+                    "generated_scope": str(scope_path),
+                    "confidence": candidate["confidence"],
+                    "score": candidate["score"],
+                }
+            )
+
+    payload = {
+        "target": target.name,
+        "bundle": candidates_payload.get("bundle"),
+        "derived_from": "target_candidates.json",
+        "summary": {
+            "plans_total": len(plans),
+            "by_profile": _count_by_profile(plans),
+        },
+        "plans": plans,
+    }
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / "campaign_plan.json"
+    md_path = output_dir / "campaign_plan.md"
+    json_path.write_text(json.dumps(payload, indent=2))
+    md_path.write_text(_render_campaign_plan_markdown(payload))
+    return json_path, md_path, payload
+
+
+def _priority_for_score(score: int) -> str:
+    if score >= 90:
+        return "high"
+    if score >= 45:
+        return "medium"
+    return "low"
+
+
+def _count_by_profile(plans: list[dict]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for plan in plans:
+        counts[plan["profile"]] = counts.get(plan["profile"], 0) + 1
+    return counts
+
+
+def _slugify(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")[:80]
+
+
+def _render_campaign_plan_markdown(payload: dict) -> str:
+    lines = [
+        "# Campaign Plan",
+        "",
+        f"- Target: {payload['target']}",
+        f"- Bundle: {payload['bundle']}",
+        f"- Plans total: {payload['summary']['plans_total']}",
+        "",
+        "## Plans",
+        "",
+    ]
+    for plan in payload["plans"]:
+        lines.append(
+            f"- {plan['profile']}: priority={plan['priority']} confidence={plan['confidence']} target={plan['resource_arn']}"
+        )
+        lines.append(f"  objective={plan['generated_objective']}")
+        lines.append(f"  scope={plan['generated_scope']}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _merge_account_ids(
+    configured_accounts: list[str],
+    allowed_resources: list[str],
+    candidate_resource: str,
+) -> list[str]:
+    accounts = set(configured_accounts)
+    for resource in [*allowed_resources, candidate_resource]:
+        account_id = _extract_account_id(resource)
+        if account_id:
+            accounts.add(account_id)
+    return sorted(accounts)
+
+
+def _merge_regions(
+    configured_regions: list[str],
+    allowed_resources: list[str],
+    candidate_resource: str,
+) -> list[str]:
+    regions = set(configured_regions)
+    for resource in [*allowed_resources, candidate_resource]:
+        region = _extract_region(resource)
+        if region:
+            regions.add(region)
+    return sorted(regions)
+
+
+def _extract_account_id(resource_arn: str) -> str | None:
+    if not resource_arn.startswith("arn:aws:"):
+        return None
+    parts = resource_arn.split(":")
+    if len(parts) < 5:
+        return None
+    return parts[4] or None
+
+
+def _extract_region(resource_arn: str) -> str | None:
+    if not resource_arn.startswith("arn:aws:"):
+        return None
+    parts = resource_arn.split(":")
+    if len(parts) < 4:
+        return None
+    return parts[3] or None

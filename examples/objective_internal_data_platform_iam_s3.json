@@ -1,0 +1,7 @@
+{
+  "description": "Prove an IAM path to a selected S3 object in the internal data platform environment.",
+  "target": "arn:aws:s3:::idp-prod-payroll-data/payroll/2026-03.csv",
+  "success_criteria": {
+    "flag": "foundation_s3"
+  }
+}

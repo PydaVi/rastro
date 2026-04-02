@@ -165,10 +165,96 @@ Status: em progresso
 **Trilha paralela — MVP operacional do foundation**
 - `profile list` para catálogo operacional
 - `target validate` para validar configuração do assessment
+- `preflight validate` para validar acesso antes do run
 - `campaign run` para executar um profile do foundation
 - `assessment run` para orquestrar bundle `aws-foundation`
 - consolidar outputs por campanha e assessment
+- status operacional explícito por campanha
+- resumo executivo estável em `assessment.json` e `assessment.md`
 Status: em progresso
+
+Marco atual:
+- catálogo operacional implementado
+- target validation implementado
+- preflight validation implementado
+- campaign run implementado
+- assessment run implementado
+- consolidação resiliente implementada
+- pendente: validação ponta a ponta do bundle `aws-foundation`
+Atualização:
+- `assessment run --bundle aws-foundation` validado ponta a ponta em AWS real
+- artefatos consolidados gerados em `outputs_assessment_aws_foundation_openai/`
+- resultado observado: `assessment_ok=true`, 4/4 campanhas `passed`
+
+**Próximo bloco do Produto 01 — Discovery + Target Selection**
+- discovery controlado por target/profile
+- classificação de recursos descobertos
+- ranking auditável de alvos por classe
+- síntese automática de campanhas a partir de candidatos
+- integração dessa camada ao `assessment run`
+Documento de desenho: `docs/product01-discovery-target-selection.md`
+Status: planejado
+Base de escala sintética: `docs/synthetic-aws-environments.md`
+
+Backlog do bloco:
+- Bloco 1: discovery foundation (S3, Secrets, SSM, IAM roles)
+- Bloco 2: target selection foundation
+- Bloco 3: campaign synthesis foundation
+- Bloco 4: assessment discovery-driven
+Status do bloco 1:
+- `discovery run --bundle aws-foundation` implementado
+- artefatos `discovery.json` e `discovery.md` implementados
+- validacao ponta a ponta em AWS real concluida
+- ajuste estrutural aplicado apos validacao:
+  - filtro de service-linked roles
+  - correcao de ARN para parametros SSM
+- pendente: refinamento de limites/heuristicas
+Status do bloco 2:
+- `target-selection run` implementado
+- artefatos `target_candidates.json` e `target_candidates.md` implementados
+- validado sobre o discovery real do `aws-foundation`
+- resultado observado: 15 candidatos, 5 `high confidence`
+- pendente: refinamento de heuristicas e reducao de ruido lexical
+Status do bloco 3:
+- `campaign-synthesis run` implementado
+- artefatos `campaign_plan.json` e `campaign_plan.md` implementados
+- objetivos e scopes gerados automaticamente por candidato
+- validado sobre candidatos reais do `aws-foundation`
+- resultado observado: 4 planos gerados, um por profile
+- ajuste aplicado: role chaining agora prioriza `DataAccessRole` sobre roles de auditoria
+- pendente: integrar `CampaignPlan[]` ao `assessment run`
+Status do bloco 4:
+- `assessment run --bundle aws-foundation --discovery-driven` implementado
+- pipeline completo validado em AWS real
+- artefatos encadeados preservados no assessment
+- resultado observado: `assessment_ok=true`, 4/4 campanhas `passed`
+- proximo gap real: refinar reachability/pruning e heuristicas de target selection
+
+Próxima base de escala para o Produto 01:
+- `internal-data-platform` (foundation em escala)
+- `serverless-business-app` (advanced serverless)
+- `compute-pivot-app` (advanced compute/external entry)
+
+Sequência recomendada:
+1. Implementar `internal-data-platform` variantes A/B/C
+2. Revalidar pipeline discovery-driven em ambiente sintético maior
+3. Só então avançar para `serverless-business-app`
+Status atual:
+- Variante A implementada em `fixtures/internal_data_platform_variant_a.discovery.json`
+- validada no target selection foundation
+- Variante B implementada em `fixtures/internal_data_platform_variant_b.discovery.json`
+- Variante C implementada em `fixtures/internal_data_platform_variant_c.discovery.json`
+- autorun de `target-selection run` executado nas tres variantes
+- resultados observados:
+  - A: 17 candidatos
+  - B: 20 candidatos
+  - C: 20 candidatos
+- validacao end-to-end discovery-driven concluida nas tres variantes
+- resultado observado:
+  - A: `campaigns_passed=4/4`
+  - B: `campaigns_passed=4/4`
+  - C: `campaigns_passed=4/4`
+- descoberta arquitetural registrada em `docs/experiments/EXP-032-internal-data-platform-discovery-driven.md`
 
 **5. Qualidade do Produto 01**
 - relatório técnico e executivo

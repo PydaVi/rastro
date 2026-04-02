@@ -32,14 +32,37 @@ class ProfileDefinition(BaseModel):
 
 
 class CampaignResult(BaseModel):
+    status: Literal["passed", "objective_not_met", "preflight_failed", "run_failed"]
     profile: str
     output_dir: Path
+    generated_scope: Path
     objective_met: bool
-    report_json: Path
-    report_md: Path
+    preflight_ok: bool = True
+    preflight_details: dict = Field(default_factory=dict)
+    error: str | None = None
+    report_json: Path | None = None
+    report_md: Path | None = None
+
+
+class AssessmentFinding(BaseModel):
+    id: str
+    title: str
+    profile: str
+    severity: str
+    confidence: str
+    status: Literal["validated"] = "validated"
+    target_resource: str
+    entry_point: str | None = None
+    path_summary: str = ""
+    services_involved: list[str] = Field(default_factory=list)
+    evidence_summary: str = ""
+    mitre_techniques: list[str] = Field(default_factory=list)
 
 
 class AssessmentResult(BaseModel):
     bundle: str
     target: str
+    summary: dict = Field(default_factory=dict)
+    artifacts: dict = Field(default_factory=dict)
+    findings: list[AssessmentFinding] = Field(default_factory=list)
     campaigns: list[CampaignResult]

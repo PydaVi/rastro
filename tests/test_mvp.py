@@ -1,9 +1,10 @@
+import json
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from app.main import _build_execution_surface, app, run
+from app.main import _build_execution_surface, app, execute_run, run
 from core.attack_graph import AttackGraph
 from core.audit import AuditLogger
 from core.domain import Action, ActionType, Decision, Objective, Observation, Scope
@@ -12,6 +13,7 @@ from execution.aws_executor import AwsRealExecutor, AwsRealExecutorStub
 from core.state import StateManager
 from reporting.report import ReportGenerator
 from execution.scope_enforcer import ScopeEnforcer
+from execution.preflight import run_preflight
 from core.fixture import Fixture
 from core.sanitizer import write_sanitized_artifacts
 from core.tool_registry import ToolRegistry
@@ -20,7 +22,14 @@ from operations.service import (
     load_target,
     run_assessment,
     run_campaign,
+    run_discovery_driven_assessment,
+    write_assessment_summary,
 )
+from operations.models import AssessmentResult, CampaignResult
+from operations.discovery import run_foundation_discovery
+from operations.campaign_synthesis import synthesize_foundation_campaigns
+from operations.synthetic_catalog import get_synthetic_profile
+from operations.target_selection import select_foundation_targets
 from planner.action_shaping import shape_available_actions
 from planner.ollama_planner import OllamaPlanner
 from planner.openai_planner import _parse_response as parse_openai_response
@@ -134,12 +143,22 @@ class FakeAwsClient:
     def list_objects(self, region: str, bucket: str, prefix=None, credentials=None):
         return ["payroll.csv", "notes.txt"]
 
+    def list_buckets(self, region: str, credentials=None):
+        return ["sensitive-finance-data", "public-reports"]
+
     def list_secrets(self, region: str, name_prefix=None, credentials=None):
         if name_prefix == "prod/":
             return ["prod/payroll-api-key"]
         if name_prefix == "archive/":
             return ["archive/payroll-history"]
         return ["reports/quarterly-summary"]
+
+    def list_parameters_by_path(self, region: str, path: str, credentials=None):
+        if path == "/prod":
+            return ["/prod/payroll/api_key"]
+        if path == "/finance":
+            return ["/finance/quarterly/reporting_key"]
+        return []
 
     def get_secret_value(self, region: str, secret_id: str, credentials=None):
         return {
@@ -446,6 +465,627 @@ def test_target_validate_cli_accepts_foundation_target(tmp_path: Path) -> None:
     assert "Target valid: local-aws-lab" in result.stdout
 
 
+def test_preflight_validate_cli_accepts_dry_run_scope(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    scope_path = repo_root / "examples" / "scope_aws_dry_run.json"
+
+    result = runner.invoke(app, ["preflight", "validate", "--scope", str(scope_path)])
+
+    assert result.exit_code == 0
+    assert '"ok": true' in result.stdout
+    assert '"mode": "skipped"' in result.stdout
+
+
+def test_run_foundation_discovery_writes_artifacts(tmp_path: Path) -> None:
+    target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
+    authorization_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path)
+
+    discovery_json, discovery_md, snapshot = run_foundation_discovery(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        client=FakeAwsClient(),
+    )
+
+    assert discovery_json.exists()
+    assert discovery_md.exists()
+    assert snapshot["summary"]["roles"] >= 1
+    assert snapshot["summary"]["buckets"] == 2
+    assert snapshot["summary"]["secrets"] == 1
+    assert snapshot["summary"]["parameters"] == 2
+    assert all(":role/aws-service-role/" not in resource["identifier"] for resource in snapshot["resources"])
+    assert any(
+        resource["identifier"] == "arn:aws:ssm:us-east-1:550192603632:parameter/prod/payroll/api_key"
+        for resource in snapshot["resources"]
+        if resource["resource_type"] == "secret.ssm_parameter"
+    )
+
+
+def test_discovery_run_cli_reports_artifacts(tmp_path: Path, monkeypatch) -> None:
+    target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
+    authorization_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+
+    def fake_discovery(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text("{}")
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, {"resources": [1, 2, 3]}
+
+    monkeypatch.setattr("app.main.run_foundation_discovery", fake_discovery)
+
+    result = runner.invoke(
+        app,
+        [
+            "discovery",
+            "run",
+            "--bundle",
+            "aws-foundation",
+            "--target",
+            str(target_path),
+            "--authorization",
+            str(authorization_path),
+            "--out",
+            str(tmp_path / "discovery"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Discovery JSON:" in result.stdout
+    assert "Discovery resources: 3" in result.stdout
+
+
+def test_select_foundation_targets_scores_sensitive_resources(tmp_path: Path) -> None:
+    discovery_snapshot = {
+        "target": "local-aws-lab",
+        "bundle": "aws-foundation",
+        "resources": [
+            {
+                "service": "s3",
+                "resource_type": "data_store.s3_object",
+                "identifier": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+                "region": "us-east-1",
+                "metadata": {"bucket": "sensitive-finance-data", "object_key": "payroll.csv"},
+            },
+            {
+                "service": "secretsmanager",
+                "resource_type": "secret.secrets_manager",
+                "identifier": "arn:aws:secretsmanager:us-east-1:550192603632:secret:prod/payroll-api-key",
+                "region": "us-east-1",
+                "metadata": {"name": "prod/payroll-api-key"},
+            },
+            {
+                "service": "ssm",
+                "resource_type": "secret.ssm_parameter",
+                "identifier": "arn:aws:ssm:us-east-1:550192603632:parameter/prod/payroll/api_key",
+                "region": "us-east-1",
+                "metadata": {"name": "/prod/payroll/api_key"},
+            },
+            {
+                "service": "iam",
+                "resource_type": "identity.role",
+                "identifier": "arn:aws:iam::550192603632:role/DataAccessRole",
+                "region": "us-east-1",
+                "metadata": {},
+            },
+        ],
+    }
+
+    json_path, md_path, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+    )
+
+    assert json_path.exists()
+    assert md_path.exists()
+    assert payload["summary"]["candidates_total"] == 4
+    secrets_candidate = next(
+        candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-secrets"
+    )
+    role_candidate = next(
+        candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-role-chaining"
+    )
+    assert secrets_candidate["confidence"] == "high"
+    assert "keyword:payroll" in secrets_candidate["selection_reason"]
+    assert role_candidate["resource_arn"].endswith(":role/DataAccessRole")
+
+
+def test_target_selection_run_cli_reports_artifacts(tmp_path: Path) -> None:
+    discovery_path = tmp_path / "discovery.json"
+    discovery_path.write_text(
+        json.dumps(
+            {
+                "target": "local-aws-lab",
+                "bundle": "aws-foundation",
+                "resources": [
+                    {
+                        "service": "s3",
+                        "resource_type": "data_store.s3_object",
+                        "identifier": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+                        "region": "us-east-1",
+                        "metadata": {},
+                    }
+                ],
+            }
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "target-selection",
+            "run",
+            "--discovery",
+            str(discovery_path),
+            "--out",
+            str(tmp_path / "targets"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Target Candidates JSON:" in result.stdout
+    assert "Target Candidates total:" in result.stdout
+
+
+def test_synthesize_foundation_campaigns_writes_generated_scope_and_objective(tmp_path: Path) -> None:
+    target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
+    authorization_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path)
+    candidates_payload = {
+        "bundle": "aws-foundation",
+        "candidates": [
+            {
+                "id": "aws-iam-secrets:arn:aws:secretsmanager:us-east-1:550192603632:secret:prod/payroll-api-key",
+                "resource_arn": "arn:aws:secretsmanager:us-east-1:550192603632:secret:prod/payroll-api-key",
+                "resource_type": "secret.secrets_manager",
+                "profile_family": "aws-iam-secrets",
+                "score": 110,
+                "confidence": "high",
+            }
+        ],
+    }
+
+    json_path, md_path, payload = synthesize_foundation_campaigns(
+        candidates_payload=candidates_payload,
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+    )
+
+    assert json_path.exists()
+    assert md_path.exists()
+    assert payload["summary"]["plans_total"] == 1
+    plan = payload["plans"][0]
+    generated_objective = Path(plan["generated_objective"])
+    generated_scope = Path(plan["generated_scope"])
+    assert generated_objective.exists()
+    assert generated_scope.exists()
+    assert "prod/payroll-api-key" in generated_objective.read_text()
+    assert "prod/payroll-api-key" in generated_scope.read_text()
+
+
+def test_campaign_synthesis_run_cli_reports_artifacts(tmp_path: Path) -> None:
+    target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
+    authorization_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    candidates_path = tmp_path / "target_candidates.json"
+    candidates_path.write_text(
+        json.dumps(
+            {
+                "bundle": "aws-foundation",
+                "candidates": [
+                    {
+                        "id": "aws-iam-s3:arn:aws:s3:::sensitive-finance-data/payroll.csv",
+                        "resource_arn": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+                        "resource_type": "data_store.s3_object",
+                        "profile_family": "aws-iam-s3",
+                        "score": 90,
+                        "confidence": "high",
+                    }
+                ],
+            }
+        )
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "campaign-synthesis",
+            "run",
+            "--candidates",
+            str(candidates_path),
+            "--target",
+            str(target_path),
+            "--authorization",
+            str(authorization_path),
+            "--out",
+            str(tmp_path / "campaign-plan"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Campaign Plan JSON:" in result.stdout
+    assert "Campaign Plans total: 1" in result.stdout
+
+
+def test_internal_data_platform_variant_a_drives_foundation_targets(tmp_path: Path) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "internal_data_platform_variant_a.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+    )
+
+    top_s3 = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-s3")
+    top_secret = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-secrets")
+    top_ssm = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-ssm")
+
+    assert top_s3["resource_arn"] == "arn:aws:s3:::idp-prod-payroll-data/payroll/2026-03.csv"
+    assert top_secret["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key"
+    assert top_ssm["resource_arn"] == "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key"
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "expected_role"),
+    [
+        ("internal_data_platform_variant_b.discovery.json", "arn:aws:iam::123456789012:role/PayrollDataAccessRole"),
+        ("internal_data_platform_variant_c.discovery.json", "arn:aws:iam::123456789012:role/PayrollDataAccessRole"),
+    ],
+)
+def test_internal_data_platform_variants_b_c_keep_data_access_role_on_top(
+    tmp_path: Path, fixture_name: str, expected_role: str
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / fixture_name).read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+    )
+
+    role_candidate = next(
+        candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-role-chaining"
+    )
+    assert role_candidate["resource_arn"] == expected_role
+
+
+def test_state_snapshot_derives_tool_postcondition_flags() -> None:
+    fixture = Fixture.load(Path(__file__).resolve().parents[1] / "fixtures" / "internal_data_platform_iam_s3_lab.json")
+    scope = Scope.model_validate_json(
+        (Path(__file__).resolve().parents[1] / "examples" / "scope_internal_data_platform_iam_s3.json").read_text()
+    )
+    tool_registry = ToolRegistry.load(Path(__file__).resolve().parents[1] / "tools")
+    state = StateManager(
+        objective=Objective.model_validate_json(
+            (Path(__file__).resolve().parents[1] / "examples" / "objective_internal_data_platform_iam_s3.json").read_text()
+        ),
+        scope=scope,
+        fixture=AwsDryRunLab.from_fixture(fixture, scope),
+        tool_registry=tool_registry,
+    )
+    first_action = fixture.enumerate_actions(None)[0]
+    observation = fixture.execute(first_action)
+    state.apply_observation(first_action, observation, "enumerated roles")
+
+    snapshot = state.snapshot()
+    assert "iam_roles_listed" in snapshot.fixture_state["flags"]
+
+
+def test_state_marks_objective_met_when_successful_action_hits_objective_target() -> None:
+    fixture = Fixture.load(Path(__file__).resolve().parents[1] / "fixtures" / "internal_data_platform_iam_s3_lab.json")
+    scope = Scope.model_validate_json(
+        (Path(__file__).resolve().parents[1] / "examples" / "scope_internal_data_platform_iam_s3.json").read_text()
+    )
+    objective = Objective.model_validate_json(
+        (Path(__file__).resolve().parents[1] / "examples" / "objective_internal_data_platform_iam_s3.json").read_text()
+    )
+    tool_registry = ToolRegistry.load(Path(__file__).resolve().parents[1] / "tools")
+    state = StateManager(
+        objective=objective,
+        scope=scope,
+        fixture=AwsDryRunLab.from_fixture(fixture, scope),
+        tool_registry=tool_registry,
+    )
+
+    enumerate_action = fixture.enumerate_actions(None)[0]
+    state.apply_observation(enumerate_action, fixture.execute(enumerate_action), "enumerated roles")
+    assume_action = next(
+        action
+        for action in fixture.enumerate_actions(None)
+        if action.action_type == ActionType.ASSUME_ROLE
+        and action.target == "arn:aws:iam::123456789012:role/PlatformAuditRole"
+    )
+    state.apply_observation(assume_action, fixture.execute(assume_action), "assumed role")
+    access_action = next(
+        action
+        for action in fixture.enumerate_actions(None)
+        if action.action_type == ActionType.ACCESS_RESOURCE
+        and action.target == "arn:aws:s3:::idp-prod-payroll-data/payroll/2026-03.csv"
+    )
+    state.apply_observation(access_action, fixture.execute(access_action), "read payroll object")
+
+    assert state.is_objective_met() is True
+
+
+def test_campaign_synthesis_merges_scope_accounts_from_candidate_resources(tmp_path: Path) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+
+    _, _, payload = synthesize_foundation_campaigns(
+        candidates_payload={
+            "bundle": "aws-foundation",
+            "candidates": [
+                {
+                    "id": "aws-iam-s3:arn:aws:s3:::idp-prod-payroll-data/payroll/2026-03.csv",
+                    "profile_family": "aws-iam-s3",
+                    "resource_arn": "arn:aws:s3:::idp-prod-payroll-data/payroll/2026-03.csv",
+                    "score": 85,
+                    "confidence": "high",
+                }
+            ],
+        },
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        profile_resolver=lambda name: get_synthetic_profile("internal-data-platform", name),
+    )
+
+    generated_scope = Path(payload["plans"][0]["generated_scope"])
+    scope = Scope.model_validate_json(generated_scope.read_text())
+    assert "123456789012" in scope.aws_account_ids
+    assert "550192603632" in scope.aws_account_ids
+
+
+@pytest.mark.parametrize(
+    "variant_name",
+    [
+        "internal_data_platform_variant_a.discovery.json",
+        "internal_data_platform_variant_b.discovery.json",
+        "internal_data_platform_variant_c.discovery.json",
+    ],
+)
+def test_internal_data_platform_variants_support_discovery_driven_end_to_end(
+    tmp_path: Path, variant_name: str
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / variant_name).read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / variant_name.replace(".discovery.json", ""),
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=lambda name: get_synthetic_profile("internal-data-platform", name),
+        max_steps=8,
+    )
+
+    assert assessment.summary["campaigns_total"] == 4
+    assert assessment.summary["campaigns_passed"] == 4
+
+
+def test_run_discovery_driven_assessment_generates_artifacts_and_campaigns(tmp_path: Path) -> None:
+    target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
+    authorization_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path)
+
+    def fake_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        report_json = output_dir / "report.json"
+        report_md = output_dir / "report.md"
+        graph = output_dir / "attack_graph.mmd"
+        report_json.write_text("{}")
+        report_md.write_text("# report\n")
+        graph.write_text("graph TD\n")
+        return {
+            "objective_met": True,
+            "preflight": {"ok": True, "details": {"account_id": "550192603632"}},
+            "report_json": report_json,
+            "report_md": report_md,
+            "attack_graph": graph,
+        }
+
+    def fake_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text("{}")
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, {"target": "local-aws-lab", "bundle": "aws-foundation", "resources": []}
+
+    def fake_target_selector(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        candidates_json = output_dir / "target_candidates.json"
+        candidates_md = output_dir / "target_candidates.md"
+        candidates_json.write_text("{}")
+        candidates_md.write_text("# candidates\n")
+        return candidates_json, candidates_md, {
+            "bundle": "aws-foundation",
+            "candidates": [
+                {
+                    "id": "aws-iam-s3:arn:aws:s3:::sensitive-finance-data/payroll.csv",
+                    "profile_family": "aws-iam-s3",
+                    "resource_arn": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+                    "score": 90,
+                    "confidence": "high",
+                },
+                {
+                    "id": "aws-iam-secrets:arn:aws:secretsmanager:us-east-1:550192603632:secret:prod/payroll-api-key",
+                    "profile_family": "aws-iam-secrets",
+                    "resource_arn": "arn:aws:secretsmanager:us-east-1:550192603632:secret:prod/payroll-api-key",
+                    "score": 110,
+                    "confidence": "high",
+                },
+                {
+                    "id": "aws-iam-ssm:arn:aws:ssm:us-east-1:550192603632:parameter/prod/payroll/api_key",
+                    "profile_family": "aws-iam-ssm",
+                    "resource_arn": "arn:aws:ssm:us-east-1:550192603632:parameter/prod/payroll/api_key",
+                    "score": 105,
+                    "confidence": "high",
+                },
+                {
+                    "id": "aws-iam-role-chaining:arn:aws:iam::550192603632:role/DataAccessRole",
+                    "profile_family": "aws-iam-role-chaining",
+                    "resource_arn": "arn:aws:iam::550192603632:role/DataAccessRole",
+                    "score": 40,
+                    "confidence": "medium",
+                },
+            ],
+        }
+
+    def fake_campaign_synthesizer(**kwargs):
+        output_dir = kwargs["output_dir"]
+        generated = output_dir / "generated"
+        generated.mkdir(parents=True, exist_ok=True)
+        campaign_plan_json = output_dir / "campaign_plan.json"
+        campaign_plan_md = output_dir / "campaign_plan.md"
+        campaign_plan_json.write_text("{}")
+        campaign_plan_md.write_text("# plan\n")
+        plans = []
+        for candidate in kwargs["candidates_payload"]["candidates"]:
+            profile = candidate["profile_family"]
+            plan_dir = generated / profile
+            plan_dir.mkdir(parents=True, exist_ok=True)
+            objective = plan_dir / "objective.generated.json"
+            scope = plan_dir / "scope.generated.json"
+            objective.write_text("{}")
+            scope.write_text("{}")
+            plans.append(
+                {
+                    "profile": profile,
+                    "generated_objective": str(objective),
+                    "generated_scope": str(scope),
+                }
+            )
+        return campaign_plan_json, campaign_plan_md, {"plans": plans}
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "assessment",
+        runner=fake_runner,
+        discovery_runner=fake_discovery_runner,
+        target_selector=fake_target_selector,
+        campaign_synthesizer=fake_campaign_synthesizer,
+    )
+
+    assert assessment.summary["assessment_ok"] is True
+    assert len(assessment.campaigns) == 4
+    assert "discovery_json" in assessment.artifacts
+    assert Path(assessment.artifacts["campaign_plan_json"]).exists()
+
+
+def test_assessment_run_cli_supports_discovery_driven(tmp_path: Path, monkeypatch) -> None:
+    target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
+    authorization_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+
+    def fake_discovery_assessment(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        campaign_dir = output_dir / "campaigns" / "aws-iam-s3"
+        campaign_dir.mkdir(parents=True, exist_ok=True)
+        (campaign_dir / "report.json").write_text(
+            json.dumps(
+                {
+                    "objective": {"target": "arn:aws:s3:::sensitive-finance-data/payroll.csv"},
+                    "executive_summary": {
+                        "initial_identity": "arn:aws:iam::550192603632:user/brainctl-user",
+                        "final_resource": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+                    },
+                    "execution_policy": {"allowed_services": ["iam", "sts", "s3"]},
+                    "mitre_techniques": [],
+                    "steps": [],
+                }
+            )
+        )
+        (campaign_dir / "report.md").write_text("# report\n")
+        return AssessmentResult(
+            bundle="aws-foundation",
+            target="local-aws-lab",
+            summary={"assessment_ok": True, "campaigns_total": 1},
+            artifacts={"discovery_json": str(output_dir / "discovery.json")},
+            campaigns=[
+                CampaignResult(
+                    status="passed",
+                    profile="aws-iam-s3",
+                    output_dir=campaign_dir,
+                    generated_scope=campaign_dir / "scope.generated.json",
+                    objective_met=True,
+                    preflight_ok=True,
+                    report_json=campaign_dir / "report.json",
+                    report_md=campaign_dir / "report.md",
+                )
+            ],
+        )
+
+    monkeypatch.setattr("app.main.run_discovery_driven_assessment", fake_discovery_assessment)
+
+    result = runner.invoke(
+        app,
+        [
+            "assessment",
+            "run",
+            "--bundle",
+            "aws-foundation",
+            "--target",
+            str(target_path),
+            "--authorization",
+            str(authorization_path),
+            "--out",
+            str(tmp_path / "assessment"),
+            "--discovery-driven",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Assessment JSON:" in result.stdout
+    assert "Assessment MD:" in result.stdout
+    assert "Findings JSON:" in result.stdout
+    assert "Findings MD:" in result.stdout
+
+
 def test_campaign_and_assessment_orchestration_use_runner(tmp_path: Path) -> None:
     target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
     authorization_path = (
@@ -467,6 +1107,7 @@ def test_campaign_and_assessment_orchestration_use_runner(tmp_path: Path) -> Non
         graph.write_text("graph TD\n")
         return {
             "objective_met": True,
+            "preflight": {"ok": True, "details": {"account_id": "550192603632"}},
             "report_json": report_json,
             "report_md": report_md,
             "attack_graph": graph,
@@ -488,9 +1129,232 @@ def test_campaign_and_assessment_orchestration_use_runner(tmp_path: Path) -> Non
     )
 
     assert campaign.objective_met is True
+    assert campaign.status == "passed"
+    assert campaign.preflight_ok is True
     assert calls[0]["fixture_path"].name == "aws_role_choice_lab.local.json"
     assert (tmp_path / "campaign" / "aws-iam-s3.scope.json").exists()
     assert len(assessment.campaigns) == 4
+    assert assessment.summary["campaigns_total"] == 4
+    assert assessment.summary["assessment_ok"] is True
+
+
+def test_write_assessment_summary_includes_preflight_and_scope(tmp_path: Path) -> None:
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir(parents=True, exist_ok=True)
+    (campaign_dir / "report.json").write_text(
+        json.dumps(
+            {
+                "objective": {
+                    "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+                },
+                "executive_summary": {
+                    "initial_identity": "arn:aws:iam::550192603632:user/brainctl-user",
+                    "final_resource": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+                    "proof": {
+                        "bucket": "sensitive-finance-data",
+                        "object_key": "payroll.csv",
+                    },
+                },
+                "execution_policy": {
+                    "allowed_services": ["iam", "sts", "s3"],
+                },
+                "mitre_techniques": [
+                    {"mitre_id": "T1530"},
+                ],
+                "steps": [
+                    {
+                        "action": {
+                            "actor": "arn:aws:iam::550192603632:user/brainctl-user",
+                            "target": "arn:aws:iam::550192603632:role/AuditRole",
+                        }
+                    },
+                    {
+                        "action": {
+                            "actor": "arn:aws:iam::550192603632:role/AuditRole",
+                            "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+                        }
+                    },
+                ],
+            }
+        )
+    )
+    (campaign_dir / "report.md").write_text("# report\n")
+
+    result = AssessmentResult(
+        bundle="aws-foundation",
+        target="local-aws-lab",
+        campaigns=[
+            CampaignResult(
+                status="passed",
+                profile="aws-iam-s3",
+                output_dir=campaign_dir,
+                generated_scope=campaign_dir / "aws-iam-s3.scope.json",
+                objective_met=True,
+                preflight_ok=True,
+                preflight_details={"account_id": "550192603632"},
+                report_json=campaign_dir / "report.json",
+                report_md=campaign_dir / "report.md",
+            )
+        ],
+    )
+
+    _, assessment_md = write_assessment_summary(result, tmp_path)
+
+    content = assessment_md.read_text()
+    assert result.summary["assessment_ok"] is True
+    assert "Campaigns preflight failed: 0" in content
+    assert "Assessment OK: True" in content
+    assert "Campaigns passed: 1" in content
+    assert "scope=" in content
+    assert "report=" in content
+    assert result.artifacts["assessment_findings_json"].endswith("assessment_findings.json")
+    findings_md = Path(result.artifacts["assessment_findings_md"])
+    assert findings_md.exists()
+    findings_content = findings_md.read_text()
+    assert "IAM -> S3 exposure" in findings_content
+    assert "s3://sensitive-finance-data/payroll.csv" in findings_content
+
+
+def test_run_campaign_marks_preflight_failure_without_crashing(tmp_path: Path) -> None:
+    target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
+    authorization_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path)
+
+    def fake_runner(**kwargs):
+        raise ValueError("AWS preflight failed: account mismatch")
+
+    campaign = run_campaign(
+        profile_name="aws-iam-s3",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "campaign",
+        runner=fake_runner,
+    )
+
+    assert campaign.status == "preflight_failed"
+    assert campaign.objective_met is False
+    assert campaign.report_md is None
+    assert "preflight failed" in campaign.error.lower()
+
+
+def test_run_assessment_preserves_failed_campaigns_and_continues(tmp_path: Path) -> None:
+    target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
+    authorization_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path)
+    calls = []
+
+    def fake_runner(**kwargs):
+        calls.append(kwargs["fixture_path"].name)
+        if "aws_role_choice_lab.local.json" in kwargs["fixture_path"].name:
+            raise RuntimeError("AWS preflight failed: account mismatch")
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        report_json = output_dir / "report.json"
+        report_md = output_dir / "report.md"
+        graph = output_dir / "attack_graph.mmd"
+        report_json.write_text("{}")
+        report_md.write_text("# report\n")
+        graph.write_text("graph TD\n")
+        return {
+            "objective_met": True,
+            "preflight": {"ok": True, "details": {"account_id": "550192603632"}},
+            "report_json": report_json,
+            "report_md": report_md,
+            "attack_graph": graph,
+        }
+
+    assessment = run_assessment(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "assessment",
+        runner=fake_runner,
+    )
+
+    assert len(assessment.campaigns) == 4
+    assert assessment.campaigns[0].status == "preflight_failed"
+    assert sum(1 for campaign in assessment.campaigns if campaign.status == "passed") == 3
+    assert assessment.summary["campaigns_preflight_failed"] == 1
+    assert assessment.summary["assessment_ok"] is False
+
+
+def test_preflight_accepts_allowed_account_and_roles() -> None:
+    scope = Scope.model_construct(
+        target="aws",
+        allowed_actions=[ActionType.ENUMERATE, ActionType.ASSUME_ROLE],
+        allowed_resources=[
+            "arn:aws:iam::123456789012:root",
+            "arn:aws:iam::123456789012:role/AuditRole",
+        ],
+        max_steps=5,
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+        planner=None,
+    )
+
+    result = run_preflight(scope, client=FakeAwsClient())
+
+    assert result.ok is True
+    assert result.details["account_id"] == "123456789012"
+
+
+def test_preflight_rejects_missing_role() -> None:
+    scope = Scope.model_construct(
+        target="aws",
+        allowed_actions=[ActionType.ENUMERATE, ActionType.ASSUME_ROLE],
+        allowed_resources=[
+            "arn:aws:iam::123456789012:root",
+            "arn:aws:iam::123456789012:role/DoesNotExistRole",
+        ],
+        max_steps=5,
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+        planner=None,
+    )
+
+    result = run_preflight(scope, client=FakeAwsClient())
+
+    assert result.ok is False
+    assert result.details["reason"] == "required_roles_missing"
+
+
+def test_report_includes_preflight_block(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture_path = repo_root / "fixtures" / "aws_dry_run_lab.json"
+    objective_path = repo_root / "examples" / "objective_aws_dry_run.json"
+    scope_path = repo_root / "examples" / "scope_aws_dry_run.json"
+
+    run(
+        fixture_path=fixture_path,
+        objective_path=objective_path,
+        scope_path=scope_path,
+        output_dir=tmp_path,
+        max_steps=5,
+        seed=1,
+    )
+
+    report = (tmp_path / "report.json").read_text()
+    report_md = (tmp_path / "report.md").read_text()
+
+    assert '"preflight"' in report
+    assert '"mode": "skipped"' in report
+    assert "## Preflight" in report_md
 
 def test_scope_enforcer_blocks_out_of_scope() -> None:
     scope = Scope(

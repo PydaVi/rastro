@@ -18,6 +18,10 @@ from planner.interface import Planner
 from execution.scope_enforcer import ScopeEnforcer
 from execution.executor import Executor
 from execution.aws_executor import AwsRealExecutor
+from execution.preflight import run_preflight
+from operations.campaign_synthesis import synthesize_foundation_campaigns
+from operations.discovery import run_foundation_discovery
+from operations.target_selection import select_foundation_targets
 from core.attack_graph import AttackGraph
 from core.audit import AuditLogger
 from core.sanitizer import write_sanitized_artifacts
@@ -28,6 +32,7 @@ from operations.service import (
     load_target,
     run_assessment,
     run_campaign,
+    run_discovery_driven_assessment,
     validate_target,
     write_assessment_summary,
 )
@@ -37,11 +42,19 @@ from reporting.report import ReportGenerator
 app = typer.Typer(add_completion=False)
 profile_app = typer.Typer(add_completion=False)
 target_app = typer.Typer(add_completion=False)
+preflight_app = typer.Typer(add_completion=False)
+discovery_app = typer.Typer(add_completion=False)
+target_selection_app = typer.Typer(add_completion=False)
+campaign_synthesis_app = typer.Typer(add_completion=False)
 campaign_app = typer.Typer(add_completion=False)
 assessment_app = typer.Typer(add_completion=False)
 
 app.add_typer(profile_app, name="profile")
 app.add_typer(target_app, name="target")
+app.add_typer(preflight_app, name="preflight")
+app.add_typer(discovery_app, name="discovery")
+app.add_typer(target_selection_app, name="target-selection")
+app.add_typer(campaign_synthesis_app, name="campaign-synthesis")
 app.add_typer(campaign_app, name="campaign")
 app.add_typer(assessment_app, name="assessment")
 
@@ -88,6 +101,11 @@ def execute_run(
     fixture = Fixture.load(fixture_path)
     _validate_run_inputs(fixture, objective, scope)
     environment = _build_environment(fixture, scope)
+    preflight = run_preflight(scope)
+    if not preflight.ok:
+        raise typer.BadParameter(
+            f"AWS preflight failed: {json.dumps(preflight.details, ensure_ascii=True)}"
+        )
 
     tool_registry = None
     tools_path = Path("tools")
@@ -133,6 +151,7 @@ def execute_run(
             "objective": objective.model_dump(),
             "scope": scope.model_dump(),
             "fixture": environment.metadata(),
+            "preflight": {"ok": preflight.ok, "details": preflight.details},
             "execution_policy": execution_policy,
             "max_steps": effective_max_steps,
         },
@@ -191,6 +210,7 @@ def execute_run(
         audit,
         state.initial_state(),
         state.is_objective_met(),
+        preflight={"ok": preflight.ok, "details": preflight.details},
     )
     report_json_path = output_dir / "report.json"
     report_md_path = output_dir / "report.md"
@@ -204,6 +224,7 @@ def execute_run(
         "run_complete",
         {
             "objective_met": state.is_objective_met(),
+            "preflight": {"ok": preflight.ok, "details": preflight.details},
             "report_json": str(report_json_path),
             "report_md": str(report_md_path),
             "attack_graph_mermaid": str(graph_path),
@@ -213,6 +234,7 @@ def execute_run(
 
     return {
         "objective_met": state.is_objective_met(),
+        "preflight": {"ok": preflight.ok, "details": preflight.details},
         "report_json": report_json_path,
         "report_md": report_md_path,
         "attack_graph": graph_path,
@@ -236,6 +258,83 @@ def target_validate(
     if issues:
         raise typer.BadParameter("; ".join(issues))
     typer.echo(f"Target valid: {target.name}")
+
+
+@preflight_app.command("validate")
+def preflight_validate(
+    scope_path: Path = typer.Option(..., "--scope"),
+) -> None:
+    scope = Scope.model_validate_json(scope_path.read_text())
+    result = run_preflight(scope)
+    typer.echo(json.dumps({"ok": result.ok, "details": result.details}, indent=2))
+    if not result.ok:
+        raise typer.Exit(code=1)
+
+
+@discovery_app.command("run")
+def discovery_run(
+    bundle_name: str = typer.Option(..., "--bundle"),
+    target_path: Path = typer.Option(..., "--target"),
+    authorization_path: Path = typer.Option(..., "--authorization"),
+    output_dir: Path = typer.Option(..., "--out"),
+) -> None:
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path)
+    issues = validate_target(target)
+    if issues:
+        raise typer.BadParameter("; ".join(issues))
+    discovery_json, discovery_md, snapshot = run_foundation_discovery(
+        bundle_name=bundle_name,
+        target=target,
+        authorization=authorization,
+        output_dir=output_dir,
+    )
+    typer.echo(f"Discovery JSON: {discovery_json}")
+    typer.echo(f"Discovery MD: {discovery_md}")
+    typer.echo(f"Discovery resources: {len(snapshot['resources'])}")
+
+
+@target_selection_app.command("run")
+def target_selection_run(
+    discovery_path: Path = typer.Option(..., "--discovery"),
+    output_dir: Path = typer.Option(..., "--out"),
+    max_candidates_per_profile: int = typer.Option(5, "--max-candidates-per-profile"),
+) -> None:
+    discovery_snapshot = json.loads(discovery_path.read_text())
+    candidates_json, candidates_md, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=output_dir,
+        max_candidates_per_profile=max_candidates_per_profile,
+    )
+    typer.echo(f"Target Candidates JSON: {candidates_json}")
+    typer.echo(f"Target Candidates MD: {candidates_md}")
+    typer.echo(f"Target Candidates total: {payload['summary']['candidates_total']}")
+
+
+@campaign_synthesis_app.command("run")
+def campaign_synthesis_run(
+    candidates_path: Path = typer.Option(..., "--candidates"),
+    target_path: Path = typer.Option(..., "--target"),
+    authorization_path: Path = typer.Option(..., "--authorization"),
+    output_dir: Path = typer.Option(..., "--out"),
+    max_plans_per_profile: int = typer.Option(1, "--max-plans-per-profile"),
+) -> None:
+    candidates_payload = json.loads(candidates_path.read_text())
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path)
+    issues = validate_target(target)
+    if issues:
+        raise typer.BadParameter("; ".join(issues))
+    campaign_plan_json, campaign_plan_md, payload = synthesize_foundation_campaigns(
+        candidates_payload=candidates_payload,
+        target=target,
+        authorization=authorization,
+        output_dir=output_dir,
+        max_plans_per_profile=max_plans_per_profile,
+    )
+    typer.echo(f"Campaign Plan JSON: {campaign_plan_json}")
+    typer.echo(f"Campaign Plan MD: {campaign_plan_md}")
+    typer.echo(f"Campaign Plans total: {payload['summary']['plans_total']}")
 
 
 @campaign_app.command("run")
@@ -262,8 +361,14 @@ def campaign_run(
         seed=seed,
     )
     typer.echo(f"Campaign profile: {result.profile}")
+    typer.echo(f"Campaign status: {result.status}")
     typer.echo(f"Campaign objective_met: {result.objective_met}")
-    typer.echo(f"Campaign report: {result.report_md}")
+    if result.report_md:
+        typer.echo(f"Campaign report: {result.report_md}")
+    if result.error:
+        typer.echo(f"Campaign error: {result.error}")
+    if result.status in {"preflight_failed", "run_failed"}:
+        raise typer.Exit(code=1)
 
 
 @assessment_app.command("run")
@@ -274,24 +379,45 @@ def assessment_run(
     output_dir: Path = typer.Option(..., "--out"),
     max_steps: Optional[int] = typer.Option(None, "--max-steps"),
     seed: Optional[int] = typer.Option(None, "--seed"),
+    discovery_driven: bool = typer.Option(False, "--discovery-driven"),
 ) -> None:
     target = load_target(target_path)
     authorization = load_authorization(authorization_path)
     issues = validate_target(target)
     if issues:
         raise typer.BadParameter("; ".join(issues))
-    result = run_assessment(
-        bundle_name=bundle_name,
-        target=target,
-        authorization=authorization,
-        output_dir=output_dir,
-        runner=execute_run,
-        max_steps=max_steps,
-        seed=seed,
-    )
+    if discovery_driven:
+        result = run_discovery_driven_assessment(
+            bundle_name=bundle_name,
+            target=target,
+            authorization=authorization,
+            output_dir=output_dir,
+            runner=execute_run,
+            max_steps=max_steps,
+            seed=seed,
+        )
+    else:
+        result = run_assessment(
+            bundle_name=bundle_name,
+            target=target,
+            authorization=authorization,
+            output_dir=output_dir,
+            runner=execute_run,
+            max_steps=max_steps,
+            seed=seed,
+        )
     assessment_json, assessment_md = write_assessment_summary(result, output_dir)
+    failed_campaigns = [campaign for campaign in result.campaigns if campaign.status in {"preflight_failed", "run_failed"}]
     typer.echo(f"Assessment JSON: {assessment_json}")
     typer.echo(f"Assessment MD: {assessment_md}")
+    if result.artifacts.get("assessment_findings_json"):
+        typer.echo(f"Findings JSON: {result.artifacts['assessment_findings_json']}")
+    if result.artifacts.get("assessment_findings_md"):
+        typer.echo(f"Findings MD: {result.artifacts['assessment_findings_md']}")
+    if failed_campaigns:
+        typer.echo(f"Assessment failed campaigns: {len(failed_campaigns)}")
+    if failed_campaigns:
+        raise typer.Exit(code=1)
 
 
 def _build_environment(fixture: Fixture, scope: Scope):

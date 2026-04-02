@@ -1,0 +1,7 @@
+{
+  "description": "Prove an IAM path to a selected SSM parameter in the internal data platform environment.",
+  "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key",
+  "success_criteria": {
+    "flag": "foundation_ssm"
+  }
+}

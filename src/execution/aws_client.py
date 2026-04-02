@@ -59,6 +59,13 @@ class AwsClient(Protocol):
     ) -> list[str]:
         ...
 
+    def list_buckets(
+        self,
+        region: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[str]:
+        ...
+
     def list_secrets(
         self,
         region: str,
@@ -188,6 +195,20 @@ class Boto3AwsClient:
                 if key:
                     keys.append(key)
         return keys
+
+    def list_buckets(
+        self,
+        region: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[str]:
+        client = self._session(credentials).client("s3", region_name=region)
+        response = client.list_buckets()
+        buckets: list[str] = []
+        for bucket in response.get("Buckets", []):
+            name = bucket.get("Name")
+            if name:
+                buckets.append(name)
+        return buckets
 
     def list_secrets(
         self,

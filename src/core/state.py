@@ -79,10 +79,12 @@ class StateManager:
         self._attempted_enumerations: set[tuple[str, str]] = set()
 
     def snapshot(self) -> StateSnapshot:
+        fixture_state = self._fixture.state_copy()
+        fixture_state["flags"] = self._active_flags(fixture_state.get("flags", []))
         return StateSnapshot(
             objective=self._objective,
             scope=self._scope,
-            fixture_state=self._fixture.state_copy(),
+            fixture_state=fixture_state,
             tool_registry=self._tool_registry,
             steps_taken=self._steps_taken,
             actions_taken=list(self._actions_taken),
@@ -143,9 +145,14 @@ class StateManager:
     def is_objective_met(self) -> bool:
         criteria = self._objective.success_criteria
         required_flag = criteria.get("flag")
-        if not required_flag:
-            return False
-        return self._fixture.has_flag(required_flag)
+        if required_flag and self._fixture.has_flag(required_flag):
+            return True
+        target = self._objective.target
+        if target:
+            for action, observation in zip(self._actions_taken, self._observations):
+                if observation.success and action.target == target:
+                    return True
+        return False
 
     def _update_path_memory(self, action: Action, observation: Observation) -> None:
         if action.action_type.value == "assume_role" and observation.success:
@@ -247,6 +254,19 @@ class StateManager:
 
     def _should_explore_current_branch(self) -> bool:
         return self._active_branch_action_count() > 0
+
+    def _active_flags(self, base_flags: List[str]) -> List[str]:
+        active_flags = set(base_flags)
+        if self._tool_registry is None:
+            return sorted(active_flags)
+        for action, observation in zip(self._actions_taken, self._observations):
+            if not observation.success or not action.tool:
+                continue
+            tool = self._tool_registry.get(action.tool)
+            if tool is None:
+                continue
+            active_flags.update(tool.postconditions)
+        return sorted(active_flags)
 
     def _candidate_paths(self) -> List[CandidatePath]:
         active_roles = set(self._active_assumed_roles())

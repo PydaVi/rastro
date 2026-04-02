@@ -1,0 +1,7 @@
+{
+  "description": "Prove a role chaining path in the internal data platform environment.",
+  "target": "arn:aws:iam::123456789012:role/PayrollDataAccessRole",
+  "success_criteria": {
+    "flag": "foundation_role_chain"
+  }
+}

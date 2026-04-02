@@ -1,0 +1,41 @@
+{
+  "name": "internal-data-platform-iam-ssm-lab",
+  "description": "Synthetic IAM to SSM environment for internal data platform variants.",
+  "version": "0.1",
+  "state": {
+    "flags": [],
+    "identities": {
+      "arn:aws:iam::123456789012:user/platform-analyst": {
+        "available_actions": [
+          {"action_type": "enumerate", "target": "arn:aws:iam::123456789012:root", "parameters": {"service": "iam", "region": "us-east-1"}, "tool": "iam_list_roles"},
+          {"action_type": "assume_role", "target": "arn:aws:iam::123456789012:role/PayrollDataAccessRole", "parameters": {"service": "sts", "region": "us-east-1", "role_arn": "arn:aws:iam::123456789012:role/PayrollDataAccessRole", "session_name": "idp-ssm"}, "tool": "iam_passrole"},
+          {"action_type": "assume_role", "target": "arn:aws:iam::123456789012:role/FinanceBrokerRole", "parameters": {"service": "sts", "region": "us-east-1", "role_arn": "arn:aws:iam::123456789012:role/FinanceBrokerRole", "session_name": "idp-ssm-decoy"}, "tool": "iam_passrole"}
+        ]
+      }
+    }
+  },
+  "transitions": [
+    {"action_type": "enumerate", "actor": "arn:aws:iam::123456789012:user/platform-analyst", "target": "arn:aws:iam::123456789012:root", "observation": {"details": "Listed roles.", "discovered_roles": ["arn:aws:iam::123456789012:role/PayrollDataAccessRole", "arn:aws:iam::123456789012:role/FinanceBrokerRole"]}},
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:role/PayrollDataAccessRole",
+      "observation": {"granted_role": "arn:aws:iam::123456789012:role/PayrollDataAccessRole", "details": "Assumed PayrollDataAccessRole."},
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/PayrollDataAccessRole": {
+          "available_actions": [
+            {"action_type": "enumerate", "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key", "parameters": {"service": "ssm", "region": "us-east-1", "path": "/prod"}, "tool": "ssm_list_parameters"},
+            {"action_type": "access_resource", "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key", "parameters": {"service": "ssm", "region": "us-east-1", "name": "/prod/payroll/api_key"}, "tool": "ssm_read_parameter"},
+            {"action_type": "access_resource", "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/archive_token", "parameters": {"service": "ssm", "region": "us-east-1", "name": "/prod/payroll/archive_token"}, "tool": "ssm_read_parameter"},
+            {"action_type": "access_resource", "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/finance/payroll_report_key", "parameters": {"service": "ssm", "region": "us-east-1", "name": "/prod/finance/payroll_report_key"}, "tool": "ssm_read_parameter"}
+          ]
+        }
+      }
+    },
+    {"action_type": "assume_role", "actor": "arn:aws:iam::123456789012:user/platform-analyst", "target": "arn:aws:iam::123456789012:role/FinanceBrokerRole", "observation": {"granted_role": "arn:aws:iam::123456789012:role/FinanceBrokerRole", "details": "Assumed FinanceBrokerRole."}},
+    {"action_type": "enumerate", "actor": "arn:aws:iam::123456789012:role/PayrollDataAccessRole", "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key", "observation": {"details": "Listed parameters.", "discovered_parameters": ["/prod/payroll/api_key", "/prod/payroll/archive_token", "/prod/finance/payroll_report_key"]}},
+    {"action_type": "access_resource", "actor": "arn:aws:iam::123456789012:role/PayrollDataAccessRole", "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key", "observation": {"details": "Read payroll api key parameter.", "evidence": {"name": "/prod/payroll/api_key"}}},
+    {"action_type": "access_resource", "actor": "arn:aws:iam::123456789012:role/PayrollDataAccessRole", "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/archive_token", "observation": {"details": "Read payroll archive token parameter.", "evidence": {"name": "/prod/payroll/archive_token"}}},
+    {"action_type": "access_resource", "actor": "arn:aws:iam::123456789012:role/PayrollDataAccessRole", "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/finance/payroll_report_key", "observation": {"details": "Read payroll report key parameter.", "evidence": {"name": "/prod/finance/payroll_report_key"}}}
+  ]
+}

@@ -21,6 +21,7 @@ class ReportGenerator:
         audit: AuditLogger,
         initial_state: Dict,
         objective_met: bool,
+        preflight: Dict | None = None,
     ) -> Dict:
         objective = snapshot.objective
         steps_taken = snapshot.steps_taken
@@ -83,6 +84,7 @@ class ReportGenerator:
         report_json = {
             "objective": objective.model_dump(),
             "starting_conditions": initial_state,
+            "preflight": preflight or {"ok": True, "details": {"mode": "not_recorded"}},
             "executive_summary": executive_summary,
             "execution_policy": execution_policy,
             "steps_taken": steps_taken,
@@ -157,6 +159,10 @@ class ReportGenerator:
             f"- Allowed regions: {execution_policy['allowed_regions']}",
             f"- AWS account IDs: {execution_policy['aws_account_ids']}",
             f"- Authorization document: {execution_policy['authorization_document']}",
+            "",
+            "## Preflight",
+            f"- OK: {report_json['preflight']['ok']}",
+            f"```\n{report_json['preflight']['details']}\n```",
             "",
             "## Starting Conditions",
             f"```\n{initial_state}\n```",
