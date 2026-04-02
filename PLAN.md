@@ -100,7 +100,7 @@ que resultados positivos.
 | EXP-019 | Path scoring com evidencia ambigua               | confirmada        |
 | EXP-020 | Path scoring com branch profundo e ruido         | confirmada        |
 | EXP-021 | Path scoring adversarial sem lookahead forte     | confirmada        |
-| EXP-022 | Path scoring com limite de steps apertado        | planejada         |
+| EXP-022 | Path scoring com limite de steps apertado        | confirmada        |
 | EXP-023 | Path scoring em AWS real (sinal novo)            | planejada         |
 
 Descobertas arquiteturais principais acumuladas:
@@ -170,7 +170,7 @@ Fechar maturidade do engine como sistema de validação real.
 - EXP-019: path scoring com decoys (concluído)
 - EXP-020: path scoring com branch profundo e ruido (concluido)
 - EXP-021: adversarial sem lookahead forte (concluido)
-- EXP-022: limite de steps apertado (planejado)
+- EXP-022: limite de steps apertado (concluido)
 - EXP-023: validação AWS real com sinal novo (planejado)
 
 ---

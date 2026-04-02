@@ -1,0 +1,7 @@
+{
+  "description": "Path scoring adversarial without strong lookahead signals (access_resource target omits bucket context).",
+  "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+  "success_criteria": {
+    "flag": "multi_branch_backtracking"
+  }
+}

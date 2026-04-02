@@ -70,6 +70,22 @@ def _prefer_analyze(snapshot, actions: List[Action]) -> List[Action]:
     return actions
 
 
+def _prefer_access_on_success(snapshot, actions: List[Action]) -> List[Action]:
+    if not snapshot or not actions:
+        return actions
+    objective_target = getattr(getattr(snapshot, "objective", None), "target", None)
+    if not objective_target:
+        return actions
+    success_actions = [
+        action
+        for action in actions
+        if action.action_type == ActionType.ACCESS_RESOURCE and action.target == objective_target
+    ]
+    if success_actions:
+        return success_actions
+    return actions
+
+
 def shape_available_actions(snapshot, available_actions: List[Action]) -> List[Action]:
     if not snapshot or not available_actions:
         return available_actions
@@ -90,7 +106,8 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
             filtered = _filter_repeated_access(snapshot, progress_actions)
             filtered = _filter_mismatched_bucket(snapshot, filtered)
             if filtered:
-                return _prefer_analyze(snapshot, filtered)
+                preferred = _prefer_analyze(snapshot, filtered)
+                return _prefer_access_on_success(snapshot, preferred)
 
     candidate_paths = _ranked_candidate_paths(snapshot)
     if candidate_paths:
