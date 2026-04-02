@@ -20,6 +20,7 @@ FOUNDATION_PROFILES: dict[str, ProfileDefinition] = {
         fixture_path=_real_path("terraform_local_lab", "rastro_local", "aws_role_choice_lab.local.json"),
         objective_path=_real_path("terraform_local_lab", "rastro_local", "objective_aws_role_choice.local.json"),
         scope_path=_real_path("terraform_local_lab", "rastro_local", "scope_aws_role_choice_openai_real.local.json"),
+        discovery_ssm_prefixes=["/prod", "/app", "/finance", "/shared"],
     ),
     "aws-iam-secrets": ProfileDefinition(
         name="aws-iam-secrets",
@@ -28,6 +29,7 @@ FOUNDATION_PROFILES: dict[str, ProfileDefinition] = {
         fixture_path=_real_path("terraform_local_lab", "rastro_local", "aws_secrets_backtracking_lab.local.json"),
         objective_path=_real_path("terraform_local_lab", "rastro_local", "objective_aws_secrets_backtracking.local.json"),
         scope_path=_real_path("terraform_local_lab", "rastro_local", "scope_aws_secrets_backtracking_openai.local.json"),
+        discovery_ssm_prefixes=["/prod", "/app", "/finance", "/shared"],
     ),
     "aws-iam-ssm": ProfileDefinition(
         name="aws-iam-ssm",
@@ -36,6 +38,7 @@ FOUNDATION_PROFILES: dict[str, ProfileDefinition] = {
         fixture_path=_real_path("terraform_local_lab", "rastro_local", "aws_ssm_backtracking_lab.local.json"),
         objective_path=_real_path("terraform_local_lab", "rastro_local", "objective_aws_ssm_backtracking.local.json"),
         scope_path=_real_path("terraform_local_lab", "rastro_local", "scope_aws_ssm_backtracking_openai.local.json"),
+        discovery_ssm_prefixes=["/prod", "/app", "/finance", "/shared"],
     ),
     "aws-iam-role-chaining": ProfileDefinition(
         name="aws-iam-role-chaining",
@@ -44,6 +47,7 @@ FOUNDATION_PROFILES: dict[str, ProfileDefinition] = {
         fixture_path=_real_path("terraform_local_lab", "rastro_local", "aws_role_chaining_lab.local.json"),
         objective_path=_real_path("terraform_local_lab", "rastro_local", "objective_aws_role_chaining.local.json"),
         scope_path=_real_path("terraform_local_lab", "rastro_local", "scope_aws_role_chaining_openai.local.json"),
+        discovery_ssm_prefixes=["/prod", "/app", "/finance", "/shared"],
     ),
 }
 

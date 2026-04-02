@@ -12,6 +12,7 @@ class TargetConfig(BaseModel):
     accounts: list[str] = Field(default_factory=list)
     allowed_regions: list[str] = Field(default_factory=list)
     entry_roles: list[str] = Field(default_factory=list)
+    discovery_ssm_prefixes: list[str] = Field(default_factory=list)
 
 
 class AuthorizationConfig(BaseModel):
@@ -29,6 +30,7 @@ class ProfileDefinition(BaseModel):
     fixture_path: Path
     objective_path: Path
     scope_path: Path
+    discovery_ssm_prefixes: list[str] = Field(default_factory=list)
 
 
 class CampaignResult(BaseModel):

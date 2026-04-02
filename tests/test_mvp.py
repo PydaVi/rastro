@@ -43,6 +43,7 @@ class FakeAwsClient:
     def __init__(self):
         self.assume_role_calls = []
         self.get_object_calls = []
+        self.parameter_path_calls = []
 
     def get_caller_identity(self, region: str, credentials=None):
         if credentials == {
@@ -154,10 +155,13 @@ class FakeAwsClient:
         return ["reports/quarterly-summary"]
 
     def list_parameters_by_path(self, region: str, path: str, credentials=None):
+        self.parameter_path_calls.append(path)
         if path == "/prod":
             return ["/prod/payroll/api_key"]
         if path == "/finance":
             return ["/finance/quarterly/reporting_key"]
+        if path == "/customer":
+            return ["/customer/payroll/runtime_key"]
         return []
 
     def get_secret_value(self, region: str, secret_id: str, credentials=None):
@@ -763,6 +767,49 @@ def test_internal_data_platform_variants_b_c_keep_data_access_role_on_top(
         candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-role-chaining"
     )
     assert role_candidate["resource_arn"] == expected_role
+
+
+def test_run_foundation_discovery_uses_target_override_for_ssm_prefixes(tmp_path: Path) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    target.discovery_ssm_prefixes = ["/customer"]
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    client = FakeAwsClient()
+
+    _, _, snapshot = run_foundation_discovery(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        client=client,
+    )
+
+    assert client.parameter_path_calls == ["/customer"]
+    assert snapshot["discovery_config"]["ssm_prefixes"] == ["/customer"]
+    assert any(
+        resource["identifier"] == "arn:aws:ssm:us-east-1:550192603632:parameter/customer/payroll/runtime_key"
+        for resource in snapshot["resources"]
+    )
+
+
+def test_run_foundation_discovery_uses_profile_default_ssm_prefixes(tmp_path: Path) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    client = FakeAwsClient()
+
+    _, _, snapshot = run_foundation_discovery(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        client=client,
+    )
+
+    assert client.parameter_path_calls == ["/app", "/finance", "/prod", "/shared"]
+    assert snapshot["discovery_config"]["ssm_prefixes"] == ["/app", "/finance", "/prod", "/shared"]
 
 
 def test_state_snapshot_derives_tool_postcondition_flags() -> None:

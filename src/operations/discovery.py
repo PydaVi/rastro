@@ -11,7 +11,7 @@ from operations.models import AuthorizationConfig, TargetConfig
 from operations.service import validate_profile_access, validate_target
 
 
-SSM_DISCOVERY_PREFIXES = ["/prod", "/app", "/finance", "/shared"]
+DEFAULT_SSM_DISCOVERY_PREFIXES = ["/prod", "/app", "/finance", "/shared"]
 
 
 @dataclass
@@ -45,7 +45,8 @@ def run_foundation_discovery(
     if issues:
         raise ValueError("; ".join(issues))
 
-    for profile in resolve_bundle(bundle_name):
+    profiles = resolve_bundle(bundle_name)
+    for profile in profiles:
         validate_profile_access(profile.name, authorization)
 
     aws_client = client or Boto3AwsClient()
@@ -119,9 +120,10 @@ def run_foundation_discovery(
             }
         )
 
+    ssm_prefixes = _resolve_ssm_discovery_prefixes(target=target, profiles=profiles)
     services_scanned.append("ssm")
     evidence.append({"service": "ssm", "api_calls": ["ssm:GetParametersByPath"]})
-    for path_prefix in SSM_DISCOVERY_PREFIXES:
+    for path_prefix in ssm_prefixes:
         parameter_names = aws_client.list_parameters_by_path(region=region, path=path_prefix)[
             : effective_limits.max_parameters_per_prefix
         ]
@@ -160,6 +162,9 @@ def run_foundation_discovery(
         "resources": resources,
         "evidence": evidence,
         "summary": summary,
+        "discovery_config": {
+            "ssm_prefixes": ssm_prefixes,
+        },
     }
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -180,6 +185,7 @@ def _render_discovery_markdown(snapshot: dict) -> str:
         f"- Collected at: {snapshot['collected_at']}",
         f"- Services scanned: {snapshot['services_scanned']}",
         f"- Regions scanned: {snapshot['regions_scanned']}",
+        f"- SSM prefixes: {snapshot.get('discovery_config', {}).get('ssm_prefixes', [])}",
         "",
         "## Summary",
         f"- Roles: {summary['roles']}",
@@ -196,3 +202,16 @@ def _render_discovery_markdown(snapshot: dict) -> str:
         )
     lines.append("")
     return "\n".join(lines)
+
+
+def _resolve_ssm_discovery_prefixes(*, target: TargetConfig, profiles: list) -> list[str]:
+    if target.discovery_ssm_prefixes:
+        return sorted(set(target.discovery_ssm_prefixes))
+    profile_prefixes = {
+        prefix
+        for profile in profiles
+        for prefix in getattr(profile, "discovery_ssm_prefixes", [])
+    }
+    if profile_prefixes:
+        return sorted(profile_prefixes)
+    return list(DEFAULT_SSM_DISCOVERY_PREFIXES)
