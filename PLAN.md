@@ -143,12 +143,14 @@ Status: concluído (EXP-018 a EXP-023)
 - branch memory sólida
 - recuperação consistente
 - evitar loops e revisitas inúteis
+Status: concluído (EXP-024 a EXP-027)
 Status: em planejamento (próximo bloco)
 
 **3. Diversificação de attack paths**
 - IAM / STS / S3 / Secrets Manager / SSM
 - sempre chains completas, nunca features isoladas
 - regra: 2-3 experimentos sintéticos → 1 validação real representativa
+Status: em planejamento (portfólio MITRE Cloud/AWS)
 
 **4. Contrato de integração AWS**
 - role assumível com trust policy restrita ao ARN do executor
@@ -165,19 +167,113 @@ Status: em planejamento (próximo bloco)
 - evidência clara e auditável
 - artefatos sanitizados prontos para compartilhamento
 
-### Próxima sequência de experimentos (prioridade 2 — Backtracking completo)
+### Próxima sequência de experimentos (prioridade 3 — Portfólio MITRE Cloud/AWS)
 
-- EXP-024: loop trap sintético (revisitas e ações repetidas)
-  objetivo: garantir memória de branch e evitar ciclos
-- EXP-025: backtracking com sinais ambíguos + analyze no-op
-  objetivo: recuperação consistente sem abandonar branch correto
-- EXP-026: backtracking com 3 pivôs concorrentes + branch profundo
-  objetivo: validar recuperação após 2 escolhas erradas
-- EXP-027: validação AWS real de backtracking
-  objetivo: 1 cenário real representativo após 2-3 sintéticos
+Objetivo: expandir o portfólio de attack paths com base em MITRE
+ATT&CK (Cloud/AWS), priorizando cadeias vendáveis com evidência real.
 
-Regra: estender o bloco com EXP-028+ apenas se houver falha que isole
-causa específica ou regressão do engine.
+#### Etapa A — Mapa de portfólio (baseline)
+- definir classes de path por tática/serviço (MITRE Cloud/AWS)
+- agrupar em bundles: foundation / advanced / enterprise
+- definir critérios de promoção para AWS real (2-3 sintéticos + 1 real)
+
+#### Etapa B — Execução por classe
+- para cada classe: 2-3 fixtures sintéticos com variações de pivô/decoy
+- 1 validação AWS real representativa por classe crítica
+
+#### Etapa C — Consolidação
+- matriz de cobertura (classe → experimentos → real validation)
+- evidência e limites conhecidos
+
+Regra: estender a etapa apenas se houver falha que isole causa específica
+ou regressão do engine.
+
+### Mapa de portfólio — Classes base (MITRE Cloud/AWS)
+
+**Foundation (vendável mínimo)**
+1. IAM → S3 (bucket/object)
+   - T1087.004, T1548, T1619, T1530
+2. IAM → Secrets Manager (secret access)
+   - T1548, T1552.005
+3. IAM → SSM Parameter Store (parameter access)
+   - T1548, T1552.004
+4. IAM → Role chaining (STS assume role → resource)
+   - T1548, T1078
+
+**Advanced (expansão controlada)**
+5. IAM → Compute → IAM (passrole/instance profile → new identity)
+   - T1078, T1098, T1525
+6. IAM → Lambda (invoke/update) → S3/Secrets
+   - T1648, T1552.005
+7. IAM → KMS (decrypt) → S3/Secrets
+   - T1552.001
+8. External entry → IAM → data access (IMDS/APIGW/S3 triggers)
+   - T1078, T1525, T1552
+
+**Enterprise (cobertura ampla)**
+9. Cross-account trust → pivô → data access
+   - T1484, T1078
+10. Multi-step chain (3+ pivôs, mixed services)
+   - combinação de técnicas acima
+
+### External Entry — Subclasses (Advanced/Enterprise)
+1. IMDSv1/IMDSv2 downgrade → instance profile → IAM → S3/Secrets
+2. API Gateway/Lambda public invoke → IAM role → data access
+3. S3 public write → Lambda trigger → IAM role → data access
+4. STS assume role via external ID leakage
+
+### Bundles operacionais (Produto 01)
+
+- **aws-foundation**: classes 1–4
+- **aws-advanced**: classes 1–8
+- **aws-enterprise-full**: classes 1–10
+
+### Matriz de cobertura — Prioridade 3 (planejada)
+
+Formato: Classe → Sintéticos (2-3) → Validação AWS real (1)
+
+| Classe | Sintéticos | AWS real | Observações |
+|-------|-----------|---------|-------------|
+| 1. IAM → S3 | EXP-028A/B/C | EXP-028R | decoys de bucket/objeto |
+| 2. IAM → Secrets Manager | EXP-029A/B/C | EXP-029R | segredo decoy vs alvo |
+| 3. IAM → SSM Parameter Store | EXP-030A/B | EXP-030R | parameter decoy vs alvo |
+| 4. IAM → Role chaining | EXP-031A/B | EXP-031R | 2 pivôs antes do alvo |
+| 5. IAM → Compute → IAM | EXP-032A/B | EXP-032R | instance profile → role |
+| 6. IAM → Lambda → data | EXP-033A/B | EXP-033R | invoke/update → acesso |
+| 7. IAM → KMS → data | EXP-034A/B | EXP-034R | decrypt → S3/Secrets |
+| 8. External entry → IAM → data | EXP-035A/B/C | EXP-035R | IMDS/APIGW/S3 trigger |
+| 9. Cross-account trust | EXP-036A/B | EXP-036R | trust mal configurado |
+| 10. Multi-step chain (3+ pivôs) | EXP-037A/B | EXP-037R | cadeia mista |
+
+Regra: cada classe só promove para AWS real após 2-3 sintéticos estáveis.
+
+### Blocos de experimentos — Prioridade 3
+
+**Bloco Foundation (classes 1–4)**
+- EXP-028A/B/C: IAM → S3 (variações de decoy)
+- EXP-028R: AWS real (IAM → S3)
+- EXP-029A/B/C: IAM → Secrets (decoy/target)
+- EXP-029R: AWS real (IAM → Secrets)
+- EXP-030A/B: IAM → SSM (decoy/target)
+- EXP-030R: AWS real (IAM → SSM)
+- EXP-031A/B: Role chaining (2 pivôs)
+- EXP-031R: AWS real (role chaining)
+
+**Bloco Advanced (classes 5–8)**
+- EXP-032A/B: IAM → Compute → IAM
+- EXP-032R: AWS real (compute → role)
+- EXP-033A/B: IAM → Lambda → data
+- EXP-033R: AWS real (Lambda path)
+- EXP-034A/B: IAM → KMS → data
+- EXP-034R: AWS real (KMS path)
+- EXP-035A/B/C: External entry (IMDS/APIGW/S3 trigger)
+- EXP-035R: AWS real (1 cenário representativo)
+
+**Bloco Enterprise (classes 9–10)**
+- EXP-036A/B: Cross-account trust
+- EXP-036R: AWS real (cross-account)
+- EXP-037A/B: Multi-step chain (3+ pivôs)
+- EXP-037R: AWS real (cadeia mista)
 
 ---
 
