@@ -67,7 +67,7 @@ Loop central validado com fixture sintético.
 Multi-branch backtracking validado, path scoring em evolução,
 diversificação de attack paths em andamento.
 
-19 experimentos concluídos — ver seção de histórico experimental abaixo.
+23 experimentos concluídos — ver seção de histórico experimental abaixo.
 
 ---
 
@@ -101,7 +101,7 @@ que resultados positivos.
 | EXP-020 | Path scoring com branch profundo e ruido         | confirmada        |
 | EXP-021 | Path scoring adversarial sem lookahead forte     | confirmada        |
 | EXP-022 | Path scoring com limite de steps apertado        | confirmada        |
-| EXP-023 | Path scoring em AWS real (sinal novo)            | planejada         |
+| EXP-023 | Path scoring em AWS real (sinal novo)            | confirmada        |
 
 Descobertas arquiteturais principais acumuladas:
 - problema raiz de escolha de pivô era representação de estado, não modelo
@@ -171,7 +171,7 @@ Fechar maturidade do engine como sistema de validação real.
 - EXP-020: path scoring com branch profundo e ruido (concluido)
 - EXP-021: adversarial sem lookahead forte (concluido)
 - EXP-022: limite de steps apertado (concluido)
-- EXP-023: validação AWS real com sinal novo (planejado)
+- EXP-023: validação AWS real com sinal novo (concluído)
 
 ---
 
