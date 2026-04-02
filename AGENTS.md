@@ -73,6 +73,20 @@ O agente deve priorizar nesta ordem:
 
 ---
 
+## Regra de transição por prioridade (obrigatória)
+
+Cada prioridade do `PLAN.md` deve ser fechada com um bloco de experimentos
+planejado. Quando o bloco for concluído, o agente deve:
+
+1. Registrar a conclusão no `PLAN.md`
+2. Planejar o próximo bloco de experimentos da prioridade seguinte
+3. Avançar automaticamente para essa prioridade, sem pedir orientação
+
+Essa regra evita foco excessivo em minúcias e mantém o progresso alinhado
+ao objetivo macro do eixo.
+
+---
+
 ## Separação de responsabilidades
 
 ```

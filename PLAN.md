@@ -133,11 +133,13 @@ Fechar maturidade do engine como sistema de validação real.
 - reduzir order sensitivity residual
 - ranking consistente de pivôs
 - estabilidade sob permutação
+Status: concluído (EXP-018 a EXP-023)
 
 **2. Backtracking completo**
 - branch memory sólida
 - recuperação consistente
 - evitar loops e revisitas inúteis
+Status: em planejamento (próximo bloco)
 
 **3. Diversificação de attack paths**
 - IAM / STS / S3 / Secrets Manager / SSM
@@ -159,19 +161,19 @@ Fechar maturidade do engine como sistema de validação real.
 - evidência clara e auditável
 - artefatos sanitizados prontos para compartilhamento
 
-### Próxima sequência de experimentos
+### Próxima sequência de experimentos (prioridade 2 — Backtracking completo)
 
-- EXP-016: backtracking em Secrets Manager com pivô competitivo adicional
-- EXP-017: SSM Parameter Store — validado em AWS real (concluído)
-  sinal novo
-- Regra: levar para AWS real apenas o que adicionar sinal novo,
-  não repetição operacional
-- EXP-018: path scoring sob permutação com evidência ruidosa (concluído)
-- EXP-019: path scoring com decoys (concluído)
-- EXP-020: path scoring com branch profundo e ruido (concluido)
-- EXP-021: adversarial sem lookahead forte (concluido)
-- EXP-022: limite de steps apertado (concluido)
-- EXP-023: validação AWS real com sinal novo (concluído)
+- EXP-024: loop trap sintético (revisitas e ações repetidas)
+  objetivo: garantir memória de branch e evitar ciclos
+- EXP-025: backtracking com sinais ambíguos + analyze no-op
+  objetivo: recuperação consistente sem abandonar branch correto
+- EXP-026: backtracking com 3 pivôs concorrentes + branch profundo
+  objetivo: validar recuperação após 2 escolhas erradas
+- EXP-027: validação AWS real de backtracking
+  objetivo: 1 cenário real representativo após 2-3 sintéticos
+
+Regra: estender o bloco com EXP-028+ apenas se houver falha que isole
+causa específica ou regressão do engine.
 
 ---
 
