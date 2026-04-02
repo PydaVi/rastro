@@ -1,120 +1,127 @@
 # Rastro
 
-**Agente de red team autônomo para ambientes cloud e Linux.**
+> O problema da segurança em cloud não é detectar risco.
+> É entender quais riscos se conectam em um caminho real de comprometimento —
+> e fazer isso na mesma velocidade que um atacante moderno.
 
-Rastro não lista vulnerabilidades. Ele raciocina sobre elas, as encadeia,
-e constrói o caminho completo de comprometimento — do ponto de entrada ao
-objetivo final.
+**Rastro** é um engine de simulação adversarial autônoma para ambientes cloud.
+Não lista vulnerabilidades — raciocina sobre elas, as encadeia, e prova o
+caminho completo de comprometimento com evidência auditável em cada passo.
 
-A diferença real de ferramentas de assessment estático: enquanto scanners
-identificam findings isolados, um atacante competente *pensa* — conecta uma
-permissão IAM excessiva com um bucket público com uma Lambda mal configurada
-até chegar onde quer. Rastro faz o mesmo, de forma autônoma e auditável.
+> ⚠️ **Estado atual:** pesquisa e desenvolvimento de engine. Não existe CLI,
+> runner, produto, ou interface de usuário. O que existe é o engine central
+> sendo validado experimentalmente — loop de raciocínio, backtracking,
+> path scoring, e execução controlada em AWS real. Tudo ainda é invocado
+> diretamente via Python. Contribuições e discussões são bem-vindas, mas
+> expectativas de produto pronto não se aplicam ainda.
 
-```
-analyst → [assume AuditRole] → [access sensitive_bucket] → objetivo atingido
-
-attack path gerado em 2 passos
-scope enforcer: 0 ações bloqueadas
-audit log: completo
-```
-
----
-
-## Status
-
-**Fase 0 completa.** Loop central funcionando com fixture sintético IAM.
-Scope Enforcer, Audit Logger, Attack Graph e Report Engine implementados.
-
-**Fase 1 concluída para o escopo atual do MVP.** `OllamaPlanner` já foi
-validado end-to-end com modelo local. `OpenAIPlanner` e `ClaudePlanner` já
-estão implementados no código; a pendência residual é a validação end-to-end
-com credenciais reais.
-
-**MITRE mapping no MVP já está implementado** (techniques no fixture + relatório).
-**Tool Registry base já está implementado** (YAML + pré-condições).
-**Fase 2 concluída para o primeiro corte AWS real** com dois trilhos:
-- `dry-run` AWS local com autorização obrigatória, política explícita no report/audit
-  e enforcement por `allowed_services`, `allowed_regions`, `aws_account_ids`
-  e `allowed_resources`
-- executor AWS real mínimo já implementado no código, com dependência opcional
-  e gate explícito por `RASTRO_ENABLE_AWS_REAL=1`
-- o Path 1 AWS real já foi validado com sucesso em conta autorizada,
-  primeiro com `MockPlanner` para validar o executor e depois com
-  `OllamaPlanner` para validar o planner em ambiente real
-- o Path 2 AWS real, com descoberta intermediária via `s3:ListBucket`,
-  também já foi validado em conta autorizada com `MockPlanner` e
-  `OllamaPlanner`
-- artefatos sanitizados são gerados automaticamente para compartilhamento seguro
-
-**Fase 3 está em progresso inicial.** A base do Path 3 já foi validada em
-`dry_run`, com múltiplas roles assumíveis e apenas uma levando ao objetivo
-final. Esse cenário já passou com `MockPlanner` e `OllamaPlanner`. O próximo
-passo é levar o Path 3 para cenário real em AWS, começando por `MockPlanner`.
-
-Ver [PLAN.md](PLAN.md) para roadmap completo.
+![License](https://img.shields.io/badge/license-Apache%202.0-green)
+![Python](https://img.shields.io/badge/python-3.12-blue)
+![Status](https://img.shields.io/badge/status-engine%20R%26D-red)
 
 ---
 
-## Backend de LLM — sem vendor obrigatório
+## O que é
 
-Rastro é open source. Nenhuma API proprietária é requisito.
+Rastro é uma pesquisa aplicada sobre como construir um agente que raciocina
+sobre caminhos de comprometimento em cloud — da mesma forma que um atacante
+competente pensaria.
 
-O backend é configurável no `scope.yaml`. O padrão recomendado é
-**Ollama** — self-hosted, sem internet, sem custo, compatível com
-qualquer modelo local (Llama, Qwen, Mistral, Phi).
+A hipótese central: se ataques se tornam raciocínio automatizado, a defesa
+precisa de raciocínio automatizado do mesmo nível. Não um scanner de
+misconfigurations. Não um playbook de ataques conhecidos. Um engine que
+conhece o ambiente específico, formula hipóteses de encadeamento, testa
+cada cadeia, descarta o que não funciona, e prova o que funciona.
 
-Para ambientes sensíveis onde mandar contexto de ataque para uma API
-externa é inaceitável, Ollama local é a única opção que faz sentido
-operacionalmente.
-
-```yaml
-# scope.yaml
-planner:
-  backend: ollama             # ollama | openai | claude
-  model: llama3.1:8b
-  base_url: http://localhost:11434
-```
-
-Backends disponíveis:
-
-| Backend | Quando usar |
-|---------|-------------|
-| `ollama` | padrão — self-hosted, air-gapped, sem custo |
-| `openai` | OpenAI, Groq, Together AI, qualquer API OpenAI-compatible |
-| `claude` | Anthropic API — opcional |
-| `mock` | testes determinísticos sem LLM |
-
-AWS continua sendo a superfície prioritária nas próximas fases. Kubernetes e
-Linux só entram depois que AWS já tiver múltiplos attack paths reais e
-auditáveis.
+Esse engine está sendo construído e validado experimentalmente aqui.
 
 ---
 
-## O que o Rastro faz (hoje)
+## O que já existe
 
-- Recebe um objetivo de ataque e um escopo definido em YAML
-- Carrega um ambiente alvo (fixture sintético no MVP, AWS dry-run na Fase 2)
-- Executa o loop: `enumerate → plan → validate → execute → observe → graph`
-- Cada ação é validada pelo Scope Enforcer antes de executar
-- Cada decisão é logada no audit trail append-only
-- Cada step registra backend do planner, motivo da decisão e resposta bruta do LLM quando aplicável
-- O attack graph é construído em tempo real
-- Ao final: relatório Markdown + JSON com o caminho de comprometimento
-- A execução AWS real mínima já existe no código para `iam_list_roles`,
-  `iam_passrole` e `s3_read_sensitive`, ainda dependente de conta/autorização
+O engine central está funcional e sendo validado em ambiente AWS de laboratório
+autorizado. O que foi construído e provado até agora:
+
+**Loop de raciocínio:**
+`enumerate → plan → validate → execute → observe → graph`
+
+**Capacidades do engine validadas experimentalmente:**
+- candidate path tracking — hipóteses de pivô com status explícito
+- branch failure memory — dead-ends marcados, sem revisita inútil
+- backtracking estruturado — retorno ao ponto de decisão após falha
+- action shaping — policy layer antes do LLM que organiza o espaço de busca
+- path scoring com lookahead — priorização de candidatos por valor esperado
+
+**Infraestrutura de controle:**
+- Scope Enforcer obrigatório em cada ação — sem bypass
+- Audit Logger append-only por step com raciocínio do planner
+- Artefatos sanitizados automáticos para compartilhamento seguro
+- Autorização explícita documentada obrigatória para execução real
+
+**Backends de LLM plugáveis:**
+Ollama self-hosted (padrão), OpenAI-compatible, Anthropic, mock determinístico.
+
+**15 experimentos documentados** com hipótese, metodologia, resultado e
+implicações arquiteturais — incluindo resultados negativos.
 
 ---
 
-## Quick start
+## O que não existe ainda
+
+Para ser explícito sobre o que este repositório **não é**:
+
+- Sem CLI de usuário final
+- Sem runner containerizado
+- Sem interface gráfica ou dashboard
+- Sem produto SaaS ou API hospedada
+- Sem onboarding automatizado de conta AWS
+- Sem documentação de usuário final
+- Sem suporte a Kubernetes (apenas AWS, apenas IAM/S3/Secrets Manager/SSM)
+- Sem cobertura de Linux ou ambiente híbrido
+
+O que existe é o engine sendo validado em laboratório. A distância entre
+isso e um produto utilizável é substancial e intencional — qualidade do
+engine antes de qualquer camada de produto.
+
+---
+
+## Por que este problema importa
+
+As abordagens atuais de segurança em cloud têm limitações estruturais:
+
+**Pentest** não escala com cloud. IAM é combinatório. Policies, roles e
+trust relationships criam uma explosão de caminhos que nenhum humano mapeia
+manualmente com a frequência que o ambiente muda.
+
+**BAS (Breach and Attack Simulation)** testa ataques conhecidos — mas não
+raciocina sobre o ambiente específico do cliente. Não descobre o que nenhuma
+assinatura conhece.
+
+**CSPM** (Wiz, Prisma, CrowdStrike) mostra grafos teóricos mas não prova que
+o caminho é realmente explorável. Um finding de "role com permissões excessivas"
+fica na fila indefinidamente porque parece abstrato — sem evidência de impacto
+real.
+
+O espaço que o Rastro investiga:
+**raciocínio autônomo + execução validada + cloud-native + auditável.**
+
+---
+
+## Como executar (desenvolvimento)
+
+Não existe CLI. A invocação é direta via Python. Isso é intencional
+enquanto o engine está sendo validado — a interface de usuário vem depois.
 
 ```bash
+git clone https://github.com/PydaVi/rastro
+cd rastro
+
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-Executar com mock planner (sem LLM necessário):
+**Mock planner — sem LLM, sem AWS:**
 
 ```bash
 python -m app.main \
@@ -125,9 +132,7 @@ python -m app.main \
   --max-steps 5
 ```
 
-Executar com Ollama (requer `ollama serve` rodando localmente):
-
-Use `examples/scope_ollama.json` (modelo leve recomendado: `phi3:mini`).
+**Ollama local** (requer `ollama serve` rodando):
 
 ```bash
 python -m app.main \
@@ -137,7 +142,7 @@ python -m app.main \
   --out outputs
 ```
 
-Executar o fluxo AWS em `dry-run` (sem chamadas reais):
+**AWS dry-run** (sem chamadas reais):
 
 ```bash
 python -m app.main \
@@ -147,10 +152,11 @@ python -m app.main \
   --out outputs
 ```
 
-Executar o fluxo AWS real mínimo (requer credenciais AWS válidas e `boto3`):
+**AWS real** (requer credenciais e autorização explícita documentada):
 
 ```bash
 pip install -e ".[aws]"
+
 RASTRO_ENABLE_AWS_REAL=1 python -m app.main \
   --fixture fixtures/aws_dry_run_lab.json \
   --objective examples/objective_aws_dry_run.json \
@@ -158,171 +164,84 @@ RASTRO_ENABLE_AWS_REAL=1 python -m app.main \
   --out outputs
 ```
 
-Outputs gerados:
+**Testes:**
 
+```bash
+pytest                    # suite padrão — sem dependências externas
+pytest -m integration     # requer AWS ou Ollama
 ```
-outputs/
-  audit.jsonl        # log append-only de cada decisão e ação
-  report.md          # relatório narrativo com attack path
-  report.json        # dados estruturados para integração
-  attack_graph.mmd   # grafo de comprometimento em Mermaid
-```
-
-No `report.json`, cada item de `steps` inclui `planner_metadata` com:
-- `planner_backend`
-- `planner_model` quando houver
-- `raw_response` para planners LLM
-
-No fluxo AWS dry-run, `report.json` e `audit.jsonl` também incluem:
-- `execution_policy`
-- `execution_mode`
-- `real_api_called`
-- evidências AWS sintéticas como `aws_identity`, `simulated_policy_result` e `evidence`
-
-No fluxo AWS real, o projeto também gera automaticamente:
-- `report.sanitized.json`
-- `report.sanitized.md`
-- `audit.sanitized.jsonl`
-
-Esses artefatos existem para compartilhamento seguro de provas de conceito e
-posts técnicos, sem expor conta, principal, bucket ou conteúdo real.
-
-Ver também:
-- `docs/aws-first-real-path-poc.html`
-- `docs/aws-attack-coverage.md`
 
 ---
 
-## Arquitetura
+## Autorização
 
-```
-┌─────────────────────────────────────────────────┐
-│                 RASTRO CORE                      │
-│                                                  │
-│  Planner ──────────────▶ Tool Executor           │
-│  (ollama/openai/mock)   (scope-gated)            │
-│      ▲                       │                   │
-│      │ estado                ▼                   │
-│  Attack Graph ◀──────── Tool Registry            │
-│  (estrutura própria)    (YAML plugins)           │
-└─────────────────────────────────────────────────┘
-         │
-         ▼
-  Report Engine    Scope Enforcer    Audit Logger
-  (MD + JSON)      (obrigatório)     (append-only)
-```
-
-**Planner** — orquestrador LLM com memória de sessão. Recebe o estado atual
-do grafo e decide qual ação executar em seguida. Backend configurável:
-mock, Ollama (padrão), qualquer API OpenAI-compatible, ou Anthropic.
-
-**Tool Registry** — cada técnica ofensiva é um plugin YAML com nome, fase
-MITRE, pré-condições e pós-condições. O Planner seleciona tools por
-pré-condições, não por prompt livre.
-
-**Scope Enforcer** — toda ação passa por aqui antes de executar. Sem exceções.
-No fluxo AWS dry-run, o ambiente também filtra ações por `allowed_services`,
-`allowed_regions`, `aws_account_ids` e `allowed_resources`, e rejeita execução
-direta fora da política.
-
-**Executor AWS real** — o primeiro corte já existe para `iam_list_roles`,
-`iam_passrole` e `s3_read_sensitive`. Por padrão continua desabilitado; só é
-ativado com `RASTRO_ENABLE_AWS_REAL=1`.
-
-**Attack Graph** — grafo dirigido onde nós são estados de comprometimento e
-arestas são técnicas executadas. Base do relatório final e de futuras
-publicações acadêmicas.
-
-**Audit Logger** — JSONL append-only com timestamp, decisão, ação, resultado,
-raciocínio do Planner e política de execução aplicada.
-
----
-
-## Escopo e autorização
-
-Rastro só executa ações dentro do escopo definido. Em ambiente real,
-o `scope.yaml` exige autorização explícita:
+Rastro só executa dentro do escopo definido. Em ambiente real, o `scope.yaml`
+exige autorização explícita — sem isso, o run não inicia:
 
 ```yaml
 aws_account_ids:
   - "123456789012"
-allowed_services:
-  - iam
-  - sts
-  - s3
+allowed_services: [iam, sts, s3, secretsmanager]
 authorized_by: "nome completo"
 authorized_at: "2026-01-01"
 authorization_document: "docs/authorization.pdf"
 ```
 
-Sem `authorized_by` e `authorization_document`, o run não inicia.
-Isso está no código. Não use Rastro sem autorização explícita do dono
-do ambiente.
+**Não execute Rastro em ambientes sem autorização explícita do dono.**
 
 ---
 
-## Roadmap
+## Experimentos documentados
 
-| Fase | Objetivo | Status |
-|------|----------|--------|
-| 0 | Loop central + fixture sintético IAM | ✓ completa |
-| 1 | LLM Planner plugável + MITRE mapping + Tool Registry | em progresso |
-| 2 | Primeiros attack paths AWS reais, seguros e auditáveis | em progresso |
-| 3 | Mais attack paths AWS reais | em progresso |
-| 4 | AWS novos objetivos e superfícies | planejada |
-| 5 | AWS compute e pivot | planejada |
-| 6 | AWS multi-path autônomo | planejada |
-| 7 | Maturidade AWS antes de expandir | planejada |
-| 8 | Kubernetes attack paths | futura |
-| 9 | Linux + ambiente híbrido | futura |
-| 10 | v1.0 + dataset público + Neo4j | futura |
+O projeto segue metodologia científica — cada experimento tem hipótese,
+metodologia, resultado e implicações arquiteturais. Resultados negativos
+têm a mesma obrigatoriedade de documentação que positivos.
 
-A base do segundo path AWS já existe no código:
-- `s3_list_bucket` como passo intermediário de descoberta
-- fixture e exemplos para descobrir objetos S3 antes do acesso final
+15 experimentos concluídos em `docs/experiments/` — de validação do loop
+real em AWS até backtracking com roles concorrentes em Secrets Manager.
 
 ---
 
-## Cobertura MITRE ATT&CK (planejada)
+## Arquitetura do engine
 
-| Técnica | ID | Fase | Plataforma |
-|---------|-----|------|------------|
-| Account Discovery | T1087.004 | Discovery | AWS |
-| Permission Groups Discovery | T1069.003 | Discovery | AWS |
-| Abuse Elevation Control — PassRole | T1548 | Priv. Escalation | AWS |
-| Create/Modify Cloud Credentials | T1098.001 | Persistence | AWS |
-| Valid Accounts — Cloud | T1078.004 | Initial Access | AWS |
-| Data from Cloud Storage | T1530 | Collection | AWS |
-| Container Escape | T1611 | Priv. Escalation | Kubernetes |
-| Lateral Movement via SSM | T1021 | Lateral Movement | AWS/Linux |
+```
+┌──────────────────────────────────────────────────────┐
+│                    RASTRO CORE                        │
+│                                                       │
+│   Planner ─────────────────▶ Tool Executor            │
+│   (ollama/openai/mock)       (scope-gated)            │
+│       ▲                           │                   │
+│       │ estado enriquecido        ▼                   │
+│   Attack Graph ◀──────────── Tool Registry            │
+│   + Candidate Paths           (YAML plugins)          │
+│   + Branch Memory                                     │
+│   + Path Scoring                                      │
+└──────────────────────────────────────────────────────┘
+              │
+              ▼
+   Report Engine      Scope Enforcer      Audit Logger
+   (MD + JSON + HTML)  (obrigatório)      (append-only)
+```
 
----
-
-## Stack
-
-- **Python 3.12** — ecossistema de segurança ofensiva (boto3, impacket,
-  kubernetes-client, nuclei-python)
-- **Ollama** — LLM self-hosted padrão; qualquer modelo local compatível
-- **Estrutura própria** — attack graph em memória; Neo4j pode entrar na v1.0
-- **pytest** — testes sem dependências externas
+O LLM é um componente de raciocínio — não o orquestrador. O engine controla
+o loop, rastreia hipóteses, aplica política de busca, e executa backtracking.
+Nenhuma lógica de segurança depende do modelo de linguagem.
 
 ---
 
 ## Contribuindo
 
-O projeto está em fase inicial. Se você quer contribuir, leia o
-[PLAN.md](PLAN.md) para entender onde estamos e para onde vamos,
-e o [AGENTS.md](AGENTS.md) para as restrições de desenvolvimento.
+Leia o [PLAN.md](PLAN.md) para entender o estado atual e a direção,
+e o [AGENTS.md](AGENTS.md) para o contrato de desenvolvimento.
 
-Issues e discussões são bem-vindas. PRs que adicionam ferramentas ofensivas
-reais antes da Fase 2 estar completa serão fechados.
+Issues e discussões técnicas são bem-vindas. O foco atual é validação
+de engine em AWS — contribuições alinhadas com isso têm mais chance
+de serem incorporadas.
 
 ---
 
 ## Licença
 
-Apache 2.0
-
----
+[Apache 2.0](LICENSE)
 
 *Use Rastro somente em ambientes que você tem autorização explícita para testar.*
