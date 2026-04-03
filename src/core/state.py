@@ -44,7 +44,9 @@ class StateSnapshot:
     tested_assume_roles: List[str]
     failed_assume_roles: List[str]
     active_assumed_roles: List[str]
-    active_branch_action_count: int
+    active_branch_identities: List[str] = field(default_factory=list)
+    uncredentialed_identities: List[str] = field(default_factory=list)
+    active_branch_action_count: int = 0
     enumeration_sufficient: bool = False
     should_commit_to_pivot: bool = False
     should_explore_current_branch: bool = False
@@ -75,6 +77,8 @@ class StateManager:
         self._observations: List[Observation] = []
         self._tested_assume_roles: List[str] = []
         self._failed_assume_roles: List[str] = []
+        self._activated_identities: List[str] = []
+        self._uncredentialed_identities: List[str] = []
         self._attempted_access_targets: set[tuple[str, str]] = set()
         self._attempted_enumerations: set[tuple[str, str]] = set()
 
@@ -96,6 +100,8 @@ class StateManager:
             tested_assume_roles=list(self._tested_assume_roles),
             failed_assume_roles=list(self._failed_assume_roles),
             active_assumed_roles=self._active_assumed_roles(),
+            active_branch_identities=self._active_branch_identities(),
+            uncredentialed_identities=list(self._uncredentialed_identities),
             active_branch_action_count=self._active_branch_action_count(),
             enumeration_sufficient=self._enumeration_sufficient(),
             should_commit_to_pivot=self._should_commit_to_pivot(),
@@ -145,8 +151,10 @@ class StateManager:
     def is_objective_met(self) -> bool:
         criteria = self._objective.success_criteria
         required_flag = criteria.get("flag")
-        if required_flag and self._fixture.has_flag(required_flag):
-            return True
+        if required_flag:
+            active_flags = self._active_flags(self._fixture.state_copy().get("flags", []))
+            if required_flag in active_flags:
+                return True
         target = self._objective.target
         if target:
             for action, observation in zip(self._actions_taken, self._observations):
@@ -159,6 +167,19 @@ class StateManager:
             granted_role = observation.details.get("granted_role") or action.target
             if granted_role and granted_role not in self._tested_assume_roles:
                 self._tested_assume_roles.append(granted_role)
+            if granted_role and granted_role not in self._activated_identities:
+                self._activated_identities.append(granted_role)
+
+        reached_role = observation.details.get("reached_role")
+        if not reached_role:
+            reached_role = (observation.details.get("evidence") or {}).get("reached_role")
+        if observation.success and reached_role and reached_role not in self._activated_identities:
+            self._activated_identities.append(reached_role)
+
+        if observation.details.get("reason") == "missing_actor_credentials":
+            actor = observation.details.get("actor") or action.actor
+            if actor and actor not in self._uncredentialed_identities:
+                self._uncredentialed_identities.append(actor)
 
         if not action.actor.startswith("arn:aws:iam::") and not action.actor.startswith("arn:aws:sts::"):
             return
@@ -218,12 +239,36 @@ class StateManager:
                 active_roles.append(role)
         return active_roles
 
+    def _active_branch_identities(self) -> List[str]:
+        fixture_state = self._fixture.state_copy()
+        identities = fixture_state.get("identities", {})
+        active_identities: List[str] = []
+        for identity in self._activated_identities:
+            if identity in self._failed_assume_roles:
+                continue
+            if identity in self._uncredentialed_identities:
+                continue
+            available_actions = identities.get(identity, {}).get("available_actions", [])
+            progress_actions = []
+            for action in available_actions:
+                action_type = action.get("action_type")
+                if action_type not in {"enumerate", "access_resource", "analyze"}:
+                    continue
+                if action_type == "access_resource":
+                    target = action.get("target")
+                    if target and self._access_attempted(identity, target):
+                        continue
+                progress_actions.append(action)
+            if progress_actions:
+                active_identities.append(identity)
+        return active_identities
+
     def _active_branch_action_count(self) -> int:
         fixture_state = self._fixture.state_copy()
         identities = fixture_state.get("identities", {})
         total = 0
-        for role in self._active_assumed_roles():
-            available_actions = identities.get(role, {}).get("available_actions", [])
+        for identity in self._active_branch_identities():
+            available_actions = identities.get(identity, {}).get("available_actions", [])
             total += len(
                 [
                     action

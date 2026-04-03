@@ -139,6 +139,22 @@ Preparar `advanced` com superficies serverless e segredos distribuidos.
 - B: com KMS
 - C: com API publica e ruído maior
 
+### Status atual
+- Variante A implementada em `fixtures/serverless_business_app_variant_a.discovery.json`
+- inventario inicial documentado em `docs/environments/serverless-business-app-variant-a.md`
+- foundation revalidado discovery-driven na Variante A
+- descoberta registrada em `docs/experiments/EXP-033-serverless-foundation-generalization.md`
+- Variante B implementada em `fixtures/serverless_business_app_variant_b.discovery.json`
+- KMS introduzido no arquétipo para preparar classes `advanced`
+- Variante C implementada em `fixtures/serverless_business_app_variant_c.discovery.json`
+- foundation revalidado discovery-driven nas variantes B e C
+- descoberta registrada em `docs/experiments/EXP-034-serverless-foundation-hardening.md`
+- classes `advanced` abertas:
+  - Variante A: `aws-iam-lambda-data`
+  - Variante B: `aws-iam-kms-data`
+  - Variante C: `aws-iam-lambda-data` + `aws-iam-kms-data` estaveis sob ruido maior
+- descoberta registrada em `docs/experiments/EXP-035-serverless-advanced-opening.md`
+
 ## Ambiente 3 — Compute Pivot App
 
 ### Nome logico
@@ -180,6 +196,88 @@ Validar pivôs via compute e preparar external entry / enterprise.
 - A: pivot via instance profile
 - B: pivot via endpoint exposto
 - C: pivot com 2 compute surfaces concorrentes
+
+### Status atual
+- Variante A implementada em `fixtures/compute_pivot_app_variant_a.discovery.json`
+- inventario inicial documentado em `docs/environments/compute-pivot-app-variant-a.md`
+- teste inicial de coerencia do inventario compute adicionado
+- foundation target selection validado no arquétipo:
+  - S3: `compute-payroll-dumps-prod/payroll/2026-03/payroll.csv`
+  - Secrets: `prod/payroll/backend-db-password`
+  - SSM: `/prod/payroll/api_key`
+- foundation revalidado discovery-driven na Variante A
+- descoberta registrada em `docs/experiments/EXP-036-compute-foundation-generalization.md`
+- `aws-iam-compute-iam` aberto na Variante A
+- descoberta registrada em `docs/experiments/EXP-037-compute-pivot-opening.md`
+- Variante B implementada em `fixtures/compute_pivot_app_variant_b.discovery.json`
+- `aws-external-entry-data` aberto na Variante B
+- descoberta registrada em `docs/experiments/EXP-038-external-entry-opening.md`
+- Variante C implementada em `fixtures/compute_pivot_app_variant_c.discovery.json`
+- `aws-cross-account-data` e `aws-multi-step-data` abertos na Variante C
+- discoveries registradas em:
+  - `docs/experiments/EXP-039-cross-account-opening.md`
+  - `docs/experiments/EXP-040-multi-step-chain-opening.md`
+
+## Ambiente 4 — Mixed Generalization
+
+### Nome logico
+`mixed-generalization`
+
+### Objetivo do ambiente
+
+Medir se o Rastro continua preso a profile-first e heuristica lexical quando
+foundation, advanced e enterprise coexistem no mesmo inventario.
+
+### Superficies
+
+- compute publico
+- Lambda
+- KMS
+- S3
+- Secrets Manager
+- SSM
+- cross-account
+
+### Uso
+
+- benchmark de `target selection`
+- benchmark de `campaign synthesis`
+- competicao entre multiplos profiles para o mesmo alvo
+
+### Status atual
+
+- Variante A implementada em `fixtures/mixed_generalization_variant_a.discovery.json`
+- descoberta registrada em `docs/experiments/EXP-044-mixed-generalization-selection.md`
+- usada para validar:
+  - `score_components.lexical/structural`
+  - dedupe opcional por `resource_arn`
+  - escolha do profile mais expressivo para o mesmo target
+- assessment discovery-driven ponta a ponta validado em:
+  - `outputs_mixed_generalization_variant_a_assessment/`
+- descoberta complementar registrada em:
+  - `docs/experiments/EXP-045-mixed-generalization-end-to-end.md`
+- Variante B implementada em `fixtures/mixed_generalization_variant_b.discovery.json`
+- `candidate_profiles` curado removido do benchmark
+- inferencia estrutural de profile validada em:
+  - `outputs_mixed_generalization_variant_b_assessment/`
+- descoberta complementar registrada em:
+  - `docs/experiments/EXP-046-mixed-generalization-inferred-profiles.md`
+- Variante C implementada em `fixtures/mixed_generalization_variant_c.discovery.json`
+- competicao intra-superficie adicionada:
+  - multiplos secrets fortes
+  - multiplos parameters fortes
+  - multiplos objetos S3 plausiveis
+  - multiplos secrets cross-account plausiveis
+- assessment discovery-driven validado em:
+  - `outputs_mixed_generalization_variant_c_assessment/`
+- descoberta complementar registrada em:
+  - `docs/experiments/EXP-047-mixed-generalization-same-surface-competition.md`
+- Variante D implementada em `fixtures/mixed_generalization_variant_d.discovery.json`
+- competicao entre multiplas entry surfaces publicas adicionada
+- assessment discovery-driven validado em:
+  - `outputs_mixed_generalization_variant_d_assessment/`
+- descoberta complementar registrada em:
+  - `docs/experiments/EXP-048-mixed-generalization-competing-entry-surfaces.md`
 
 ## Estrategia de variacao
 

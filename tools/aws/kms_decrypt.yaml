@@ -1,0 +1,11 @@
+name: kms_decrypt
+description: Decrypt with KMS key to unlock downstream data
+phase: credential-access
+mitre_id: T1552.001
+platform: AWS KMS
+preconditions:
+  - iam_roles_listed
+postconditions:
+  - kms_material_accessed
+implementation: tools/aws/kms_decrypt.py
+safe_simulation: true

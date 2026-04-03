@@ -159,7 +159,7 @@ def run_generated_campaign(
     profile_resolver = profile_resolver or get_profile
     profile_name = plan["profile"]
     validate_profile_access(profile_name, authorization)
-    profile = profile_resolver(profile_name)
+    profile = _resolve_profile(profile_resolver, profile_name, plan)
     generated_scope_path = Path(plan["generated_scope"])
     generated_objective_path = Path(plan["generated_objective"])
     try:
@@ -242,6 +242,7 @@ def run_discovery_driven_assessment(
     seed: int | None = None,
     max_candidates_per_profile: int = 5,
     max_plans_per_profile: int = 1,
+    dedupe_resource_targets: bool = False,
     discovery_runner=None,
     target_selector=None,
     campaign_synthesizer=None,
@@ -270,6 +271,7 @@ def run_discovery_driven_assessment(
         discovery_snapshot=discovery_snapshot,
         output_dir=candidates_dir,
         max_candidates_per_profile=max_candidates_per_profile,
+        bundle_name=bundle_name,
     )
     campaign_plan_json, campaign_plan_md, campaign_plan_payload = campaign_synthesizer(
         candidates_payload=candidates_payload,
@@ -277,6 +279,7 @@ def run_discovery_driven_assessment(
         authorization=authorization,
         output_dir=campaign_plan_dir,
         max_plans_per_profile=max_plans_per_profile,
+        dedupe_resource_targets=dedupe_resource_targets,
         profile_resolver=profile_resolver,
     )
 
@@ -310,6 +313,13 @@ def run_discovery_driven_assessment(
         },
         campaigns=campaigns,
     )
+
+
+def _resolve_profile(profile_resolver, profile_name: str, plan: dict):
+    try:
+        return profile_resolver(profile_name, plan)
+    except TypeError:
+        return profile_resolver(profile_name)
 
 
 def write_assessment_summary(result: AssessmentResult, output_dir: Path) -> tuple[Path, Path]:

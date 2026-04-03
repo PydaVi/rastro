@@ -17,6 +17,7 @@ def synthesize_foundation_campaigns(
     authorization: AuthorizationConfig,
     output_dir: Path,
     max_plans_per_profile: int = 1,
+    dedupe_resource_targets: bool = False,
     profile_resolver=None,
 ) -> tuple[Path, Path, dict]:
     profile_resolver = profile_resolver or get_profile
@@ -28,18 +29,18 @@ def synthesize_foundation_campaigns(
     for candidate in candidates_payload.get("candidates", []):
         grouped.setdefault(candidate["profile_family"], []).append(candidate)
 
-    plans: list[dict] = []
+    grouped_plans: list[dict] = []
     generated_dir = output_dir / "generated"
     generated_dir.mkdir(parents=True, exist_ok=True)
 
     for profile_name, candidates in grouped.items():
         validate_profile_access(profile_name, authorization)
-        profile = profile_resolver(profile_name)
-        base_scope = build_campaign_scope(profile, target, authorization)
-        base_objective = Objective.model_validate_json(profile.objective_path.read_text())
         ordered = sorted(candidates, key=lambda item: (-item["score"], item["resource_arn"]))
 
         for candidate in ordered[:max_plans_per_profile]:
+            profile = _resolve_profile(profile_resolver, profile_name, candidate)
+            base_scope = build_campaign_scope(profile, target, authorization)
+            base_objective = Objective.model_validate_json(profile.objective_path.read_text())
             candidate_slug = _slugify(candidate["resource_arn"])
             candidate_dir = generated_dir / profile_name / candidate_slug
             candidate_dir.mkdir(parents=True, exist_ok=True)
@@ -75,7 +76,7 @@ def synthesize_foundation_campaigns(
             objective_path.write_text(json.dumps(objective.model_dump(), indent=2))
             scope_path.write_text(json.dumps(scope.model_dump(), indent=2))
 
-            plans.append(
+            grouped_plans.append(
                 {
                     "id": f"{profile_name}:{candidate_slug}",
                     "profile": profile_name,
@@ -87,8 +88,11 @@ def synthesize_foundation_campaigns(
                     "generated_scope": str(scope_path),
                     "confidence": candidate["confidence"],
                     "score": candidate["score"],
+                    "score_components": candidate.get("score_components", {}),
                 }
             )
+
+    plans = _dedupe_plans_by_resource(grouped_plans) if dedupe_resource_targets else grouped_plans
 
     payload = {
         "target": target.name,
@@ -115,6 +119,51 @@ def _priority_for_score(score: int) -> str:
     if score >= 45:
         return "medium"
     return "low"
+
+
+def _resolve_profile(profile_resolver, profile_name: str, candidate: dict):
+    try:
+        return profile_resolver(profile_name, candidate)
+    except TypeError:
+        return profile_resolver(profile_name)
+
+
+def _dedupe_plans_by_resource(plans: list[dict]) -> list[dict]:
+    by_resource: dict[str, list[dict]] = {}
+    for plan in plans:
+        by_resource.setdefault(plan["resource_arn"], []).append(plan)
+
+    selected: list[dict] = []
+    for resource_arn, resource_plans in by_resource.items():
+        ordered = sorted(
+            resource_plans,
+            key=lambda item: (
+                -item["score"],
+                -item.get("score_components", {}).get("structural", 0),
+                _profile_specificity_rank(item["profile"]),
+                item["profile"],
+                resource_arn,
+            ),
+        )
+        selected.append(ordered[0])
+    selected.sort(key=lambda item: (-item["score"], item["profile"], item["resource_arn"]))
+    return selected
+
+
+def _profile_specificity_rank(profile_name: str) -> int:
+    ranks = {
+        "aws-multi-step-data": 0,
+        "aws-cross-account-data": 1,
+        "aws-external-entry-data": 2,
+        "aws-iam-compute-iam": 3,
+        "aws-iam-lambda-data": 4,
+        "aws-iam-kms-data": 5,
+        "aws-iam-role-chaining": 6,
+        "aws-iam-secrets": 7,
+        "aws-iam-ssm": 8,
+        "aws-iam-s3": 9,
+    }
+    return ranks.get(profile_name, 50)
 
 
 def _count_by_profile(plans: list[dict]) -> dict[str, int]:

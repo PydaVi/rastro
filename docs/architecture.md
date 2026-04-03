@@ -231,6 +231,22 @@ python -m app.main assessment run \
 - o catalogo de profiles ainda e interno ao codigo
 - o bundle `aws-foundation` e o unico bundle operacional pronto
 - advanced e enterprise ainda dependem de expansao do portfolio
+- `aws-cross-account-data` em AWS real continua dependente de um contrato
+  multi-account explicito e de uma segunda conta controlada
+
+## Contrato para cross-account real
+
+`aws-cross-account-data` nao deve ser promovido para AWS real com pseudo-lab de
+uma conta so. A validacao real exige:
+
+- conta origem
+- conta destino
+- trust policy explicita entre contas
+- evidencia real de `sts:AssumeRole` cruzando o boundary de conta
+- leitura do recurso alvo na conta destino
+
+Documento de desenho:
+- `docs/cross-account-real-validation.md`
 
 ## Proximo bloco do Produto 01
 

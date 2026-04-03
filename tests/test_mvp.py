@@ -28,7 +28,7 @@ from operations.service import (
 from operations.models import AssessmentResult, CampaignResult
 from operations.discovery import run_foundation_discovery
 from operations.campaign_synthesis import synthesize_foundation_campaigns
-from operations.synthetic_catalog import get_synthetic_profile
+from operations.synthetic_catalog import get_mixed_synthetic_profile, get_synthetic_profile
 from operations.target_selection import select_foundation_targets
 from planner.action_shaping import shape_available_actions
 from planner.ollama_planner import OllamaPlanner
@@ -170,6 +170,41 @@ class FakeAwsClient:
             "Name": secret_id,
             "VersionId": "example-version",
             "SecretString": "payroll-api-key-preview",
+        }
+
+    def get_parameter(self, region: str, name: str, credentials=None):
+        return {
+            "ARN": f"arn:aws:ssm:{region}:123456789012:parameter/{name.lstrip('/')}",
+            "Name": name,
+            "Type": "SecureString",
+            "Value": "parameter-preview",
+            "Version": 1,
+        }
+
+    def get_instance_profile(self, region: str, instance_profile_name: str, credentials=None):
+        return {
+            "Arn": f"arn:aws:iam::123456789012:instance-profile/{instance_profile_name}",
+            "InstanceProfileName": instance_profile_name,
+            "Roles": ["arn:aws:iam::123456789012:role/PayrollAppInstanceRole"],
+        }
+
+    def list_instance_profile_associations(self, region: str, instance_profile_arn: str, credentials=None):
+        return [
+            {
+                "InstanceId": "i-0123456789abcdef0",
+                "State": "associated",
+                "AssociationId": "iip-assoc-123",
+            }
+        ]
+
+    def describe_instance(self, region: str, instance_id: str, credentials=None):
+        return {
+            "InstanceId": instance_id,
+            "PublicIpAddress": "54.1.2.3",
+            "PrivateIpAddress": "172.31.0.10",
+            "State": "running",
+            "IamInstanceProfileArn": "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+            "MetadataOptions": {"HttpTokens": "optional"},
         }
 
 
@@ -439,6 +474,506 @@ def test_aws_real_executor_uses_actor_credentials_for_role_chaining() -> None:
         "SessionToken": "token-data",
     }
     assert access_observation.details["evidence"]["accessed_via"] == "arn:aws:iam::123456789012:role/DataAccessRole"
+
+
+def test_aws_real_executor_supports_compute_instance_profile_pivot() -> None:
+    fixture = Fixture(
+        {
+            "name": "aws-compute-instance-profile-pivot-test",
+            "state": {
+                "flags": [],
+                "identities": {
+                    "arn:aws:iam::123456789012:user/platform-analyst": {
+                        "available_actions": [
+                            {
+                                "action_type": "enumerate",
+                                "target": "arn:aws:iam::123456789012:root",
+                                "parameters": {"service": "iam", "region": "us-east-1"},
+                                "tool": "iam_list_roles",
+                            },
+                            {
+                                "action_type": "access_resource",
+                                "target": "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+                                "parameters": {
+                                    "service": "ec2",
+                                    "region": "us-east-1",
+                                    "resource_arn": "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+                                },
+                                "tool": "ec2_instance_profile_pivot",
+                            },
+                        ]
+                    }
+                },
+            },
+            "transitions": [
+                {
+                    "action_type": "enumerate",
+                    "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+                    "target": "arn:aws:iam::123456789012:root",
+                    "observation": {"details": "Listed roles."},
+                },
+                {
+                    "action_type": "access_resource",
+                    "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+                    "target": "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+                    "observation": {
+                        "details": "Pivoted to the compute-attached role.",
+                        "evidence": {
+                            "reached_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+                        },
+                    },
+                },
+            ],
+        }
+    )
+    scope = Scope.model_construct(
+        target="aws",
+        allowed_actions=[
+            ActionType.ENUMERATE,
+            ActionType.ACCESS_RESOURCE,
+        ],
+        allowed_resources=[
+            "arn:aws:iam::123456789012:root",
+            "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+            "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+        ],
+        max_steps=4,
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam", "ec2"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+        planner=None,
+    )
+    client = FakeAwsClient()
+    executor = AwsRealExecutor(fixture=fixture, scope=scope, client=client)
+
+    enumerate_action = fixture.enumerate_actions(None)[0]
+    enumerate_observation = executor.execute(enumerate_action)
+
+    pivot_action = Action(
+        action_type=ActionType.ACCESS_RESOURCE,
+        actor="arn:aws:iam::123456789012:user/platform-analyst",
+        target="arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+        parameters={
+            "service": "ec2",
+            "region": "us-east-1",
+            "resource_arn": "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+        },
+        tool="ec2_instance_profile_pivot",
+    )
+    pivot_observation = executor.execute(pivot_action)
+
+    assert enumerate_observation.success is True
+    assert pivot_observation.success is True
+    assert pivot_observation.details["request_summary"]["api_calls"] == [
+        "iam:GetInstanceProfile",
+        "ec2:DescribeIamInstanceProfileAssociations",
+    ]
+    assert pivot_observation.details["reached_role"] == "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+    assert pivot_observation.details["response_summary"]["association_count"] == 1
+
+
+def test_aws_real_executor_supports_external_entry_compute_pivot() -> None:
+    fixture = Fixture(
+        {
+            "name": "aws-external-entry-compute-pivot-test",
+            "state": {
+                "flags": [],
+                "identities": {
+                    "arn:aws:iam::123456789012:user/platform-analyst": {
+                        "available_actions": [
+                            {
+                                "action_type": "access_resource",
+                                "target": "arn:aws:ec2:us-east-1:123456789012:instance/i-0123456789abcdef0",
+                                "parameters": {
+                                    "service": "ec2",
+                                    "region": "us-east-1",
+                                    "resource_arn": "arn:aws:ec2:us-east-1:123456789012:instance/i-0123456789abcdef0",
+                                    "instance_id": "i-0123456789abcdef0",
+                                    "instance_profile_arn": "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+                                },
+                                "tool": "ec2_instance_profile_pivot",
+                            }
+                        ]
+                    }
+                },
+            },
+            "transitions": [
+                {
+                    "action_type": "access_resource",
+                    "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+                    "target": "arn:aws:ec2:us-east-1:123456789012:instance/i-0123456789abcdef0",
+                    "observation": {
+                        "details": "Pivoted from public EC2 surface into the attached role.",
+                        "evidence": {
+                            "reached_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+                        },
+                    },
+                }
+            ],
+        }
+    )
+    scope = Scope.model_construct(
+        target="aws",
+        allowed_actions=[ActionType.ACCESS_RESOURCE],
+        allowed_resources=[
+            "arn:aws:ec2:us-east-1:123456789012:instance/i-0123456789abcdef0",
+            "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+            "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+        ],
+        max_steps=3,
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["ec2", "iam"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+        planner=None,
+    )
+    executor = AwsRealExecutor(fixture=fixture, scope=scope, client=FakeAwsClient())
+    pivot_action = fixture.enumerate_actions(None)[0]
+    pivot_observation = executor.execute(pivot_action)
+
+    assert pivot_observation.success is True
+    assert pivot_observation.details["request_summary"]["api_calls"] == [
+        "ec2:DescribeInstances",
+        "iam:GetInstanceProfile",
+        "ec2:DescribeIamInstanceProfileAssociations",
+    ]
+    assert pivot_observation.details["response_summary"]["public_ip"] == "54.1.2.3"
+    assert pivot_observation.details["evidence"]["entry_surface_arn"].endswith(
+        "instance/i-0123456789abcdef0"
+    )
+
+
+def test_aws_real_executor_can_acquire_surrogate_credentials_for_pivoted_role() -> None:
+    fixture = Fixture(
+        {
+            "name": "aws-surrogate-pivot-credentials-test",
+            "state": {
+                "flags": [],
+                "identities": {
+                    "arn:aws:iam::123456789012:user/platform-analyst": {
+                        "available_actions": [
+                            {
+                                "action_type": "access_resource",
+                                "target": "arn:aws:ec2:us-east-1:123456789012:instance/i-0123456789abcdef0",
+                                "parameters": {
+                                    "service": "ec2",
+                                    "region": "us-east-1",
+                                    "resource_arn": "arn:aws:ec2:us-east-1:123456789012:instance/i-0123456789abcdef0",
+                                    "instance_id": "i-0123456789abcdef0",
+                                    "instance_profile_arn": "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+                                    "credential_acquisition": {
+                                        "mode": "assume_role_surrogate",
+                                        "session_name": "rastro-pivot-surrogate",
+                                    },
+                                },
+                                "tool": "ec2_instance_profile_pivot",
+                            }
+                        ]
+                    }
+                },
+            },
+            "transitions": [
+                {
+                    "action_type": "access_resource",
+                    "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+                    "target": "arn:aws:ec2:us-east-1:123456789012:instance/i-0123456789abcdef0",
+                    "observation": {
+                        "details": "Pivoted into compute role.",
+                        "evidence": {
+                            "reached_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+                        },
+                    },
+                }
+            ],
+        }
+    )
+    scope = Scope.model_construct(
+        target="aws",
+        allowed_actions=[ActionType.ACCESS_RESOURCE],
+        allowed_resources=[
+            "arn:aws:ec2:us-east-1:123456789012:instance/i-0123456789abcdef0",
+            "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+            "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+        ],
+        max_steps=3,
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["ec2", "iam", "sts"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+        planner=None,
+    )
+    client = FakeAwsClient()
+    executor = AwsRealExecutor(fixture=fixture, scope=scope, client=client)
+
+    pivot_observation = executor.execute(fixture.enumerate_actions(None)[0])
+
+    assert pivot_observation.success is True
+    assert pivot_observation.details["evidence"]["credential_acquisition"]["mode"] == "assume_role_surrogate"
+    assert client.assume_role_calls[-1]["role_arn"] == "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+    assert client.assume_role_calls[-1]["credentials"] is None
+
+
+def test_aws_real_executor_requires_explicit_credentials_for_post_pivot_actor() -> None:
+    fixture = Fixture(
+        {
+            "name": "aws-post-pivot-credentials-required-test",
+            "state": {
+                "flags": [],
+                "identities": {
+                    "arn:aws:iam::123456789012:user/platform-analyst": {
+                        "available_actions": [
+                            {
+                                "action_type": "enumerate",
+                                "target": "arn:aws:iam::123456789012:root",
+                                "parameters": {"service": "iam", "region": "us-east-1"},
+                                "tool": "iam_list_roles",
+                            },
+                            {
+                                "action_type": "access_resource",
+                                "target": "arn:aws:ec2:us-east-1:123456789012:instance/i-0123456789abcdef0",
+                                "parameters": {
+                                    "service": "ec2",
+                                    "region": "us-east-1",
+                                    "resource_arn": "arn:aws:ec2:us-east-1:123456789012:instance/i-0123456789abcdef0",
+                                    "instance_id": "i-0123456789abcdef0",
+                                    "instance_profile_arn": "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+                                },
+                                "tool": "ec2_instance_profile_pivot",
+                            },
+                        ]
+                    }
+                },
+            },
+            "transitions": [
+                {
+                    "action_type": "enumerate",
+                    "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+                    "target": "arn:aws:iam::123456789012:root",
+                    "observation": {"details": "Listed roles."},
+                },
+                {
+                    "action_type": "access_resource",
+                    "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+                    "target": "arn:aws:ec2:us-east-1:123456789012:instance/i-0123456789abcdef0",
+                    "observation": {
+                        "details": "Pivoted into compute role.",
+                        "reached_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+                    },
+                    "update_identities": {
+                        "arn:aws:iam::123456789012:role/PayrollAppInstanceRole": {
+                            "available_actions": [
+                                {
+                                    "action_type": "assume_role",
+                                    "target": "arn:aws:iam::123456789012:role/BrokerRole",
+                                    "parameters": {
+                                        "service": "sts",
+                                        "region": "us-east-1",
+                                        "role_arn": "arn:aws:iam::123456789012:role/BrokerRole",
+                                        "session_name": "rastro-broker",
+                                        "policy_action": "s3:GetObject",
+                                        "policy_resource": "arn:aws:s3:::bucket/object",
+                                    },
+                                    "tool": "iam_passrole",
+                                }
+                            ]
+                        }
+                    },
+                },
+                {
+                    "action_type": "assume_role",
+                    "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+                    "target": "arn:aws:iam::123456789012:role/BrokerRole",
+                    "observation": {"granted_role": "arn:aws:iam::123456789012:role/BrokerRole"},
+                },
+            ],
+        }
+    )
+    scope = Scope.model_construct(
+        target="aws",
+        allowed_actions=[ActionType.ENUMERATE, ActionType.ACCESS_RESOURCE, ActionType.ASSUME_ROLE],
+        allowed_resources=[
+            "arn:aws:iam::123456789012:root",
+            "arn:aws:ec2:us-east-1:123456789012:instance/i-0123456789abcdef0",
+            "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+            "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+            "arn:aws:iam::123456789012:role/BrokerRole",
+        ],
+        max_steps=4,
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam", "ec2", "sts"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+        planner=None,
+    )
+    client = FakeAwsClient()
+    executor = AwsRealExecutor(fixture=fixture, scope=scope, client=client)
+
+    executor.execute(fixture.enumerate_actions(None)[0])
+    executor.execute(fixture.enumerate_actions(None)[1])
+
+    assume_action = next(
+        action
+        for action in fixture.enumerate_actions(None)
+        if action.action_type == ActionType.ASSUME_ROLE
+    )
+    assume_observation = executor.execute(assume_action)
+
+    assert assume_observation.success is False
+    assert assume_observation.details["reason"] == "missing_actor_credentials"
+    assert assume_observation.details["actor"] == "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+    assert client.assume_role_calls == []
+
+
+def test_shape_available_actions_filters_uncredentialed_actor_progression() -> None:
+    fixture = Fixture(
+        {
+            "name": "uncredentialed-actor-filter-test",
+            "state": {
+                "flags": [],
+                "identities": {
+                    "arn:aws:iam::123456789012:user/platform-analyst": {
+                        "available_actions": [
+                            {
+                                "action_type": "enumerate",
+                                "target": "arn:aws:iam::123456789012:root",
+                                "parameters": {"service": "iam", "region": "us-east-1"},
+                                "tool": "iam_list_roles",
+                            }
+                        ]
+                    }
+                },
+            },
+            "transitions": [
+                {
+                    "action_type": "enumerate",
+                    "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+                    "target": "arn:aws:iam::123456789012:root",
+                    "observation": {"details": "Listed roles."},
+                },
+                {
+                    "action_type": "access_resource",
+                    "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+                    "target": "arn:aws:ec2:us-east-1:123456789012:instance/i-0123456789abcdef0",
+                    "observation": {
+                        "details": "Pivoted into compute role.",
+                        "reached_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+                    },
+                    "update_identities": {
+                        "arn:aws:iam::123456789012:role/PayrollAppInstanceRole": {
+                            "available_actions": [
+                                {
+                                    "action_type": "assume_role",
+                                    "target": "arn:aws:iam::123456789012:role/BrokerRole",
+                                    "parameters": {
+                                        "service": "sts",
+                                        "region": "us-east-1",
+                                        "role_arn": "arn:aws:iam::123456789012:role/BrokerRole",
+                                        "session_name": "rastro-broker",
+                                        "policy_action": "s3:GetObject",
+                                        "policy_resource": "arn:aws:s3:::bucket/object",
+                                    },
+                                    "tool": "iam_passrole",
+                                }
+                            ]
+                        }
+                    },
+                },
+            ],
+        }
+    )
+    scope = Scope.model_construct(
+        target="aws",
+        allowed_actions=[ActionType.ENUMERATE, ActionType.ACCESS_RESOURCE, ActionType.ASSUME_ROLE],
+        allowed_resources=[
+            "arn:aws:iam::123456789012:root",
+            "arn:aws:ec2:us-east-1:123456789012:instance/i-0123456789abcdef0",
+            "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+            "arn:aws:iam::123456789012:role/BrokerRole",
+        ],
+        max_steps=4,
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam", "ec2", "sts"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+        planner=None,
+    )
+    state = StateManager(
+        objective=Objective(description="test", target="arn:aws:s3:::bucket/object", success_criteria={}),
+        scope=scope,
+        fixture=fixture,
+        tool_registry=ToolRegistry.load(Path(__file__).resolve().parents[1] / "tools"),
+    )
+
+    enumerate_action = fixture.enumerate_actions(None)[0]
+    state.apply_observation(
+        enumerate_action,
+        Observation(success=True, details={"details": "Listed roles."}),
+        reason="enumerate",
+    )
+    pivot_action = Action(
+        action_type=ActionType.ACCESS_RESOURCE,
+        actor="arn:aws:iam::123456789012:user/platform-analyst",
+        target="arn:aws:ec2:us-east-1:123456789012:instance/i-0123456789abcdef0",
+        parameters={
+            "service": "ec2",
+            "region": "us-east-1",
+            "resource_arn": "arn:aws:ec2:us-east-1:123456789012:instance/i-0123456789abcdef0",
+        },
+        tool="ec2_instance_profile_pivot",
+    )
+    state.apply_observation(
+        pivot_action,
+        Observation(
+            success=True,
+            details={"reached_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"},
+        ),
+        reason="pivot",
+    )
+    assume_action = Action(
+        action_type=ActionType.ASSUME_ROLE,
+        actor="arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+        target="arn:aws:iam::123456789012:role/BrokerRole",
+        parameters={
+            "service": "sts",
+            "region": "us-east-1",
+            "role_arn": "arn:aws:iam::123456789012:role/BrokerRole",
+            "session_name": "rastro-broker",
+            "policy_action": "s3:GetObject",
+            "policy_resource": "arn:aws:s3:::bucket/object",
+        },
+        tool="iam_passrole",
+    )
+    state.apply_observation(
+        assume_action,
+        Observation(
+            success=False,
+            details={
+                "reason": "missing_actor_credentials",
+                "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+            },
+        ),
+        reason="missing creds",
+    )
+
+    shaped = shape_available_actions(state.snapshot(), fixture.enumerate_actions(None))
+
+    assert all(action.actor != "arn:aws:iam::123456789012:role/PayrollAppInstanceRole" for action in shaped)
 
 
 def test_profile_list_cli_shows_foundation_bundle() -> None:
@@ -775,6 +1310,7 @@ def test_run_foundation_discovery_uses_target_override_for_ssm_prefixes(tmp_path
     authorization = load_authorization(
         Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
     )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
     client = FakeAwsClient()
 
     _, _, snapshot = run_foundation_discovery(
@@ -870,6 +1406,70 @@ def test_state_marks_objective_met_when_successful_action_hits_objective_target(
     assert state.is_objective_met() is True
 
 
+def test_state_marks_objective_met_when_tool_postcondition_flag_is_active() -> None:
+    fixture = Fixture.load(Path(__file__).resolve().parents[1] / "fixtures" / "compute_pivot_app_iam_compute_iam_lab.json")
+    scope = Scope.model_validate_json(
+        (Path(__file__).resolve().parents[1] / "examples" / "scope_compute_pivot_app_iam_compute_iam.json").read_text()
+    )
+    objective = Objective.model_validate_json(
+        (Path(__file__).resolve().parents[1] / "examples" / "objective_compute_pivot_app_iam_compute_iam.json").read_text()
+    )
+    tool_registry = ToolRegistry.load(Path(__file__).resolve().parents[1] / "tools")
+    state = StateManager(
+        objective=objective,
+        scope=scope,
+        fixture=AwsDryRunLab.from_fixture(fixture, scope),
+        tool_registry=tool_registry,
+    )
+
+    enumerate_action = fixture.enumerate_actions(None)[0]
+    state.apply_observation(enumerate_action, fixture.execute(enumerate_action), "enumerated roles")
+    pivot_action = next(
+        action
+        for action in fixture.enumerate_actions(None)
+        if action.action_type == ActionType.ACCESS_RESOURCE
+        and action.target == "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/payroll-web"
+    )
+    state.apply_observation(pivot_action, fixture.execute(pivot_action), "pivoted to compute role")
+
+    assert state.is_objective_met() is True
+
+
+def test_successful_pivot_promotes_reached_role_to_active_branch_identity() -> None:
+    fixture = Fixture.load(Path(__file__).resolve().parents[1] / "fixtures" / "compute_pivot_app_external_entry_lab.json")
+    scope = Scope.model_validate_json(
+        (Path(__file__).resolve().parents[1] / "examples" / "scope_compute_pivot_app_external_entry.json").read_text()
+    )
+    objective = Objective.model_validate_json(
+        (Path(__file__).resolve().parents[1] / "examples" / "objective_compute_pivot_app_external_entry.json").read_text()
+    )
+    tool_registry = ToolRegistry.load(Path(__file__).resolve().parents[1] / "tools")
+    state = StateManager(
+        objective=objective,
+        scope=scope,
+        fixture=AwsDryRunLab.from_fixture(fixture, scope),
+        tool_registry=tool_registry,
+    )
+
+    enumerate_action = fixture.enumerate_actions(None)[0]
+    state.apply_observation(enumerate_action, fixture.execute(enumerate_action), "enumerated roles")
+    pivot_action = next(
+        action
+        for action in fixture.enumerate_actions(None)
+        if action.target == "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public"
+    )
+    state.apply_observation(pivot_action, fixture.execute(pivot_action), "pivoted from public surface")
+
+    snapshot = state.snapshot()
+    available = fixture.enumerate_actions(None)
+    filtered = tool_registry.filter_actions(available, snapshot.fixture_state.get("flags", []))
+    shaped = shape_available_actions(snapshot, filtered)
+
+    assert "arn:aws:iam::123456789012:role/PayrollAppInstanceRole" in snapshot.active_branch_identities
+    assert any(action.actor == "arn:aws:iam::123456789012:role/PayrollAppInstanceRole" for action in filtered)
+    assert all(action.actor == "arn:aws:iam::123456789012:role/PayrollAppInstanceRole" for action in shaped)
+
+
 def test_campaign_synthesis_merges_scope_accounts_from_candidate_resources(tmp_path: Path) -> None:
     target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
     authorization = load_authorization(
@@ -942,6 +1542,818 @@ def test_internal_data_platform_variants_support_discovery_driven_end_to_end(
 
     assert assessment.summary["campaigns_total"] == 4
     assert assessment.summary["campaigns_passed"] == 4
+
+
+def test_serverless_business_app_variant_a_has_coherent_serverless_inventory(tmp_path: Path) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "serverless_business_app_variant_a.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+    )
+
+    top_secret = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-secrets")
+    top_ssm = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-ssm")
+
+    assert discovery_snapshot["summary"]["roles"] == 5
+    assert any(resource["resource_type"] == "compute.lambda_function" for resource in discovery_snapshot["resources"])
+    assert any(resource["resource_type"] == "network.api_gateway" for resource in discovery_snapshot["resources"])
+    assert top_secret["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key"
+    assert top_ssm["resource_arn"] == "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key"
+
+
+def test_serverless_business_app_variant_a_supports_foundation_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "serverless_business_app_variant_a.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "serverless_variant_a",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=lambda name: get_synthetic_profile("serverless-business-app", name),
+        max_steps=8,
+    )
+
+    assert assessment.summary["campaigns_total"] == 4
+    assert assessment.summary["campaigns_passed"] == 4
+
+
+def test_serverless_business_app_variant_a_selects_advanced_lambda_and_kms_targets(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "serverless_business_app_variant_a.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-advanced",
+    )
+
+    top_lambda = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-lambda-data")
+    assert top_lambda["resource_arn"] == "arn:aws:lambda:us-east-1:123456789012:function:payroll-handler"
+
+
+def test_serverless_business_app_variant_b_adds_kms_without_breaking_foundation_selection(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "serverless_business_app_variant_b.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+    )
+
+    top_secret = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-secrets")
+    top_ssm = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-ssm")
+    top_role = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-role-chaining")
+
+    assert any(resource["resource_type"] == "crypto.kms_key" for resource in discovery_snapshot["resources"])
+    assert any(resource["identifier"].endswith(":role/PayrollDecryptRole") for resource in discovery_snapshot["resources"])
+    assert top_secret["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key"
+    assert top_ssm["resource_arn"] == "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key"
+    assert top_role["resource_arn"] == "arn:aws:iam::123456789012:role/PayrollHandlerRole"
+
+    _, _, advanced_payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path / "advanced",
+        bundle_name="aws-advanced",
+    )
+    top_kms = next(candidate for candidate in advanced_payload["candidates"] if candidate["profile_family"] == "aws-iam-kms-data")
+    assert top_kms["resource_arn"] == "arn:aws:kms:us-east-1:123456789012:key/payroll-runtime"
+
+
+def test_serverless_business_app_variant_c_keeps_foundation_targets_stable_under_public_api_noise(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "serverless_business_app_variant_c.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+    )
+
+    top_secret = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-secrets")
+    top_ssm = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-ssm")
+    top_role = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-role-chaining")
+
+    assert any(
+        resource["identifier"] == "arn:aws:apigateway:us-east-1::/restapis/admin-public-bridge"
+        for resource in discovery_snapshot["resources"]
+    )
+    assert top_secret["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key"
+    assert top_ssm["resource_arn"] == "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key"
+    assert top_role["resource_arn"] == "arn:aws:iam::123456789012:role/PayrollHandlerRole"
+
+
+@pytest.mark.parametrize(
+    "variant_name",
+    [
+        "serverless_business_app_variant_b.discovery.json",
+        "serverless_business_app_variant_c.discovery.json",
+    ],
+)
+def test_serverless_business_app_variants_b_c_support_foundation_discovery_driven_end_to_end(
+    tmp_path: Path, variant_name: str
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / variant_name).read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / variant_name.replace(".discovery.json", ""),
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=lambda name: get_synthetic_profile("serverless-business-app", name),
+        max_steps=8,
+    )
+
+    assert assessment.summary["campaigns_total"] == 4
+    assert assessment.summary["campaigns_passed"] == 4
+
+
+def test_serverless_business_app_variant_a_supports_advanced_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "serverless_business_app_variant_a.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-advanced",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "serverless_advanced_variant_a",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=lambda name: get_synthetic_profile("serverless-business-app", name),
+        max_steps=8,
+    )
+
+    assert assessment.summary["campaigns_total"] == 5
+    assert assessment.summary["campaigns_passed"] == 5
+
+
+def test_serverless_business_app_variant_b_supports_advanced_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "serverless_business_app_variant_b.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-advanced",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "serverless_advanced_variant_b",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=lambda name: get_synthetic_profile("serverless-business-app", name),
+        max_steps=8,
+    )
+
+    assert assessment.summary["campaigns_total"] == 7
+    assert assessment.summary["campaigns_passed"] == 7
+
+
+def test_serverless_business_app_variant_c_supports_advanced_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "serverless_business_app_variant_c.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-advanced",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "serverless_advanced_variant_c",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=lambda name: get_synthetic_profile("serverless-business-app", name),
+        max_steps=8,
+    )
+
+    assert assessment.summary["campaigns_total"] == 7
+    assert assessment.summary["campaigns_passed"] == 7
+
+
+def test_compute_pivot_app_variant_a_has_coherent_compute_inventory_and_foundation_targets(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "compute_pivot_app_variant_a.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+    )
+
+    top_s3 = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-s3")
+    top_secret = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-secrets")
+    top_ssm = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-ssm")
+
+    assert any(resource["resource_type"] == "compute.instance_profile" for resource in discovery_snapshot["resources"])
+    assert any(resource["resource_type"] == "compute.ec2_instance" for resource in discovery_snapshot["resources"])
+    assert any(resource["resource_type"] == "network.load_balancer" for resource in discovery_snapshot["resources"])
+    assert top_s3["resource_arn"] == "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv"
+    assert top_secret["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll/backend-db-password"
+    assert top_ssm["resource_arn"] == "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key"
+
+
+def test_compute_pivot_app_variant_a_supports_foundation_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "compute_pivot_app_variant_a.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "compute_pivot_variant_a",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=lambda name: get_synthetic_profile("compute-pivot-app", name),
+        max_steps=8,
+    )
+
+    assert assessment.summary["campaigns_total"] == 4
+    assert assessment.summary["campaigns_passed"] == 4
+
+
+def test_compute_pivot_app_variant_a_selects_compute_pivot_target_with_structural_signals(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "compute_pivot_app_variant_a.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-advanced",
+    )
+
+    top_compute = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-compute-iam")
+
+    assert top_compute["resource_arn"] == "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+    assert "compute_linked_role" in top_compute["selection_reason"]
+    assert "instance_profile_signal" in top_compute["selection_reason"]
+    assert "public_compute_reachability" in top_compute["selection_reason"]
+
+
+def test_compute_pivot_app_variant_a_supports_advanced_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "compute_pivot_app_variant_a.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-advanced",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "compute_pivot_advanced_variant_a",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=lambda name: get_synthetic_profile("compute-pivot-app", name),
+        max_steps=8,
+    )
+
+    assert assessment.summary["campaigns_total"] == 5
+    assert assessment.summary["campaigns_passed"] == 5
+
+
+def test_compute_pivot_app_variant_b_selects_external_entry_target_from_structural_reachability(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "compute_pivot_app_variant_b.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-advanced",
+    )
+
+    top_external = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-external-entry-data")
+    assert top_external["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll/backend-db-password"
+    assert "external_reachability_signal" in top_external["selection_reason"]
+    assert "public_path_roles" in top_external["signals"]
+
+
+def test_compute_pivot_app_variant_b_supports_advanced_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "compute_pivot_app_variant_b.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-advanced",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "compute_pivot_advanced_variant_b",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=lambda name: get_synthetic_profile("compute-pivot-app", name),
+        max_steps=8,
+    )
+
+    assert assessment.summary["campaigns_total"] == 6
+    assert assessment.summary["campaigns_passed"] == 6
+
+
+def test_compute_pivot_app_variant_c_selects_cross_account_and_multi_step_targets(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "compute_pivot_app_variant_c.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-enterprise",
+    )
+
+    top_cross = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-cross-account-data")
+    top_multi = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-multi-step-data")
+
+    assert top_cross["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key"
+    assert "cross_account_target" in top_cross["selection_reason"]
+    assert "cross_account_roles" in top_cross["signals"]
+
+    assert top_multi["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key"
+    assert "multi_step_chain" in top_multi["selection_reason"]
+    assert top_multi["signals"]["pivot_chain"] == [
+        "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+        "arn:aws:iam::123456789012:role/AnalyticsBrokerRole",
+        "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole",
+    ]
+
+
+def test_compute_pivot_app_variant_c_supports_enterprise_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "compute_pivot_app_variant_c.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-enterprise",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "compute_pivot_enterprise_variant_c",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=lambda name: get_synthetic_profile("compute-pivot-app", name),
+        max_steps=9,
+    )
+
+    assert assessment.summary["campaigns_total"] == 7
+    assert assessment.summary["campaigns_passed"] == 7
+
+
+def test_mixed_generalization_variant_prefers_structural_candidates_over_lexical_noise(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_a.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-enterprise",
+    )
+
+    top_secrets = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-secrets")
+    top_external = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-external-entry-data")
+    top_cross = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-cross-account-data")
+    top_multi = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-multi-step-data")
+
+    assert top_secrets["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key"
+    assert top_external["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key"
+    assert top_cross["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key"
+    assert top_multi["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key"
+    assert top_multi["score_components"]["structural"] > top_multi["score_components"]["lexical"]
+    assert "explicit_profile_mapping" in top_external["selection_reason"]
+    assert "chain_depth_signal" in top_multi["selection_reason"]
+
+
+def test_campaign_synthesis_can_dedupe_same_target_to_more_expressive_profile(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_a.discovery.json").read_text()
+    )
+
+    _, _, candidates_payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path / "candidates",
+        bundle_name="aws-enterprise",
+    )
+
+    _, _, plan_payload = synthesize_foundation_campaigns(
+        candidates_payload=candidates_payload,
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "plans",
+        dedupe_resource_targets=True,
+        profile_resolver=get_mixed_synthetic_profile,
+    )
+
+    profiles_by_resource = {plan["resource_arn"]: plan["profile"] for plan in plan_payload["plans"]}
+    assert (
+        profiles_by_resource["arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key"]
+        == "aws-multi-step-data"
+    )
+    assert (
+        profiles_by_resource["arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key"]
+        == "aws-external-entry-data"
+    )
+
+
+def test_mixed_generalization_variant_supports_enterprise_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_a.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-enterprise",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "mixed_generalization_variant_a",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=get_mixed_synthetic_profile,
+        dedupe_resource_targets=True,
+        max_steps=9,
+    )
+    assessment_json, assessment_md = write_assessment_summary(assessment, tmp_path / "mixed_generalization_variant_a")
+
+    assert assessment.summary["campaigns_total"] == 8
+    assert assessment.summary["campaigns_passed"] == 8
+    assert assessment_json.exists()
+    assert assessment_md.exists()
+    findings_md = tmp_path / "mixed_generalization_variant_a" / "assessment_findings.md"
+    assert findings_md.exists()
+    findings_text = findings_md.read_text()
+    assert "aws-external-entry-data" in findings_text
+    assert "aws-multi-step-data" in findings_text
+
+
+def test_mixed_generalization_variant_b_inferrs_profiles_without_curated_candidate_mapping(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_b.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-enterprise",
+    )
+
+    top_external = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-external-entry-data")
+    top_cross = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-cross-account-data")
+    top_multi = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-multi-step-data")
+
+    assert top_external["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key"
+    assert "inferred_profile_mapping" in top_external["selection_reason"]
+    assert "aws-external-entry-data" in top_external["signals"]["inferred_profiles"]
+    assert top_cross["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key"
+    assert top_multi["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key"
+
+
+def test_mixed_generalization_variant_b_supports_enterprise_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_b.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-enterprise",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "mixed_generalization_variant_b",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=get_mixed_synthetic_profile,
+        dedupe_resource_targets=True,
+        max_steps=9,
+    )
+
+    assert assessment.summary["campaigns_total"] == 8
+    assert assessment.summary["campaigns_passed"] == 8
+
+
+def test_mixed_generalization_variant_c_keeps_best_targets_on_top_under_same_surface_competition(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_c.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-enterprise",
+    )
+
+    top_s3 = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-s3")
+    top_secrets = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-secrets")
+    top_ssm = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-ssm")
+    top_external = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-external-entry-data")
+    top_multi = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-multi-step-data")
+
+    assert top_s3["resource_arn"] == "arn:aws:s3:::mixed-payroll-data-prod/payroll/2026-03/payroll.csv"
+    assert top_secrets["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key"
+    assert top_ssm["resource_arn"] == "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key"
+    assert top_external["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key"
+    assert top_multi["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key"
+
+
+def test_mixed_generalization_variant_c_supports_enterprise_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_c.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-enterprise",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "mixed_generalization_variant_c",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=get_mixed_synthetic_profile,
+        dedupe_resource_targets=True,
+        max_steps=9,
+    )
+
+    assert assessment.summary["campaigns_total"] == 8
+    assert assessment.summary["campaigns_passed"] == 8
+
+
+def test_mixed_generalization_variant_d_prefers_higher_quality_public_entry_path(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_d.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-enterprise",
+    )
+
+    top_external = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-external-entry-data")
+    assert top_external["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key"
+    assert "public_role_quality_signal" in top_external["selection_reason"]
+    assert top_external["signals"]["public_role_score"] > 0
+    webhook = next(
+        candidate
+        for candidate in payload["candidates"]
+        if candidate["profile_family"] == "aws-external-entry-data"
+        and candidate["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-webhook-password"
+    )
+    assert webhook["signals"]["public_role_score"] < top_external["signals"]["public_role_score"]
+
+
+def test_mixed_generalization_variant_d_supports_enterprise_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_d.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-enterprise",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "mixed_generalization_variant_d",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=get_mixed_synthetic_profile,
+        dedupe_resource_targets=True,
+        max_steps=9,
+    )
+
+    assert assessment.summary["campaigns_total"] == 8
+    assert assessment.summary["campaigns_passed"] == 8
 
 
 def test_run_discovery_driven_assessment_generates_artifacts_and_campaigns(tmp_path: Path) -> None:

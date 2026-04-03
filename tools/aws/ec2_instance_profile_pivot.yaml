@@ -1,0 +1,12 @@
+name: ec2_instance_profile_pivot
+description: Pivot through compute metadata or SSRF path to instance profile credentials
+phase: credential-access
+mitre_id: T1552
+platform: AWS EC2
+preconditions:
+  - iam_roles_listed
+postconditions:
+  - compute_identity_pivoted
+  - privileged_identity_active
+implementation: tools/aws/ec2_instance_profile_pivot.py
+safe_simulation: true

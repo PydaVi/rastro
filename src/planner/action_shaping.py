@@ -98,6 +98,13 @@ def _filter_failed_assume(snapshot, actions: List[Action]) -> List[Action]:
     ]
 
 
+def _filter_uncredentialed_actors(snapshot, actions: List[Action]) -> List[Action]:
+    uncredentialed = set(getattr(snapshot, "uncredentialed_identities", []))
+    if not uncredentialed:
+        return actions
+    return [action for action in actions if action.actor not in uncredentialed]
+
+
 def _prefer_analyze(snapshot, actions: List[Action]) -> List[Action]:
     if not snapshot or not actions:
         return actions
@@ -131,8 +138,10 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
     if not snapshot or not available_actions:
         return available_actions
 
-    active_roles = set(getattr(snapshot, "active_assumed_roles", []))
-    if active_roles:
+    active_identities = set(getattr(snapshot, "active_branch_identities", [])) or set(
+        getattr(snapshot, "active_assumed_roles", [])
+    )
+    if active_identities:
         progress_types = {
             ActionType.ENUMERATE,
             ActionType.ACCESS_RESOURCE,
@@ -141,10 +150,11 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
         progress_actions = [
             action
             for action in available_actions
-            if action.actor in active_roles and action.action_type in progress_types
+            if action.actor in active_identities and action.action_type in progress_types
         ]
         if progress_actions:
-            filtered = _filter_repeated_access(snapshot, progress_actions)
+            filtered = _filter_uncredentialed_actors(snapshot, progress_actions)
+            filtered = _filter_repeated_access(snapshot, filtered)
             filtered = _filter_repeated_enumerate(snapshot, filtered)
             filtered = _filter_mismatched_bucket(snapshot, filtered)
             filtered = _filter_failed_assume(snapshot, filtered)
@@ -166,6 +176,7 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
                     if action.action_type == ActionType.ASSUME_ROLE and action.target == path.target
                 ]
             )
+        ranked_assume_actions = _filter_uncredentialed_actors(snapshot, ranked_assume_actions)
         ranked_assume_actions = _filter_repeated_assume(snapshot, ranked_assume_actions)
         if ranked_assume_actions:
             return _filter_failed_assume(snapshot, ranked_assume_actions)
@@ -180,10 +191,12 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
                 if getattr(path, "status", "untested") == "failed"
             }
         ]
+        non_failed_assume_actions = _filter_uncredentialed_actors(snapshot, non_failed_assume_actions)
         non_failed_assume_actions = _filter_repeated_assume(snapshot, non_failed_assume_actions)
         if non_failed_assume_actions:
             return _filter_failed_assume(snapshot, non_failed_assume_actions)
 
-    filtered = _filter_repeated_assume(snapshot, available_actions)
+    filtered = _filter_uncredentialed_actors(snapshot, available_actions)
+    filtered = _filter_repeated_assume(snapshot, filtered)
     filtered = _filter_repeated_enumerate(snapshot, filtered)
     return _filter_failed_assume(snapshot, filtered)

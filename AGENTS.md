@@ -85,6 +85,38 @@ planejado. Quando o bloco for concluído, o agente deve:
 Essa regra evita foco excessivo em minúcias e mantém o progresso alinhado
 ao objetivo macro do eixo.
 
+Além disso, ao fechar cada bloco, o agente deve registrar explicitamente
+no `PLAN.md` qual foi a direção predominante do avanço:
+
+- `mais generalização ofensiva`
+- `mais operacionalização de campaigns conhecidas`
+
+Essa marcação é obrigatória para evitar drift de produto.
+
+Se um bloco aumentar principalmente:
+- descoberta real
+- target selection semântico
+- redução de dependência em profiles fixos
+- redução de heurísticas lexicais
+- pivôs compute / external entry / cross-account
+- chains multi-step menos pré-modeladas
+
+então ele deve ser classificado como `mais generalização ofensiva`.
+
+Se um bloco aumentar principalmente:
+- CLI
+- runner
+- assessment orchestration
+- relatórios
+- bundle/profile execution
+- campanhas derivadas ainda fortemente de profiles conhecidos
+
+então ele deve ser classificado como `mais operacionalização de campaigns conhecidas`.
+
+O agente deve preferir os próximos blocos que empurrem o produto na direção
+de um `autonomous attacker-thinker` mais generalista, sem perder a disciplina
+operacional do Produto 01.
+
 ---
 
 ## Regra para correção após falha experimental (obrigatória)
@@ -280,6 +312,17 @@ Decisões arquiteturais relevantes viram ADR em `docs/adr/`.
 Antes de indicar o próximo passo, o agente deve ler o `PLAN.md` completo
 e garantir que a proposta está alinhada ao objetivo macro do projeto,
 evitando micro-otimizações que desviem o foco.
+
+Essa leitura deve incluir uma avaliação explícita de:
+- quanto o bloco atual aproximou o Rastro de generalização ofensiva
+- quanto ainda o manteve dependente de campaigns AWS pré-estruturadas
+
+Se houver dúvida entre dois próximos passos, o agente deve preferir o que:
+- reduz dependência de profiles fixos
+- reduz dependência de alvos pré-modelados
+- reduz dependência de heurísticas lexicais simples
+- aumenta descoberta real e seleção semântica
+- abre compute pivots, external entry, cross-account e chains multi-step
 
 ---
 

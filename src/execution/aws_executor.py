@@ -7,6 +7,12 @@ from core.fixture import Fixture
 from execution.aws_client import AwsClient, AwsCredentials, Boto3AwsClient
 
 
+class MissingActorCredentialsError(RuntimeError):
+    def __init__(self, actor: str):
+        super().__init__(f"missing_actor_credentials:{actor}")
+        self.actor = actor
+
+
 @dataclass
 class AwsRealExecutorStub:
     scope: Scope
@@ -32,9 +38,12 @@ class AwsRealExecutor:
     _assumed_credentials: AwsCredentials | None = field(default=None, init=False)
     _assumed_role_arn: str | None = field(default=None, init=False)
     _credentials_by_actor: dict[str, AwsCredentials] = field(default_factory=dict, init=False)
+    _base_actor_arn: str | None = field(default=None, init=False)
 
     def execute(self, action: Action) -> Observation:
         client = self.client or Boto3AwsClient()
+        if self._base_actor_arn is None:
+            self._base_actor_arn = action.actor
         denial = _build_policy_denial(action, self.scope)
         if denial is not None:
             return denial
@@ -69,6 +78,8 @@ class AwsRealExecutor:
                 details = self._execute_ssm_list_parameters(client, action)
             elif action.tool == "ssm_read_parameter":
                 details = self._execute_ssm_read_parameter(client, action)
+            elif action.tool == "ec2_instance_profile_pivot":
+                details = self._execute_ec2_instance_profile_pivot(client, action)
             else:
                 return Observation(
                     success=False,
@@ -79,6 +90,17 @@ class AwsRealExecutor:
                         "real_api_called": False,
                     },
                 )
+        except MissingActorCredentialsError as exc:
+            return Observation(
+                success=False,
+                details={
+                    "reason": "missing_actor_credentials",
+                    "actor": exc.actor,
+                    "tool": action.tool,
+                    "execution_mode": "real",
+                    "real_api_called": False,
+                },
+            )
         except Exception as exc:
             return Observation(
                 success=False,
@@ -340,8 +362,145 @@ class AwsRealExecutor:
             },
         }
 
+    def _execute_ec2_instance_profile_pivot(self, client: AwsClient, action: Action) -> dict:
+        region = _required_parameter(action, "region")
+        resource_arn = action.parameters.get("resource_arn") or action.target
+        if not resource_arn:
+            raise ValueError("ec2_instance_profile_pivot requires resource_arn or target")
+
+        instance_profile_arn = action.parameters.get("instance_profile_arn") or resource_arn
+        instance_profile_name = _instance_profile_name_from_arn(instance_profile_arn)
+        if not instance_profile_name:
+            raise ValueError("ec2_instance_profile_pivot requires an IAM instance-profile ARN target")
+
+        instance_id = action.parameters.get("instance_id")
+        instance_details = None
+        if instance_id:
+            instance_details = client.describe_instance(
+                region=region,
+                instance_id=instance_id,
+                credentials=self._credentials_for_actor(action.actor),
+            )
+
+        profile = client.get_instance_profile(
+            region=region,
+            instance_profile_name=instance_profile_name,
+            credentials=self._credentials_for_actor(action.actor),
+        )
+        profile_arn = profile.get("Arn") or instance_profile_arn
+        roles = profile.get("Roles") or []
+        reached_role = roles[0] if roles else None
+        associations = client.list_instance_profile_associations(
+            region=region,
+            instance_profile_arn=profile_arn,
+            credentials=self._credentials_for_actor(action.actor),
+        )
+        credential_acquisition = self._acquire_pivot_credentials_if_configured(
+            client=client,
+            action=action,
+            region=region,
+            reached_role=reached_role,
+        )
+
+        return {
+            "details": (
+                "Executed iam:GetInstanceProfile and "
+                f"ec2:DescribeIamInstanceProfileAssociations against {profile_arn}."
+            ),
+            "evidence": {
+                "entry_surface_arn": resource_arn,
+                "instance_profile_arn": profile_arn,
+                "reached_role": reached_role,
+                "instance": instance_details,
+                "instance_associations": associations,
+                **({"credential_acquisition": credential_acquisition} if credential_acquisition else {}),
+            },
+            "reached_role": reached_role,
+            "aws_region": region,
+            "request_summary": {
+                "api_calls": [
+                    *(
+                        ["ec2:DescribeInstances"]
+                        if instance_id
+                        else []
+                    ),
+                    "iam:GetInstanceProfile",
+                    "ec2:DescribeIamInstanceProfileAssociations",
+                    *(
+                        [
+                            "sts:AssumeRole",
+                            "sts:GetCallerIdentity",
+                        ]
+                        if credential_acquisition
+                        else []
+                    ),
+                ],
+                "entry_surface_arn": resource_arn,
+                "instance_profile_arn": profile_arn,
+                "instance_id": instance_id,
+            },
+            "response_summary": {
+                "roles_returned": len(roles),
+                "association_count": len(associations),
+                "sample_instances": [item["InstanceId"] for item in associations[:3]],
+                "public_ip": (instance_details or {}).get("PublicIpAddress"),
+                **(
+                    {"credentialed_identity": credential_acquisition.get("assumed_identity", {}).get("arn")}
+                    if credential_acquisition
+                    else {}
+                ),
+            },
+        }
+
     def _credentials_for_actor(self, actor: str) -> AwsCredentials | None:
-        return self._credentials_by_actor.get(actor)
+        credentials = self._credentials_by_actor.get(actor)
+        if credentials is not None:
+            return credentials
+        if actor == self._base_actor_arn:
+            return None
+        raise MissingActorCredentialsError(actor)
+
+    def _acquire_pivot_credentials_if_configured(
+        self,
+        client: AwsClient,
+        action: Action,
+        region: str,
+        reached_role: str | None,
+    ) -> dict | None:
+        acquisition = action.parameters.get("credential_acquisition")
+        if not acquisition or not reached_role:
+            return None
+        mode = acquisition.get("mode")
+        if mode != "assume_role_surrogate":
+            raise ValueError(f"unsupported_credential_acquisition_mode:{mode}")
+
+        session_name = acquisition.get("session_name", "rastro-pivot-surrogate")
+        source_credentials = self._credentials_for_actor(action.actor)
+        assumed = client.assume_role(
+            region=region,
+            role_arn=reached_role,
+            session_name=session_name,
+            credentials=source_credentials,
+        )
+        credentials = assumed["Credentials"]
+        actor_credentials = {
+            "AccessKeyId": credentials["AccessKeyId"],
+            "SecretAccessKey": credentials["SecretAccessKey"],
+            "SessionToken": credentials["SessionToken"],
+        }
+        self._credentials_by_actor[reached_role] = actor_credentials
+        assumed_identity = client.get_caller_identity(
+            region=region,
+            credentials=actor_credentials,
+        )
+        return {
+            "mode": mode,
+            "assumed_role_arn": reached_role,
+            "assumed_identity": {
+                "account_id": assumed_identity["Account"],
+                "arn": assumed_identity["Arn"],
+            },
+        }
 
 
 def _required_parameter(action: Action, key: str) -> str:
@@ -349,6 +508,12 @@ def _required_parameter(action: Action, key: str) -> str:
     if not value:
         raise ValueError(f"{action.tool or action.action_type.value} requires parameter {key}")
     return value
+
+
+def _instance_profile_name_from_arn(value: str | None) -> str | None:
+    if not value or ":instance-profile/" not in value:
+        return None
+    return value.rsplit("/", 1)[-1]
 
 
 def _build_policy_denial(action: Action, scope: Scope) -> Observation | None:

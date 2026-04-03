@@ -46,6 +46,50 @@ Entrega:
 
 ---
 
+## Régua permanente de direção do produto
+
+Cada bloco do roadmap deve ser avaliado por duas perguntas:
+
+1. Quanto esse bloco aproxima o Rastro de um `autonomous attacker-thinker` generalista?
+2. Quanto esse bloco ainda o mantém como validador adversarial de campaigns AWS pré-estruturadas?
+
+Ao fechar cada bloco, o `PLAN.md` deve registrar explicitamente uma direção predominante:
+
+- `Direção do avanço: mais generalização ofensiva`
+- `Direção do avanço: mais operacionalização de campaigns conhecidas`
+
+### Critérios de generalização ofensiva
+
+Um bloco tende a `mais generalização ofensiva` quando reduz dependência de:
+- profiles fixos
+- heurísticas lexicais simples
+- alvos pré-modelados
+- paths muito roteirizados
+
+e aumenta:
+- discovery real
+- target selection semântico
+- pivôs via compute
+- external entry
+- cross-account
+- chains multi-step com menor pré-estruturação
+
+### Critérios de operacionalização
+
+Um bloco tende a `mais operacionalização de campaigns conhecidas` quando aumenta:
+- runner
+- CLI
+- preflight
+- reporting
+- campaign orchestration
+- assessment consolidation
+- bundles e profiles ainda fortemente baseados em classes conhecidas
+
+Essa régua existe para evitar drift de produto. O objetivo não é abandonar
+operacionalização, mas impedir que ela substitua o avanço em generalização ofensiva.
+
+---
+
 ## Estado atual
 
 ### Fase 0 — completa
@@ -138,6 +182,7 @@ Fechar maturidade do engine como sistema de validação real.
 - ranking consistente de pivôs
 - estabilidade sob permutação
 Status: concluído (EXP-018 a EXP-023)
+Direção do avanço: mais generalização ofensiva
 
 **2. Backtracking completo**
 - branch memory sólida
@@ -145,12 +190,14 @@ Status: concluído (EXP-018 a EXP-023)
 - evitar loops e revisitas inúteis
 Status: concluído (EXP-024 a EXP-027)
 Status: em planejamento (próximo bloco)
+Direção do avanço: mais generalização ofensiva
 
 **3. Diversificação de attack paths**
 - IAM / STS / S3 / Secrets Manager / SSM
 - sempre chains completas, nunca features isoladas
 - regra: 2-3 experimentos sintéticos → 1 validação real representativa
 Status: foundation concluído; advanced/enterprise pendentes
+Direção atual do avanço: mista, com predominância de generalização ofensiva
 
 **4. Contrato de integração AWS**
 - role assumível com trust policy restrita ao ARN do executor
@@ -161,6 +208,7 @@ Status: foundation concluído; advanced/enterprise pendentes
   (Target/Authorization/Profile/Campaign/Assessment) conforme
   `docs/architecture.md`.
 Status: em progresso
+Direção atual do avanço: mais operacionalização de campaigns conhecidas
 
 **Trilha paralela — MVP operacional do foundation**
 - `profile list` para catálogo operacional
@@ -172,6 +220,19 @@ Status: em progresso
 - status operacional explícito por campanha
 - resumo executivo estável em `assessment.json` e `assessment.md`
 Status: em progresso
+Direção atual do avanço: mais operacionalização de campaigns conhecidas
+
+Critério de entrada para runner containerizado:
+- nao iniciar containerizacao agora
+- iniciar somente apos:
+  - `internal-data-platform` validado discovery-driven em A/B/C
+  - `serverless-business-app` validado ao menos em A/B/C discovery-driven
+  - primeiro corte de `compute-pivot-app` validado
+  - contrato da CLI operacional estabilizado sem refactor estrutural grande
+- objetivo da containerizacao:
+  - empacotar runner operacional reprodutivel
+  - facilitar execucao controlada do Produto 01
+  - nao antecipar empacotamento antes da maturidade da camada discovery-driven
 
 Marco atual:
 - catálogo operacional implementado
@@ -209,12 +270,14 @@ Status do bloco 1:
   - filtro de service-linked roles
   - correcao de ARN para parametros SSM
 - pendente: refinamento de limites/heuristicas
+Direção do avanço: mais generalização ofensiva
 Status do bloco 2:
 - `target-selection run` implementado
 - artefatos `target_candidates.json` e `target_candidates.md` implementados
 - validado sobre o discovery real do `aws-foundation`
 - resultado observado: 15 candidatos, 5 `high confidence`
 - pendente: refinamento de heuristicas e reducao de ruido lexical
+Direção do avanço: mais generalização ofensiva
 Status do bloco 3:
 - `campaign-synthesis run` implementado
 - artefatos `campaign_plan.json` e `campaign_plan.md` implementados
@@ -223,12 +286,14 @@ Status do bloco 3:
 - resultado observado: 4 planos gerados, um por profile
 - ajuste aplicado: role chaining agora prioriza `DataAccessRole` sobre roles de auditoria
 - pendente: integrar `CampaignPlan[]` ao `assessment run`
+Direção do avanço: mais operacionalização de campaigns conhecidas
 Status do bloco 4:
 - `assessment run --bundle aws-foundation --discovery-driven` implementado
 - pipeline completo validado em AWS real
 - artefatos encadeados preservados no assessment
 - resultado observado: `assessment_ok=true`, 4/4 campanhas `passed`
 - proximo gap real: refinar reachability/pruning e heuristicas de target selection
+Direção do avanço: mais operacionalização de campaigns conhecidas
 
 Próxima base de escala para o Produto 01:
 - `internal-data-platform` (foundation em escala)
@@ -255,6 +320,231 @@ Status atual:
   - B: `campaigns_passed=4/4`
   - C: `campaigns_passed=4/4`
 - descoberta arquitetural registrada em `docs/experiments/EXP-032-internal-data-platform-discovery-driven.md`
+Direção do avanço: mais generalização ofensiva
+- `serverless-business-app` Variante A iniciada
+- snapshot inicial criado em `fixtures/serverless_business_app_variant_a.discovery.json`
+- documentacao inicial em `docs/environments/serverless-business-app-variant-a.md`
+- teste inicial de coerencia do inventario serverless adicionado
+- foundation revalidado discovery-driven na Variante A
+- resultado observado:
+  - `campaigns_passed=4/4`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em `docs/experiments/EXP-033-serverless-foundation-generalization.md`
+- Variante B implementada em `fixtures/serverless_business_app_variant_b.discovery.json`
+- documentacao inicial em `docs/environments/serverless-business-app-variant-b.md`
+- KMS introduzido no arquétipo sem quebrar a seleção foundation
+- Variante C implementada em `fixtures/serverless_business_app_variant_c.discovery.json`
+- documentacao inicial em `docs/environments/serverless-business-app-variant-c.md`
+- foundation revalidado discovery-driven nas Variantes B e C
+- resultado observado:
+  - B: `campaigns_passed=4/4`
+  - C: `campaigns_passed=4/4`
+- descoberta arquitetural registrada em `docs/experiments/EXP-034-serverless-foundation-hardening.md`
+- classes `advanced` abertas no arquétipo:
+  - `aws-iam-lambda-data`
+  - `aws-iam-kms-data`
+- resultados observados em `aws-advanced` discovery-driven:
+  - Variante A: `campaigns_passed=5/5`
+  - Variante B: `campaigns_passed=6/6`
+  - Variante C: `campaigns_passed=6/6`
+- descoberta arquitetural registrada em `docs/experiments/EXP-035-serverless-advanced-opening.md`
+Direção do avanço: mais generalização ofensiva
+- `compute-pivot-app` Variante A iniciada
+- snapshot inicial criado em `fixtures/compute_pivot_app_variant_a.discovery.json`
+- documentacao inicial em `docs/environments/compute-pivot-app-variant-a.md`
+- teste inicial de coerencia do inventario compute adicionado
+- foundation target selection validado no arquétipo:
+  - S3: `compute-payroll-dumps-prod/payroll/2026-03/payroll.csv`
+  - Secrets: `prod/payroll/backend-db-password`
+  - SSM: `/prod/payroll/api_key`
+- foundation revalidado discovery-driven na Variante A
+- resultado observado:
+  - `campaigns_passed=4/4`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em `docs/experiments/EXP-036-compute-foundation-generalization.md`
+- classe `aws-iam-compute-iam` aberta na Variante A
+- resultado observado em `aws-advanced` discovery-driven:
+  - `campaigns_passed=5/5`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em `docs/experiments/EXP-037-compute-pivot-opening.md`
+- Variante B implementada em `fixtures/compute_pivot_app_variant_b.discovery.json`
+- classe `aws-external-entry-data` aberta na Variante B
+- resultado observado em `aws-advanced` discovery-driven:
+  - `campaigns_passed=6/6`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em `docs/experiments/EXP-038-external-entry-opening.md`
+- Variante C implementada em `fixtures/compute_pivot_app_variant_c.discovery.json`
+- classes `enterprise` abertas na Variante C:
+  - `aws-cross-account-data`
+  - `aws-multi-step-data`
+- resultado observado em `aws-enterprise` discovery-driven:
+  - `campaigns_passed=7/7`
+  - `assessment_ok=true`
+- descobertas arquiteturais registradas em:
+  - `docs/experiments/EXP-039-cross-account-opening.md`
+  - `docs/experiments/EXP-040-multi-step-chain-opening.md`
+- bloco do "segundo nível" sintético fechado no `compute-pivot-app`:
+  - `IAM -> Compute -> IAM`
+  - `external entry -> IAM -> data`
+  - `cross-account -> data`
+  - `multi-step chain`
+- outputs end-to-end consolidados com findings:
+  - `outputs_compute_pivot_app_variant_a_assessment/`
+  - `outputs_compute_pivot_app_advanced_variant_a_assessment/`
+  - `outputs_compute_pivot_app_advanced_variant_b_assessment/`
+  - `outputs_compute_pivot_app_enterprise_variant_c_assessment/`
+- leitura do bloco:
+  - o Rastro deixou de estar restrito a campaigns AWS puramente IAM-first
+  - ainda falta promoção seletiva para AWS real nas classes de maior valor
+Direção atual do avanço: mais generalização ofensiva
+
+Próxima promoção seletiva para AWS real (ordem definida):
+1. `aws-iam-compute-iam`
+   - concluída em AWS real via `EXP-041`
+   - lab efêmero em `terraform_local_lab/compute_pivot_real/`
+   - resultado observado:
+     - `objective_met=true`
+     - `2` steps
+     - evidência real:
+       - `iam:GetInstanceProfile`
+       - `ec2:DescribeIamInstanceProfileAssociations`
+   - descoberta arquitetural registrada em `docs/experiments/EXP-041-compute-pivot-aws-real.md`
+2. `aws-external-entry-data`
+   - concluída em AWS real via `EXP-042`
+   - revalidada sob semântica endurecida de credenciais
+   - a continuidade da chain usa `assume_role_surrogate` controlado e auditável
+   - descoberta arquitetural registrada em:
+     - `docs/experiments/EXP-042-external-entry-aws-real.md`
+     - `docs/experiments/EXP-043-multi-step-aws-real.md`
+3. `aws-cross-account-data`
+   - alto valor arquitetural, mas depende de duas contas e trust controlado
+   - bloqueado temporariamente por pre-requisito operacional:
+     - segunda conta AWS controlada
+     - trust policy explicita entre conta origem e conta destino
+   - contrato e lab efemero definidos em:
+     - `docs/cross-account-real-validation.md`
+   - adiado ate existir ambiente multi-account real
+   - manter validacao sintetica como referencia ate a promocao real
+4. `aws-multi-step-data`
+   - concluída em AWS real via `EXP-043`
+   - validada com `assume_role_surrogate` controlado no primeiro pivô de compute
+   - serve como fechamento real composto do bloco
+
+Critérios de promoção real do segundo nível:
+- promover primeiro o que maximiza generalização ofensiva com menor risco operacional
+- compute pivot real já está estável
+- external entry e multi-step reais agora usam semântica rigorosa de `credential acquisition`
+- evitar cross-account real antes de o contrato de autorização multi-account estar explicitado
+
+Próximo passo após o bloqueio de `cross-account`:
+- preservar o bloqueio no roadmap
+- nao substituir por pseudo-validacao em conta unica
+- usar o contrato multi-account como criterio de entrada
+- quando a segunda conta existir:
+  1. criar target/authorization multi-account
+  2. subir lab efemero nas duas contas
+  3. executar preflight e run real
+  4. destruir os dois lados
+
+Próximo bloco de generalização ofensiva:
+- mixed-environment target selection e campaign synthesis
+- objetivo:
+  - reduzir dependencia de profile-first rigido
+  - reduzir peso de heuristica lexical crua
+  - escolher o profile mais expressivo para o mesmo alvo quando houver
+    competicao entre foundation, advanced e enterprise
+- benchmark:
+  - `fixtures/mixed_generalization_variant_a.discovery.json`
+- resultado inicial:
+  - `target selection` agora expõe `score_components.lexical/structural`
+  - `campaign synthesis` agora suporta `dedupe_resource_targets=True`
+  - `prod/payroll-api-key` e promovido para `aws-external-entry-data`
+    quando ha reachability estrutural publica
+  - `prod/finance/warehouse-api-key` e promovido para
+    `aws-multi-step-data` quando ha chain mais expressiva
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-044-mixed-generalization-selection.md`
+Direção do avanço: mais generalização ofensiva
+
+Atualização ponta a ponta:
+- mixed environment assessment discovery-driven validado em:
+  - `outputs_mixed_generalization_variant_a_assessment/`
+- synthesis menos `profile-first` aplicado no assessment com:
+  - `dedupe_resource_targets=True`
+  - `profile_resolver` sensivel ao contexto do `CampaignPlan`
+- resultado observado:
+  - `campaigns_total=8`
+  - `campaigns_passed=8`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-045-mixed-generalization-end-to-end.md`
+- leitura do bloco:
+  - reduziu acoplamento entre `profile family` e fixture sintetico fixo
+  - aproximou o assessment de uma escolha mais contextual de campanha
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- benchmark misto sem `candidate_profiles` curado implementado em:
+  - `fixtures/mixed_generalization_variant_b.discovery.json`
+- `target selection` agora infere profiles a partir de:
+  - `resource_type`
+  - `reachable_roles`
+  - `pivot_chain`
+  - `role_to_public_surfaces`
+  - `role_to_instance_profiles`
+  - `chain_depth`
+- resultado observado:
+  - `outputs_mixed_generalization_variant_b_assessment/`
+  - `campaigns_total=8`
+  - `campaigns_passed=8`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-046-mixed-generalization-inferred-profiles.md`
+- leitura do bloco:
+  - reduziu dependencia de `candidate_profiles` manualmente anotado
+  - aumentou inferencia estrutural de classe de path
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- benchmark misto com competicao intra-superficie implementado em:
+  - `fixtures/mixed_generalization_variant_c.discovery.json`
+- competicao adicionada em:
+  - secrets locais
+  - parameters locais
+  - objetos S3
+  - secrets cross-account
+- correcoes gerais aplicadas:
+  - normalizacao lexical para `api-key` vs `api_key`
+  - `aws-external-entry-data` deixa de capturar recursos cross-account
+- resultado observado:
+  - `outputs_mixed_generalization_variant_c_assessment/`
+  - `campaigns_total=8`
+  - `campaigns_passed=8`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-047-mixed-generalization-same-surface-competition.md`
+- leitura do bloco:
+  - aumentou a competicao real entre alvos da mesma superficie
+  - endureceu a separacao estrutural entre external-entry e cross-account
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- benchmark misto com entry surfaces publicos concorrentes implementado em:
+  - `fixtures/mixed_generalization_variant_d.discovery.json`
+- `target selection` agora considera:
+  - `public_role_quality_signal`
+  - `signals.public_role_score`
+- resultado observado:
+  - `outputs_mixed_generalization_variant_d_assessment/`
+  - `campaigns_total=8`
+  - `campaigns_passed=8`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-048-mixed-generalization-competing-entry-surfaces.md`
+- leitura do bloco:
+  - aumentou competicao entre caminhos de entrada, nao so entre alvos finais
+  - aproximou o selection de uma nocao melhor de qualidade de pivô
+Direção do avanço: mais generalização ofensiva
 
 **5. Qualidade do Produto 01**
 - relatório técnico e executivo

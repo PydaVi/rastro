@@ -1,0 +1,11 @@
+name: lambda_invoke
+description: Invoke Lambda function to reach downstream data
+phase: execution
+mitre_id: T1648
+platform: AWS Lambda
+preconditions:
+  - iam_roles_listed
+postconditions:
+  - lambda_invoked
+implementation: tools/aws/lambda_invoke.py
+safe_simulation: true
