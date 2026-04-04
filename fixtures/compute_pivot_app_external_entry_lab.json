@@ -1,0 +1,244 @@
+{
+  "name": "compute-pivot-app-external-entry-lab",
+  "description": "Synthetic external entry to IAM to data path for compute-pivot-app.",
+  "version": "0.1",
+  "aliases": {
+    "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv": [
+      "arn:aws:s3:::mixed-payroll-data-prod/data/2026-03/r1.bin"
+    ],
+    "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll/backend-db-password": [
+      "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/r/a1"
+    ]
+  },
+  "state": {
+    "flags": [],
+    "identities": {
+      "arn:aws:iam::123456789012:user/platform-analyst": {
+        "available_actions": [
+          {
+            "action_type": "enumerate",
+            "target": "arn:aws:iam::123456789012:root",
+            "parameters": {
+              "service": "iam",
+              "region": "us-east-1"
+            },
+            "tool": "iam_list_roles"
+          },
+          {
+            "action_type": "access_resource",
+            "target": "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public",
+            "parameters": {
+              "service": "apigateway",
+              "region": "us-east-1",
+              "resource_arn": "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public"
+            },
+            "tool": "ec2_instance_profile_pivot"
+          },
+          {
+            "action_type": "access_resource",
+            "target": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/public-webhook-bridge",
+            "parameters": {
+              "service": "elasticloadbalancing",
+              "region": "us-east-1",
+              "resource_arn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/public-webhook-bridge"
+            },
+            "tool": "ec2_instance_profile_pivot"
+          }
+        ]
+      }
+    }
+  },
+  "transitions": [
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:root",
+      "observation": {
+        "details": "Listed externally reachable compute-linked roles.",
+        "discovered_roles": [
+          "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+          "arn:aws:iam::123456789012:role/LegacyReportInstanceRole"
+        ]
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public",
+      "observation": {
+        "details": "Pivoted from public webhook into payroll instance profile credentials.",
+        "evidence": {
+          "entry_surface": "payroll-webhook-public",
+          "reached_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+        }
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/PayrollAppInstanceRole": {
+          "available_actions": [
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+              "parameters": {
+                "service": "s3",
+                "region": "us-east-1",
+                "bucket": "compute-payroll-dumps-prod",
+                "object_key": "payroll/2026-03/payroll.csv"
+              },
+              "tool": "s3_read_sensitive"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll/backend-db-password",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/payroll/backend-db-password"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/sys/kv_a",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/sys/kv_a"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/sys/kv_b",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/sys/kv_b"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s1",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/app/s1"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s2",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/app/s2"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s3",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/app/s3"
+              },
+              "tool": "secretsmanager_read_secret"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/public-webhook-bridge",
+      "observation": {
+        "details": "Pivoted from public bridge into payroll instance profile credentials.",
+        "evidence": {
+          "entry_surface": "public-webhook-bridge",
+          "reached_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+      "observation": {
+        "details": "Read payroll dump after external entry pivot.",
+        "evidence": {
+          "bucket": "compute-payroll-dumps-prod",
+          "object_key": "payroll/2026-03/payroll.csv"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll/backend-db-password",
+      "observation": {
+        "details": "Read payroll backend password after external entry pivot.",
+        "evidence": {
+          "secret_id": "prod/payroll/backend-db-password"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/sys/kv_a",
+      "observation": {
+        "details": "Read obfuscated local secret kv_a after external entry pivot.",
+        "evidence": {
+          "secret_id": "prod/sys/kv_a"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/sys/kv_b",
+      "observation": {
+        "details": "Read obfuscated local secret kv_b after external entry pivot.",
+        "evidence": {
+          "secret_id": "prod/sys/kv_b"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s1",
+      "observation": {
+        "details": "Read obfuscated local secret s1 after external entry pivot.",
+        "evidence": {
+          "secret_id": "prod/app/s1"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s2",
+      "observation": {
+        "details": "Read obfuscated local secret s2 after external entry pivot.",
+        "evidence": {
+          "secret_id": "prod/app/s2"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s3",
+      "observation": {
+        "details": "Read obfuscated local secret s3 after external entry pivot.",
+        "evidence": {
+          "secret_id": "prod/app/s3"
+        }
+      }
+    }
+  ]
+}

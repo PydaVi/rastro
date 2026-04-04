@@ -1,0 +1,76 @@
+{
+  "name": "compute-pivot-app-iam-compute-iam-lab",
+  "description": "Synthetic IAM to Compute to IAM pivot for compute-pivot-app.",
+  "version": "0.1",
+  "aliases": {
+    "arn:aws:iam::123456789012:role/PayrollAppInstanceRole": [
+      "arn:aws:iam::123456789012:role/RA7"
+    ]
+  },
+  "state": {
+    "flags": [],
+    "identities": {
+      "arn:aws:iam::123456789012:user/platform-analyst": {
+        "available_actions": [
+          {"action_type": "enumerate", "target": "arn:aws:iam::123456789012:root", "parameters": {"service": "iam", "region": "us-east-1"}, "tool": "iam_list_roles"},
+          {"action_type": "access_resource", "target": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/payroll-web", "parameters": {"service": "elasticloadbalancing", "region": "us-east-1", "resource_arn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/payroll-web"}, "tool": "ec2_instance_profile_pivot"},
+          {"action_type": "access_resource", "target": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/reporting-internal", "parameters": {"service": "elasticloadbalancing", "region": "us-east-1", "resource_arn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/reporting-internal"}, "tool": "ec2_instance_profile_pivot"}
+        ]
+      }
+    }
+  },
+  "transitions": [
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:root",
+      "observation": {
+        "details": "Listed compute-linked roles.",
+        "discovered_roles": [
+          "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+          "arn:aws:iam::123456789012:role/LegacyReportInstanceRole",
+          "arn:aws:iam::123456789012:role/SupportBastionRole"
+        ]
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/payroll-web",
+      "observation": {
+        "details": "Pivoted through payroll-web to instance profile credentials.",
+        "evidence": {
+          "entry_surface": "payroll-web",
+          "reached_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+        }
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/PayrollAppInstanceRole": {
+          "available_actions": [
+            {"action_type": "enumerate", "target": "arn:aws:s3:::compute-payroll-dumps-prod", "parameters": {"service": "s3", "region": "us-east-1", "bucket": "compute-payroll-dumps-prod"}, "tool": "s3_list_bucket"},
+            {"action_type": "access_resource", "target": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv", "parameters": {"service": "s3", "region": "us-east-1", "bucket": "compute-payroll-dumps-prod", "object_key": "payroll/2026-03/payroll.csv"}, "tool": "s3_read_sensitive"}
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/reporting-internal",
+      "observation": {
+        "details": "Reached legacy reporting instance profile.",
+        "evidence": {
+          "entry_surface": "reporting-internal",
+          "reached_role": "arn:aws:iam::123456789012:role/LegacyReportInstanceRole"
+        }
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/LegacyReportInstanceRole": {
+          "available_actions": [
+            {"action_type": "access_resource", "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/reporting/export-token", "parameters": {"service": "secretsmanager", "region": "us-east-1", "secret_id": "prod/reporting/export-token"}, "tool": "secretsmanager_read_secret"}
+          ]
+        }
+      }
+    }
+  ]
+}

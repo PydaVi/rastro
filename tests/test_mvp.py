@@ -23,9 +23,11 @@ from operations.service import (
     run_assessment,
     run_campaign,
     run_discovery_driven_assessment,
+    run_generated_campaign,
     write_assessment_summary,
 )
 from operations.models import AssessmentResult, CampaignResult
+from operations.models import ProfileDefinition
 from operations.discovery import run_foundation_discovery
 from operations.campaign_synthesis import synthesize_foundation_campaigns
 from operations.synthetic_catalog import get_mixed_synthetic_profile, get_synthetic_profile
@@ -109,6 +111,67 @@ class FakeAwsClient:
                 "SessionToken": "token",
             }
         }
+
+
+def test_fixture_expands_alias_actions_and_matches_alias_transition() -> None:
+    fixture = Fixture(
+        {
+            "state": {
+                "identities": {
+                    "arn:aws:iam::123456789012:user/analyst": {
+                        "available_actions": [
+                            {
+                                "action_type": "access_resource",
+                                "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key",
+                                "parameters": {
+                                    "service": "secretsmanager",
+                                    "region": "us-east-1",
+                                    "secret_id": "prod/payroll-api-key",
+                                },
+                                "tool": "secretsmanager_read_secret",
+                            }
+                        ]
+                    }
+                }
+            },
+            "aliases": {
+                "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key": [
+                    "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s1"
+                ]
+            },
+            "transitions": [
+                {
+                    "action_type": "access_resource",
+                    "actor": "arn:aws:iam::123456789012:user/analyst",
+                    "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key",
+                    "parameters": {
+                        "service": "secretsmanager",
+                        "region": "us-east-1",
+                        "secret_id": "prod/payroll-api-key",
+                    },
+                    "observation": {
+                        "evidence": {
+                            "secret_id": "prod/payroll-api-key"
+                        }
+                    },
+                }
+            ],
+        }
+    )
+
+    actions = fixture.enumerate_actions(None)
+    alias_action = next(
+        action
+        for action in actions
+        if action.target == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s1"
+    )
+
+    assert alias_action.parameters["secret_id"] == "prod/app/s1"
+
+    observation = fixture.execute(alias_action)
+
+    assert observation.success is True
+    assert observation.details["evidence"]["secret_id"] == "prod/payroll-api-key"
 
     def simulate_principal_policy(
         self,
@@ -1215,6 +1278,227 @@ def test_synthesize_foundation_campaigns_writes_generated_scope_and_objective(tm
     assert "prod/payroll-api-key" in generated_scope.read_text()
 
 
+def test_campaign_synthesis_generates_target_based_objective_without_inherited_flag(tmp_path: Path) -> None:
+    target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
+    authorization_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path)
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    candidates_payload = {
+        "bundle": "aws-advanced",
+        "candidates": [
+            {
+                "id": "aws-external-entry-data:arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+                "resource_arn": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+                "resource_type": "data_store.s3_object",
+                "profile_family": "aws-external-entry-data",
+                "score": 140,
+                "confidence": "high",
+                "execution_fixture_set": "compute-pivot-app",
+            }
+        ],
+    }
+
+    _, _, payload = synthesize_foundation_campaigns(
+        candidates_payload=candidates_payload,
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        profile_resolver=get_mixed_synthetic_profile,
+    )
+
+    generated_objective = Path(payload["plans"][0]["generated_objective"])
+    objective_payload = json.loads(generated_objective.read_text())
+
+    assert objective_payload["target"] == "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv"
+    assert objective_payload["success_criteria"]["mode"] == "target_observed"
+    assert "flag" not in objective_payload["success_criteria"]
+
+
+def test_campaign_synthesis_does_not_depend_on_profile_base_objective_file(tmp_path: Path) -> None:
+    target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
+    authorization_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path).model_copy(update={"permitted_profiles": []})
+    valid_scope_path = Path(__file__).resolve().parents[1] / "examples" / "scope_compute_pivot_app_iam_s3.json"
+
+    def fake_profile_resolver(profile_name: str, _candidate: dict | None = None) -> ProfileDefinition:
+        return ProfileDefinition(
+            name=profile_name,
+            bundle="test",
+            description="Synthetic test profile",
+            fixture_path=Path("/tmp/fixture-does-not-matter.json"),
+            objective_path=tmp_path / "missing-objective.json",
+            scope_path=valid_scope_path,
+        )
+
+    candidates_payload = {
+        "bundle": "aws-foundation",
+        "candidates": [
+            {
+                "id": "aws-iam-s3:arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+                "resource_arn": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+                "resource_type": "data_store.s3_object",
+                "profile_family": "aws-iam-s3",
+                "score": 90,
+                "confidence": "high",
+            }
+        ],
+    }
+
+    _, _, payload = synthesize_foundation_campaigns(
+        candidates_payload=candidates_payload,
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        profile_resolver=fake_profile_resolver,
+    )
+
+    generated_objective = Path(payload["plans"][0]["generated_objective"])
+    objective_payload = json.loads(generated_objective.read_text())
+
+    assert objective_payload["target"] == candidates_payload["candidates"][0]["resource_arn"]
+    assert objective_payload["success_criteria"]["mode"] == "target_observed"
+    assert payload["plans"][0]["fixture_path"] == "/tmp/fixture-does-not-matter.json"
+
+
+def test_state_marks_objective_met_when_observation_reaches_aliased_target() -> None:
+    fixture = Fixture.load(Path(__file__).resolve().parents[1] / "fixtures" / "compute_pivot_app_iam_compute_iam_lab.json")
+    scope = Scope.model_validate_json(
+        (Path(__file__).resolve().parents[1] / "examples" / "scope_compute_pivot_app_iam_compute_iam.json").read_text()
+    )
+    objective = Objective(
+        description="Reach obfuscated compute pivot role",
+        target="arn:aws:iam::123456789012:role/RA7",
+        success_criteria={"mode": "target_observed"},
+    )
+    state = StateManager(
+        objective=objective,
+        scope=scope,
+        fixture=AwsDryRunLab.from_fixture(fixture, scope),
+        tool_registry=ToolRegistry.load(Path(__file__).resolve().parents[1] / "tools"),
+    )
+    actions = fixture.enumerate_actions(None)
+    pivot_action = next(
+        action
+        for action in actions
+        if action.target == "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/payroll-web"
+    )
+    observation = fixture.execute(pivot_action)
+    state.apply_observation(pivot_action, observation, "reached obfuscated compute role")
+
+    assert state.is_objective_met() is True
+
+
+def test_run_generated_campaign_can_execute_without_profile_resolver_when_plan_has_fixture_path(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    target = load_target(repo_root / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(repo_root / "examples" / "authorization_aws_foundation.local.json").model_copy(
+        update={"permitted_profiles": []}
+    )
+
+    plan = {
+        "profile": "aws-iam-s3",
+        "fixture_path": str(repo_root / "fixtures" / "internal_data_platform_iam_s3_lab.json"),
+        "generated_scope": str(repo_root / "examples" / "scope_internal_data_platform_iam_s3.json"),
+        "generated_objective": str(repo_root / "examples" / "objective_internal_data_platform_iam_s3.json"),
+    }
+
+    def failing_profile_resolver(*args, **kwargs):
+        raise AssertionError("profile_resolver should not be used when fixture_path is embedded in plan")
+
+    result = run_generated_campaign(
+        plan=plan,
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        runner=execute_run,
+        max_steps=6,
+        profile_resolver=failing_profile_resolver,
+    )
+
+    assert result.status == "passed"
+    assert result.report_json is not None
+
+
+def test_campaign_synthesis_can_use_candidate_embedded_paths_without_profile_resolver(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    target = load_target(repo_root / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(repo_root / "examples" / "authorization_aws_foundation.local.json").model_copy(
+        update={"permitted_profiles": []}
+    )
+
+    candidates_payload = {
+        "bundle": "aws-advanced",
+        "candidates": [
+            {
+                "id": "aws-external-entry-data:arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+                "resource_arn": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+                "resource_type": "data_store.s3_object",
+                "profile_family": "aws-external-entry-data",
+                "score": 140,
+                "confidence": "high",
+                "execution_fixture_set": "compute-pivot-app",
+                "fixture_path": str(repo_root / "fixtures" / "compute_pivot_app_external_entry_lab.json"),
+                "scope_template_path": str(repo_root / "examples" / "scope_compute_pivot_app_external_entry.json"),
+            }
+        ],
+    }
+
+    def failing_profile_resolver(*args, **kwargs):
+        raise AssertionError("profile_resolver should not be used when candidate embeds fixture/scope paths")
+
+    _, _, payload = synthesize_foundation_campaigns(
+        candidates_payload=candidates_payload,
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        profile_resolver=failing_profile_resolver,
+    )
+
+    assert payload["plans"][0]["fixture_path"].endswith("compute_pivot_app_external_entry_lab.json")
+
+
+def test_mixed_generalization_variant_p_supports_enterprise_discovery_driven_end_to_end_without_profile_resolver(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_p.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-enterprise",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "mixed_generalization_variant_p_no_resolver",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        dedupe_resource_targets=True,
+        max_steps=10,
+    )
+
+    assert assessment.summary["campaigns_total"] == 9
+    assert assessment.summary["campaigns_passed"] == 9
+
+
 def test_campaign_synthesis_run_cli_reports_artifacts(tmp_path: Path) -> None:
     target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
     authorization_path = (
@@ -2191,6 +2475,57 @@ def test_mixed_generalization_variant_b_inferrs_profiles_without_curated_candida
     assert "aws-external-entry-data" in top_external["signals"]["inferred_profiles"]
     assert top_cross["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key"
     assert top_multi["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key"
+    assert top_external["execution_fixture_set"] == "compute-pivot-app"
+
+
+def test_mixed_generalization_variant_p_infers_execution_fixture_sets_structurally(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_p.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-enterprise",
+    )
+
+    by_profile = {candidate["profile_family"]: candidate for candidate in payload["candidates"]}
+
+    assert by_profile["aws-external-entry-data"]["execution_fixture_set"] == "compute-pivot-app"
+    assert by_profile["aws-iam-compute-iam"]["execution_fixture_set"] == "compute-pivot-app"
+    assert by_profile["aws-iam-lambda-data"]["execution_fixture_set"] == "serverless-business-app"
+    assert by_profile["aws-iam-kms-data"]["execution_fixture_set"] == "serverless-business-app"
+    assert by_profile["aws-cross-account-data"]["execution_fixture_set"] == "mixed-generalization"
+    assert by_profile["aws-multi-step-data"]["execution_fixture_set"] == "mixed-generalization"
+    assert by_profile["aws-external-entry-data"]["fixture_path"].endswith("compute_pivot_app_unified_lab.json")
+    assert by_profile["aws-iam-lambda-data"]["scope_template_path"].endswith(
+        "scope_serverless_business_app_iam_lambda_data.json"
+    )
+
+
+def test_mixed_generalization_variant_p_infers_execution_fixture_sets_structurally(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_p.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-enterprise",
+    )
+
+    by_profile = {candidate["profile_family"]: candidate for candidate in payload["candidates"]}
+
+    assert by_profile["aws-external-entry-data"]["execution_fixture_set"] == "compute-pivot-app"
+    assert by_profile["aws-iam-compute-iam"]["execution_fixture_set"] == "compute-pivot-app"
+    assert by_profile["aws-iam-lambda-data"]["execution_fixture_set"] == "serverless-business-app"
+    assert by_profile["aws-iam-kms-data"]["execution_fixture_set"] == "serverless-business-app"
+    assert by_profile["aws-cross-account-data"]["execution_fixture_set"] == "mixed-generalization"
+    assert by_profile["aws-multi-step-data"]["execution_fixture_set"] == "mixed-generalization"
 
 
 def test_mixed_generalization_variant_b_supports_enterprise_discovery_driven_end_to_end(
@@ -2226,8 +2561,8 @@ def test_mixed_generalization_variant_b_supports_enterprise_discovery_driven_end
         max_steps=9,
     )
 
-    assert assessment.summary["campaigns_total"] == 8
-    assert assessment.summary["campaigns_passed"] == 8
+    assert assessment.summary["campaigns_total"] == 9
+    assert assessment.summary["campaigns_passed"] == 9
 
 
 def test_mixed_generalization_variant_c_keeps_best_targets_on_top_under_same_surface_competition(
@@ -2319,6 +2654,25 @@ def test_mixed_generalization_variant_d_prefers_higher_quality_public_entry_path
     assert webhook["signals"]["public_role_score"] < top_external["signals"]["public_role_score"]
 
 
+def test_mixed_generalization_resolver_uses_execution_fixture_set_from_plan() -> None:
+    serverless_profile = get_mixed_synthetic_profile(
+        "aws-iam-kms-data",
+        {"execution_fixture_set": "serverless-business-app", "resource_arn": "arn:aws:kms:us-east-1:123456789012:key/payroll-runtime"},
+    )
+    compute_profile = get_mixed_synthetic_profile(
+        "aws-external-entry-data",
+        {"execution_fixture_set": "compute-pivot-app", "resource_arn": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key"},
+    )
+    mixed_profile = get_mixed_synthetic_profile(
+        "aws-iam-s3",
+        {"execution_fixture_set": "mixed-generalization", "resource_arn": "arn:aws:s3:::mixed-payroll-data-prod/payroll/2026-03/payroll.csv"},
+    )
+
+    assert "serverless_business_app_unified_lab.json" in str(serverless_profile.fixture_path)
+    assert "compute_pivot_app_unified_lab.json" in str(compute_profile.fixture_path)
+    assert "mixed_generalization_iam_s3_lab.json" in str(mixed_profile.fixture_path)
+
+
 def test_mixed_generalization_variant_d_supports_enterprise_discovery_driven_end_to_end(
     tmp_path: Path,
 ) -> None:
@@ -2354,6 +2708,744 @@ def test_mixed_generalization_variant_d_supports_enterprise_discovery_driven_end
 
     assert assessment.summary["campaigns_total"] == 8
     assert assessment.summary["campaigns_passed"] == 8
+
+
+def test_mixed_generalization_variant_e_prefers_deeper_multi_step_but_keeps_cross_account_direct(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_e.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-enterprise",
+    )
+
+    top_external = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-external-entry-data")
+    top_cross = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-cross-account-data")
+    top_multi = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-multi-step-data")
+
+    assert top_external["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key"
+    assert top_cross["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key"
+    assert top_multi["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-master-api-key"
+    assert top_multi["signals"]["chain_depth"] == 4
+
+
+def test_mixed_generalization_variant_e_supports_enterprise_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_e.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-enterprise",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "mixed_generalization_variant_e",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=get_mixed_synthetic_profile,
+        dedupe_resource_targets=True,
+        max_steps=10,
+    )
+
+    assert assessment.summary["campaigns_total"] == 9
+    assert assessment.summary["campaigns_passed"] == 9
+
+
+def test_mixed_generalization_variant_f_infers_structural_paths_from_relationships(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_f.discovery.json").read_text()
+    )
+
+    resource_map = {resource["identifier"]: resource for resource in discovery_snapshot["resources"]}
+    assert "reachable_roles" not in resource_map[
+        "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-master-api-key"
+    ]["metadata"]
+    assert "pivot_chain" not in resource_map[
+        "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-master-api-key"
+    ]["metadata"]
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-enterprise",
+    )
+
+    top_external = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-external-entry-data")
+    top_cross = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-cross-account-data")
+    top_multi = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-multi-step-data")
+
+    assert top_external["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key"
+    assert top_cross["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key"
+    assert top_multi["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-master-api-key"
+    assert top_cross["signals"]["pivot_chain"] == [
+        "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+        "arn:aws:iam::123456789012:role/AnalyticsBrokerRole",
+        "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole",
+    ]
+    assert top_multi["signals"]["chain_depth"] == 4
+    assert top_multi["signals"]["reachable_roles"] == [
+        "arn:aws:iam::210987654321:role/FinanceWarehouseRelayRole",
+    ]
+
+
+def test_mixed_generalization_variant_f_supports_enterprise_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_f.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-enterprise",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "mixed_generalization_variant_f",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=get_mixed_synthetic_profile,
+        dedupe_resource_targets=True,
+        max_steps=10,
+    )
+
+    assert assessment.summary["campaigns_total"] == 9
+    assert assessment.summary["campaigns_passed"] == 9
+
+
+def test_mixed_generalization_variant_g_removes_semantic_tags_and_stays_stable(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_g.discovery.json").read_text()
+    )
+
+    for resource in discovery_snapshot["resources"]:
+        assert "semantic_tags" not in resource.get("metadata", {})
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-enterprise",
+    )
+
+    top_external = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-external-entry-data")
+    top_cross = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-cross-account-data")
+    top_multi = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-multi-step-data")
+
+    assert top_external["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key"
+    assert top_cross["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key"
+    assert top_multi["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-master-api-key"
+
+
+def test_mixed_generalization_variant_g_supports_enterprise_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_g.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-enterprise",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "mixed_generalization_variant_g",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=get_mixed_synthetic_profile,
+        dedupe_resource_targets=True,
+        max_steps=10,
+    )
+
+    assert assessment.summary["campaigns_total"] == 9
+    assert assessment.summary["campaigns_passed"] == 9
+
+
+def test_mixed_generalization_variant_h_obfuscates_pivot_names_and_stays_stable(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_h.discovery.json").read_text()
+    )
+
+    role_ids = {
+        resource["identifier"]
+        for resource in discovery_snapshot["resources"]
+        if resource["resource_type"] == "identity.role"
+    }
+    assert "arn:aws:iam::123456789012:role/PayrollAppInstanceRole" not in role_ids
+    assert "arn:aws:iam::123456789012:role/LegacyWebhookBridgeRole" not in role_ids
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-enterprise",
+    )
+
+    top_external = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-external-entry-data")
+    top_cross = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-cross-account-data")
+    top_multi = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-multi-step-data")
+
+    assert top_external["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key"
+    assert top_cross["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key"
+    assert top_multi["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-master-api-key"
+    assert top_external["signals"]["public_path_roles"] == ["arn:aws:iam::123456789012:role/RA7"]
+
+
+def test_mixed_generalization_variant_h_supports_enterprise_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_h.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-enterprise",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "mixed_generalization_variant_h",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=get_mixed_synthetic_profile,
+        dedupe_resource_targets=True,
+        max_steps=10,
+    )
+
+    assert assessment.summary["campaigns_total"] == 9
+    assert assessment.summary["campaigns_passed"] == 9
+
+
+def test_mixed_generalization_variant_i_obfuscates_enterprise_target_names(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_i.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-enterprise",
+    )
+
+    top_cross = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-cross-account-data")
+    top_multi = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-multi-step-data")
+
+    assert top_cross["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/ops/core-api-key"
+    assert top_multi["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/ops/core-master-api-key"
+    assert "finance" not in top_cross["resource_arn"]
+    assert "warehouse" not in top_multi["resource_arn"]
+
+
+def test_mixed_generalization_variant_i_supports_enterprise_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_i.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-enterprise",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "mixed_generalization_variant_i",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=get_mixed_synthetic_profile,
+        dedupe_resource_targets=True,
+        max_steps=10,
+    )
+
+    assert assessment.summary["campaigns_total"] == 9
+    assert assessment.summary["campaigns_passed"] == 9
+
+
+def test_mixed_generalization_variant_j_reduces_enterprise_keyword_support(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_j.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-enterprise",
+    )
+
+    top_cross = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-cross-account-data")
+    top_multi = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-multi-step-data")
+
+    assert top_cross["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/ops/core-a"
+    assert top_multi["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/ops/core-b"
+    assert "api_key" not in top_cross["signals"]["keyword_hits"]
+    assert "api_key" not in top_multi["signals"]["keyword_hits"]
+    assert top_multi["score_components"]["structural"] > top_multi["score_components"]["lexical"]
+
+
+def test_mixed_generalization_variant_j_supports_enterprise_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_j.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-enterprise",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "mixed_generalization_variant_j",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=get_mixed_synthetic_profile,
+        dedupe_resource_targets=True,
+        max_steps=10,
+    )
+
+    assert assessment.summary["campaigns_total"] == 9
+    assert assessment.summary["campaigns_passed"] == 9
+
+
+def test_mixed_generalization_variant_k_obfuscates_local_s3_and_ssm_targets(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_k.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-enterprise",
+    )
+
+    top_s3 = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-s3")
+    top_ssm = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-ssm")
+
+    assert top_s3["resource_arn"] == "arn:aws:s3:::mixed-payroll-data-prod/data/2026-03/r1.bin"
+    assert top_ssm["resource_arn"] == "arn:aws:ssm:us-east-1:123456789012:parameter/prod/app/cfg_a"
+    assert "api_key" not in top_ssm["signals"]["keyword_hits"]
+
+
+def test_mixed_generalization_variant_k_supports_enterprise_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_k.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-enterprise",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "mixed_generalization_variant_k",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=get_mixed_synthetic_profile,
+        dedupe_resource_targets=True,
+        max_steps=10,
+    )
+
+    assert assessment.summary["campaigns_total"] == 9
+    assert assessment.summary["campaigns_passed"] == 9
+
+
+def test_mixed_generalization_variant_l_obfuscates_local_secret_and_shifts_external_entry(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_l.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-enterprise",
+    )
+
+    top_secrets = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-secrets")
+    top_external = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-external-entry-data")
+
+    assert top_secrets["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/sys/kv_a"
+    assert top_external["resource_arn"] == "arn:aws:s3:::mixed-payroll-data-prod/data/2026-03/r1.bin"
+    assert top_external["resource_type"] == "data_store.s3_object"
+
+
+def test_mixed_generalization_variant_l_supports_enterprise_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_l.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-enterprise",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "mixed_generalization_variant_l",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=get_mixed_synthetic_profile,
+        dedupe_resource_targets=True,
+        max_steps=10,
+    )
+
+    assert assessment.summary["campaigns_total"] == 9
+    assert assessment.summary["campaigns_passed"] == 9
+
+
+def test_mixed_generalization_variant_m_further_obfuscates_local_secret_and_preserves_external_entry(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_m.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-enterprise",
+    )
+
+    top_secrets = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-secrets")
+    top_external = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-external-entry-data")
+
+    assert top_secrets["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s1"
+    assert top_external["resource_arn"] == "arn:aws:s3:::mixed-payroll-data-prod/data/2026-03/r1.bin"
+    assert top_external["resource_type"] == "data_store.s3_object"
+
+
+def test_mixed_generalization_variant_m_supports_enterprise_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_m.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-enterprise",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "mixed_generalization_variant_m",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=get_mixed_synthetic_profile,
+        dedupe_resource_targets=True,
+        max_steps=10,
+    )
+
+    assert assessment.summary["campaigns_total"] == 9
+    assert assessment.summary["campaigns_passed"] == 9
+
+
+def test_mixed_generalization_variant_n_obfuscates_enterprise_deep_targets_with_low_lexical_support(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_n.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-enterprise",
+    )
+
+    top_cross = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-cross-account-data")
+    top_multi = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-multi-step-data")
+
+    assert top_cross["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/x/t1"
+    assert top_multi["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/x/t2"
+    assert top_cross["score_components"]["structural"] > top_cross["score_components"]["lexical"]
+    assert top_multi["score_components"]["structural"] > top_multi["score_components"]["lexical"]
+
+
+def test_mixed_generalization_variant_n_supports_enterprise_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_n.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-enterprise",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "mixed_generalization_variant_n",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=get_mixed_synthetic_profile,
+        dedupe_resource_targets=True,
+        max_steps=10,
+    )
+
+    assert assessment.summary["campaigns_total"] == 9
+    assert assessment.summary["campaigns_passed"] == 9
+
+
+def test_mixed_generalization_variant_o_uses_fixture_alias_support_for_local_and_enterprise_targets(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_o.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-enterprise",
+    )
+
+    top_secrets = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-secrets")
+    top_cross = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-cross-account-data")
+    top_multi = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-multi-step-data")
+
+    assert top_secrets["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/r/a1"
+    assert top_cross["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/r/e1"
+    assert top_multi["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/r/e2"
+
+
+def test_mixed_generalization_variant_o_supports_enterprise_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_o.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-enterprise",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "mixed_generalization_variant_o",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=get_mixed_synthetic_profile,
+        dedupe_resource_targets=True,
+        max_steps=10,
+    )
+
+    assert assessment.summary["campaigns_total"] == 9
+    assert assessment.summary["campaigns_passed"] == 9
+
+
+def test_mixed_generalization_variant_p_reduces_curated_metadata_and_preserves_selection(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_p.discovery.json").read_text()
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-enterprise",
+    )
+
+    top_secrets = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-secrets")
+    top_external = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-external-entry-data")
+    top_cross = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-cross-account-data")
+    top_multi = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-multi-step-data")
+
+    assert top_secrets["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/r/a1"
+    assert top_external["resource_arn"] == "arn:aws:s3:::mixed-payroll-data-prod/data/2026-03/r1.bin"
+    assert top_cross["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/r/e1"
+    assert top_multi["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/r/e2"
+
+
+def test_mixed_generalization_variant_p_supports_enterprise_discovery_driven_end_to_end(
+    tmp_path: Path,
+) -> None:
+    target = load_target(Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json")
+    authorization = load_authorization(
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    authorization = authorization.model_copy(update={"permitted_profiles": []})
+    discovery_snapshot = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_p.discovery.json").read_text()
+    )
+
+    def synthetic_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-enterprise",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "mixed_generalization_variant_p",
+        runner=execute_run,
+        discovery_runner=synthetic_discovery_runner,
+        profile_resolver=get_mixed_synthetic_profile,
+        dedupe_resource_targets=True,
+        max_steps=10,
+    )
+
+    assert assessment.summary["campaigns_total"] == 9
+    assert assessment.summary["campaigns_passed"] == 9
 
 
 def test_run_discovery_driven_assessment_generates_artifacts_and_campaigns(tmp_path: Path) -> None:
@@ -2672,6 +3764,66 @@ def test_write_assessment_summary_includes_preflight_and_scope(tmp_path: Path) -
     findings_content = findings_md.read_text()
     assert "IAM -> S3 exposure" in findings_content
     assert "s3://sensitive-finance-data/payroll.csv" in findings_content
+
+
+def test_write_assessment_summary_external_entry_uses_maturity_language(tmp_path: Path) -> None:
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir(parents=True, exist_ok=True)
+    (campaign_dir / "report.json").write_text(
+        json.dumps(
+            {
+                "objective": {
+                    "target": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+                },
+                "executive_summary": {
+                    "initial_identity": "arn:aws:iam::550192603632:user/brainctl-user",
+                    "final_resource": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+                    "proof": {
+                        "entry_surface": "payroll-webhook-public",
+                        "reached_role": "arn:aws:iam::550192603632:role/PublicPayrollAppRole",
+                    },
+                    "external_entry_maturity": {
+                        "applicable": True,
+                        "classification": "public_exposure_structurally_linked_to_privileged_path",
+                        "network_reachable_from_internet": {"status": "structural", "evidence": None},
+                        "backend_reachable": {"status": "structural", "evidence": None},
+                        "credential_acquisition_possible": {"status": "proved", "evidence": None},
+                        "data_path_exploitable": {"status": "proved", "evidence": None},
+                    },
+                },
+                "execution_policy": {
+                    "allowed_services": ["ec2", "iam", "sts", "s3"],
+                },
+                "mitre_techniques": [],
+                "steps": [],
+            }
+        )
+    )
+    (campaign_dir / "report.md").write_text("# report\n")
+
+    result = AssessmentResult(
+        bundle="aws-advanced",
+        target="local-aws-lab",
+        campaigns=[
+            CampaignResult(
+                status="passed",
+                profile="aws-external-entry-data",
+                output_dir=campaign_dir,
+                generated_scope=campaign_dir / "aws-external-entry-data.scope.json",
+                objective_met=True,
+                preflight_ok=True,
+                preflight_details={"account_id": "550192603632"},
+                report_json=campaign_dir / "report.json",
+                report_md=campaign_dir / "report.md",
+            )
+        ],
+    )
+
+    write_assessment_summary(result, tmp_path)
+
+    findings_content = Path(result.artifacts["assessment_findings_md"]).read_text()
+    assert "Public exposure structurally linked to privileged path." in findings_content
+    assert "public exploit path proved end-to-end" not in findings_content
 
 
 def test_run_campaign_marks_preflight_failure_without_crashing(tmp_path: Path) -> None:
@@ -4090,6 +5242,35 @@ def test_aws_secrets_backtracking_dry_run_end_to_end(tmp_path: Path) -> None:
     assert '"tool": "secretsmanager_read_secret"' in report
     assert 'RoleA' in report_md
     assert 'RoleM' in report_md
+
+
+def test_external_entry_report_tracks_reachability_maturity(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture_path = repo_root / "fixtures" / "compute_pivot_app_external_entry_lab.json"
+    objective_path = repo_root / "examples" / "objective_compute_pivot_app_external_entry.json"
+    scope_path = repo_root / "examples" / "scope_compute_pivot_app_external_entry.json"
+
+    run(
+        fixture_path=fixture_path,
+        objective_path=objective_path,
+        scope_path=scope_path,
+        output_dir=tmp_path,
+        max_steps=6,
+        seed=1,
+    )
+
+    report = json.loads((tmp_path / "report.json").read_text())
+    maturity = report["executive_summary"]["external_entry_maturity"]
+    report_md = (tmp_path / "report.md").read_text()
+
+    assert maturity["applicable"] is True
+    assert maturity["classification"] == "public_exposure_structurally_linked_to_privileged_path"
+    assert maturity["network_reachable_from_internet"]["status"] == "structural"
+    assert maturity["backend_reachable"]["status"] == "structural"
+    assert maturity["credential_acquisition_possible"]["status"] == "structural"
+    assert maturity["data_path_exploitable"]["status"] == "not_observed"
+    assert "## External Entry Maturity" in report_md
+    assert "public_exposure_structurally_linked_to_privileged_path" in report_md
 
 
 def test_mock_planner_prefers_higher_scored_assume_role() -> None:

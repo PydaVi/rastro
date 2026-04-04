@@ -1,0 +1,686 @@
+{
+  "name": "compute-pivot-app-unified-lab",
+  "description": "Synthetic unified environment for compute-pivot-app.",
+  "version": "0.1",
+  "aliases": {
+    "arn:aws:iam::123456789012:role/PayrollAppInstanceRole": [
+      "arn:aws:iam::123456789012:role/RA7"
+    ],
+    "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv": [
+      "arn:aws:s3:::mixed-payroll-data-prod/data/2026-03/r1.bin"
+    ],
+    "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll/backend-db-password": [
+      "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/r/a1"
+    ]
+  },
+  "state": {
+    "flags": [],
+    "identities": {
+      "arn:aws:iam::123456789012:user/platform-analyst": {
+        "available_actions": [
+          {
+            "action_type": "enumerate",
+            "target": "arn:aws:iam::123456789012:root",
+            "parameters": {
+              "service": "iam",
+              "region": "us-east-1"
+            },
+            "tool": "iam_list_roles"
+          },
+          {
+            "action_type": "assume_role",
+            "target": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+            "parameters": {
+              "service": "sts",
+              "region": "us-east-1",
+              "role_arn": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+              "session_name": "compute-payroll"
+            },
+            "tool": "iam_passrole"
+          },
+          {
+            "action_type": "assume_role",
+            "target": "arn:aws:iam::123456789012:role/SupportBastionRole",
+            "parameters": {
+              "service": "sts",
+              "region": "us-east-1",
+              "role_arn": "arn:aws:iam::123456789012:role/SupportBastionRole",
+              "session_name": "compute-bastion"
+            },
+            "tool": "iam_passrole"
+          },
+          {
+            "action_type": "assume_role",
+            "target": "arn:aws:iam::123456789012:role/LegacyReportInstanceRole",
+            "parameters": {
+              "service": "sts",
+              "region": "us-east-1",
+              "role_arn": "arn:aws:iam::123456789012:role/LegacyReportInstanceRole",
+              "session_name": "compute-legacy"
+            },
+            "tool": "iam_passrole"
+          },
+          {
+            "action_type": "assume_role",
+            "target": "arn:aws:iam::123456789012:role/ComputeAuditRole",
+            "parameters": {
+              "service": "sts",
+              "region": "us-east-1",
+              "role_arn": "arn:aws:iam::123456789012:role/ComputeAuditRole",
+              "session_name": "compute-audit"
+            },
+            "tool": "iam_passrole"
+          },
+          {
+            "action_type": "access_resource",
+            "target": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/payroll-web",
+            "parameters": {
+              "service": "elasticloadbalancing",
+              "region": "us-east-1",
+              "resource_arn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/payroll-web"
+            },
+            "tool": "ec2_instance_profile_pivot"
+          },
+          {
+            "action_type": "access_resource",
+            "target": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/reporting-internal",
+            "parameters": {
+              "service": "elasticloadbalancing",
+              "region": "us-east-1",
+              "resource_arn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/reporting-internal"
+            },
+            "tool": "ec2_instance_profile_pivot"
+          },
+          {
+            "action_type": "access_resource",
+            "target": "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public",
+            "parameters": {
+              "service": "apigateway",
+              "region": "us-east-1",
+              "resource_arn": "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public"
+            },
+            "tool": "ec2_instance_profile_pivot"
+          },
+          {
+            "action_type": "access_resource",
+            "target": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/public-webhook-bridge",
+            "parameters": {
+              "service": "elasticloadbalancing",
+              "region": "us-east-1",
+              "resource_arn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/public-webhook-bridge"
+            },
+            "tool": "ec2_instance_profile_pivot"
+          }
+        ]
+      }
+    }
+  },
+  "transitions": [
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:root",
+      "observation": {
+        "details": "Listed compute roles.",
+        "discovered_roles": [
+          "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+          "arn:aws:iam::123456789012:role/SupportBastionRole",
+          "arn:aws:iam::123456789012:role/LegacyReportInstanceRole",
+          "arn:aws:iam::123456789012:role/ComputeAuditRole"
+        ]
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "observation": {
+        "granted_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+        "details": "Assumed PayrollAppInstanceRole."
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/PayrollAppInstanceRole": {
+          "available_actions": [
+            {
+              "action_type": "enumerate",
+              "target": "arn:aws:s3:::compute-payroll-dumps-prod",
+              "parameters": {
+                "service": "s3",
+                "region": "us-east-1",
+                "bucket": "compute-payroll-dumps-prod"
+              },
+              "tool": "s3_list_bucket"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+              "parameters": {
+                "service": "s3",
+                "region": "us-east-1",
+                "bucket": "compute-payroll-dumps-prod",
+                "object_key": "payroll/2026-03/payroll.csv"
+              },
+              "tool": "s3_read_sensitive"
+            },
+            {
+              "action_type": "enumerate",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll/backend-db-password",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "name_prefix": "prod/"
+              },
+              "tool": "secretsmanager_list_secrets"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll/backend-db-password",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/payroll/backend-db-password"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/sys/kv_a",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/sys/kv_a"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/sys/kv_b",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/sys/kv_b"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s1",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/app/s1"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s2",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/app/s2"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s3",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/app/s3"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "enumerate",
+              "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key",
+              "parameters": {
+                "service": "ssm",
+                "region": "us-east-1",
+                "path": "/prod"
+              },
+              "tool": "ssm_list_parameters"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key",
+              "parameters": {
+                "service": "ssm",
+                "region": "us-east-1",
+                "name": "/prod/payroll/api_key"
+              },
+              "tool": "ssm_read_parameter"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:role/SupportBastionRole",
+      "observation": {
+        "granted_role": "arn:aws:iam::123456789012:role/SupportBastionRole",
+        "details": "Assumed SupportBastionRole."
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/SupportBastionRole": {
+          "available_actions": [
+            {
+              "action_type": "enumerate",
+              "target": "arn:aws:s3:::compute-app-logs-prod",
+              "parameters": {
+                "service": "s3",
+                "region": "us-east-1",
+                "bucket": "compute-app-logs-prod"
+              },
+              "tool": "s3_list_bucket"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:s3:::compute-app-logs-prod/nginx/access.log",
+              "parameters": {
+                "service": "s3",
+                "region": "us-east-1",
+                "bucket": "compute-app-logs-prod",
+                "object_key": "nginx/access.log"
+              },
+              "tool": "s3_read_sensitive"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:ssm:us-east-1:123456789012:parameter/shared/bastion/session_policy",
+              "parameters": {
+                "service": "ssm",
+                "region": "us-east-1",
+                "name": "/shared/bastion/session_policy"
+              },
+              "tool": "ssm_read_parameter"
+            },
+            {
+              "action_type": "assume_role",
+              "target": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+              "parameters": {
+                "service": "sts",
+                "region": "us-east-1",
+                "role_arn": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+                "session_name": "compute-payroll-chain"
+              },
+              "tool": "iam_passrole"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:role/LegacyReportInstanceRole",
+      "observation": {
+        "granted_role": "arn:aws:iam::123456789012:role/LegacyReportInstanceRole",
+        "details": "Assumed LegacyReportInstanceRole."
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/LegacyReportInstanceRole": {
+          "available_actions": [
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/reporting/export-token",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/reporting/export-token"
+              },
+              "tool": "secretsmanager_read_secret"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:role/ComputeAuditRole",
+      "observation": {
+        "granted_role": "arn:aws:iam::123456789012:role/ComputeAuditRole",
+        "details": "Assumed ComputeAuditRole."
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:role/SupportBastionRole",
+      "target": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "observation": {
+        "granted_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+        "details": "Assumed PayrollAppInstanceRole via bastion role."
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/payroll-web",
+      "observation": {
+        "details": "Pivoted through payroll-web to instance profile credentials.",
+        "evidence": {
+          "entry_surface": "payroll-web",
+          "reached_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/reporting-internal",
+      "observation": {
+        "details": "Reached legacy reporting instance profile.",
+        "evidence": {
+          "entry_surface": "reporting-internal",
+          "reached_role": "arn:aws:iam::123456789012:role/LegacyReportInstanceRole"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public",
+      "observation": {
+        "details": "Pivoted from public webhook into payroll instance profile credentials.",
+        "evidence": {
+          "entry_surface": "payroll-webhook-public",
+          "reached_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+        }
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/PayrollAppInstanceRole": {
+          "available_actions": [
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+              "parameters": {
+                "service": "s3",
+                "region": "us-east-1",
+                "bucket": "compute-payroll-dumps-prod",
+                "object_key": "payroll/2026-03/payroll.csv"
+              },
+              "tool": "s3_read_sensitive"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll/backend-db-password",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/payroll/backend-db-password"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/sys/kv_a",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/sys/kv_a"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/sys/kv_b",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/sys/kv_b"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s1",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/app/s1"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s2",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/app/s2"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s3",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/app/s3"
+              },
+              "tool": "secretsmanager_read_secret"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/public-webhook-bridge",
+      "observation": {
+        "details": "Pivoted from public bridge into payroll instance profile credentials.",
+        "evidence": {
+          "entry_surface": "public-webhook-bridge",
+          "reached_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+        }
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/PayrollAppInstanceRole": {
+          "available_actions": [
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+              "parameters": {
+                "service": "s3",
+                "region": "us-east-1",
+                "bucket": "compute-payroll-dumps-prod",
+                "object_key": "payroll/2026-03/payroll.csv"
+              },
+              "tool": "s3_read_sensitive"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll/backend-db-password",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/payroll/backend-db-password"
+              },
+              "tool": "secretsmanager_read_secret"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:s3:::compute-payroll-dumps-prod",
+      "observation": {
+        "details": "Listed payroll dumps bucket.",
+        "discovered_objects": [
+          "payroll/2026-03/payroll.csv"
+        ]
+      }
+    },
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:role/SupportBastionRole",
+      "target": "arn:aws:s3:::compute-app-logs-prod",
+      "observation": {
+        "details": "Listed logs bucket.",
+        "discovered_objects": [
+          "nginx/access.log"
+        ]
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+      "observation": {
+        "details": "Read payroll dump.",
+        "evidence": {
+          "bucket": "compute-payroll-dumps-prod",
+          "object_key": "payroll/2026-03/payroll.csv"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/SupportBastionRole",
+      "target": "arn:aws:s3:::compute-app-logs-prod/nginx/access.log",
+      "observation": {
+        "details": "Read access log.",
+        "evidence": {
+          "bucket": "compute-app-logs-prod",
+          "object_key": "nginx/access.log"
+        }
+      }
+    },
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll/backend-db-password",
+      "observation": {
+        "details": "Listed compute secrets.",
+        "discovered_secrets": [
+          "prod/payroll/backend-db-password",
+          "prod/reporting/export-token",
+          "prod/sys/kv_a",
+          "prod/sys/kv_b",
+          "prod/app/s1",
+          "prod/app/s2",
+          "prod/app/s3"
+        ]
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll/backend-db-password",
+      "observation": {
+        "details": "Read payroll backend password.",
+        "evidence": {
+          "secret_id": "prod/payroll/backend-db-password"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/sys/kv_a",
+      "observation": {
+        "details": "Read obfuscated local secret kv_a.",
+        "evidence": {
+          "secret_id": "prod/sys/kv_a"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/sys/kv_b",
+      "observation": {
+        "details": "Read obfuscated local secret kv_b.",
+        "evidence": {
+          "secret_id": "prod/sys/kv_b"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s1",
+      "observation": {
+        "details": "Read obfuscated local secret s1.",
+        "evidence": {
+          "secret_id": "prod/app/s1"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s2",
+      "observation": {
+        "details": "Read obfuscated local secret s2.",
+        "evidence": {
+          "secret_id": "prod/app/s2"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s3",
+      "observation": {
+        "details": "Read obfuscated local secret s3.",
+        "evidence": {
+          "secret_id": "prod/app/s3"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/LegacyReportInstanceRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/reporting/export-token",
+      "observation": {
+        "details": "Read reporting export token.",
+        "evidence": {
+          "secret_id": "prod/reporting/export-token"
+        }
+      }
+    },
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key",
+      "observation": {
+        "details": "Listed compute parameters.",
+        "discovered_parameters": [
+          "/prod/payroll/api_key",
+          "/prod/reporting/export_token"
+        ]
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key",
+      "observation": {
+        "details": "Read payroll api key parameter.",
+        "evidence": {
+          "name": "/prod/payroll/api_key"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/SupportBastionRole",
+      "target": "arn:aws:ssm:us-east-1:123456789012:parameter/shared/bastion/session_policy",
+      "observation": {
+        "details": "Read bastion session policy.",
+        "evidence": {
+          "name": "/shared/bastion/session_policy"
+        }
+      }
+    }
+  ]
+}

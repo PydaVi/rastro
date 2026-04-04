@@ -1,0 +1,569 @@
+{
+  "name": "serverless-business-app-unified-lab",
+  "description": "Synthetic unified environment for serverless-business-app.",
+  "version": "0.1",
+  "aliases": {
+    "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key": [
+      "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/r/a1"
+    ]
+  },
+  "state": {
+    "flags": [],
+    "identities": {
+      "arn:aws:iam::123456789012:user/platform-analyst": {
+        "available_actions": [
+          {
+            "action_type": "enumerate",
+            "target": "arn:aws:iam::123456789012:root",
+            "parameters": {
+              "service": "iam",
+              "region": "us-east-1"
+            },
+            "tool": "iam_list_roles"
+          },
+          {
+            "action_type": "assume_role",
+            "target": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+            "parameters": {
+              "service": "sts",
+              "region": "us-east-1",
+              "role_arn": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+              "session_name": "sba-payroll"
+            },
+            "tool": "iam_passrole"
+          },
+          {
+            "action_type": "assume_role",
+            "target": "arn:aws:iam::123456789012:role/ServerlessAuditRole",
+            "parameters": {
+              "service": "sts",
+              "region": "us-east-1",
+              "role_arn": "arn:aws:iam::123456789012:role/ServerlessAuditRole",
+              "session_name": "sba-audit"
+            },
+            "tool": "iam_passrole"
+          },
+          {
+            "action_type": "assume_role",
+            "target": "arn:aws:iam::123456789012:role/InternalAdminSyncRole",
+            "parameters": {
+              "service": "sts",
+              "region": "us-east-1",
+              "role_arn": "arn:aws:iam::123456789012:role/InternalAdminSyncRole",
+              "session_name": "sba-admin"
+            },
+            "tool": "iam_passrole"
+          },
+          {
+            "action_type": "assume_role",
+            "target": "arn:aws:iam::123456789012:role/OrdersExportRole",
+            "parameters": {
+              "service": "sts",
+              "region": "us-east-1",
+              "role_arn": "arn:aws:iam::123456789012:role/OrdersExportRole",
+              "session_name": "sba-orders"
+            },
+            "tool": "iam_passrole"
+          },
+          {
+            "action_type": "assume_role",
+            "target": "arn:aws:iam::123456789012:role/BillingWorkerRole",
+            "parameters": {
+              "service": "sts",
+              "region": "us-east-1",
+              "role_arn": "arn:aws:iam::123456789012:role/BillingWorkerRole",
+              "session_name": "sba-billing"
+            },
+            "tool": "iam_passrole"
+          },
+          {
+            "action_type": "assume_role",
+            "target": "arn:aws:iam::123456789012:role/PublicApiBridgeRole",
+            "parameters": {
+              "service": "sts",
+              "region": "us-east-1",
+              "role_arn": "arn:aws:iam::123456789012:role/PublicApiBridgeRole",
+              "session_name": "sba-bridge"
+            },
+            "tool": "iam_passrole"
+          },
+          {
+            "action_type": "assume_role",
+            "target": "arn:aws:iam::123456789012:role/PayrollDecryptRole",
+            "parameters": {
+              "service": "sts",
+              "region": "us-east-1",
+              "role_arn": "arn:aws:iam::123456789012:role/PayrollDecryptRole",
+              "session_name": "sba-decrypt"
+            },
+            "tool": "iam_passrole"
+          }
+        ]
+      }
+    }
+  },
+  "transitions": [
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:root",
+      "observation": {
+        "details": "Listed unified serverless roles.",
+        "discovered_roles": [
+          "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+          "arn:aws:iam::123456789012:role/ServerlessAuditRole",
+          "arn:aws:iam::123456789012:role/InternalAdminSyncRole",
+          "arn:aws:iam::123456789012:role/OrdersExportRole",
+          "arn:aws:iam::123456789012:role/BillingWorkerRole",
+          "arn:aws:iam::123456789012:role/PublicApiBridgeRole",
+          "arn:aws:iam::123456789012:role/PayrollDecryptRole"
+        ]
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "observation": {
+        "granted_role": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+        "details": "Assumed PayrollHandlerRole."
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/PayrollHandlerRole": {
+          "available_actions": [
+            {
+              "action_type": "enumerate",
+              "target": "arn:aws:s3:::serverless-payroll-exports-prod",
+              "parameters": {
+                "service": "s3",
+                "region": "us-east-1",
+                "bucket": "serverless-payroll-exports-prod"
+              },
+              "tool": "s3_list_bucket"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:s3:::serverless-payroll-exports-prod/exports/payroll-2026-03.csv",
+              "parameters": {
+                "service": "s3",
+                "region": "us-east-1",
+                "bucket": "serverless-payroll-exports-prod",
+                "object_key": "exports/payroll-2026-03.csv"
+              },
+              "tool": "s3_read_sensitive"
+            },
+            {
+              "action_type": "enumerate",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "name_prefix": "prod/"
+              },
+              "tool": "secretsmanager_list_secrets"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/payroll-api-key"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:internal/admin-token",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "internal/admin-token"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/sys/kv_a",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/sys/kv_a"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/sys/kv_b",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/sys/kv_b"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s1",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/app/s1"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s2",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/app/s2"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s3",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/app/s3"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "enumerate",
+              "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key",
+              "parameters": {
+                "service": "ssm",
+                "region": "us-east-1",
+                "path": "/prod"
+              },
+              "tool": "ssm_list_parameters"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key",
+              "parameters": {
+                "service": "ssm",
+                "region": "us-east-1",
+                "name": "/prod/payroll/api_key"
+              },
+              "tool": "ssm_read_parameter"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/orders/export_token",
+              "parameters": {
+                "service": "ssm",
+                "region": "us-east-1",
+                "name": "/prod/orders/export_token"
+              },
+              "tool": "ssm_read_parameter"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/app/cfg_a",
+              "parameters": {
+                "service": "ssm",
+                "region": "us-east-1",
+                "name": "/prod/app/cfg_a"
+              },
+              "tool": "ssm_read_parameter"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:role/ServerlessAuditRole",
+      "observation": {
+        "granted_role": "arn:aws:iam::123456789012:role/ServerlessAuditRole",
+        "details": "Assumed ServerlessAuditRole."
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:role/InternalAdminSyncRole",
+      "observation": {
+        "granted_role": "arn:aws:iam::123456789012:role/InternalAdminSyncRole",
+        "details": "Assumed InternalAdminSyncRole."
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:role/OrdersExportRole",
+      "observation": {
+        "granted_role": "arn:aws:iam::123456789012:role/OrdersExportRole",
+        "details": "Assumed OrdersExportRole."
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:role/BillingWorkerRole",
+      "observation": {
+        "granted_role": "arn:aws:iam::123456789012:role/BillingWorkerRole",
+        "details": "Assumed BillingWorkerRole."
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/BillingWorkerRole": {
+          "available_actions": [
+            {
+              "action_type": "assume_role",
+              "target": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+              "parameters": {
+                "service": "sts",
+                "region": "us-east-1",
+                "role_arn": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+                "session_name": "sba-payroll-chain"
+              },
+              "tool": "iam_passrole"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:role/BillingWorkerRole",
+      "target": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "observation": {
+        "granted_role": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+        "details": "Assumed PayrollHandlerRole."
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:role/PublicApiBridgeRole",
+      "observation": {
+        "granted_role": "arn:aws:iam::123456789012:role/PublicApiBridgeRole",
+        "details": "Assumed PublicApiBridgeRole."
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/PublicApiBridgeRole": {
+          "available_actions": [
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:lambda:us-east-1:123456789012:function:payroll-handler",
+              "parameters": {
+                "service": "lambda",
+                "region": "us-east-1",
+                "function_name": "payroll-handler"
+              },
+              "tool": "lambda_invoke"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PublicApiBridgeRole",
+      "target": "arn:aws:lambda:us-east-1:123456789012:function:payroll-handler",
+      "observation": {
+        "details": "Invoked payroll-handler Lambda.",
+        "invoked_function": "payroll-handler"
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:role/PayrollDecryptRole",
+      "observation": {
+        "granted_role": "arn:aws:iam::123456789012:role/PayrollDecryptRole",
+        "details": "Assumed PayrollDecryptRole."
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/PayrollDecryptRole": {
+          "available_actions": [
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:kms:us-east-1:123456789012:key/payroll-runtime",
+              "parameters": {
+                "service": "kms",
+                "region": "us-east-1",
+                "key_id": "arn:aws:kms:us-east-1:123456789012:key/payroll-runtime"
+              },
+              "tool": "kms_decrypt"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "target": "arn:aws:s3:::serverless-payroll-exports-prod",
+      "observation": {
+        "details": "Listed exports bucket.",
+        "discovered_objects": [
+          "exports/payroll-2026-03.csv"
+        ]
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "target": "arn:aws:s3:::serverless-payroll-exports-prod/exports/payroll-2026-03.csv",
+      "observation": {
+        "details": "Read payroll export.",
+        "evidence": {
+          "bucket": "serverless-payroll-exports-prod",
+          "object_key": "exports/payroll-2026-03.csv"
+        }
+      }
+    },
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key",
+      "observation": {
+        "details": "Listed secrets.",
+        "discovered_secrets": [
+          "prod/payroll-api-key",
+          "internal/admin-token"
+        ]
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key",
+      "observation": {
+        "details": "Read payroll api key.",
+        "evidence": {
+          "secret_id": "prod/payroll-api-key"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:internal/admin-token",
+      "observation": {
+        "details": "Read internal admin token.",
+        "evidence": {
+          "secret_id": "internal/admin-token"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/sys/kv_a",
+      "observation": {
+        "details": "Read obfuscated local secret kv_a.",
+        "evidence": {
+          "secret_id": "prod/sys/kv_a"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/sys/kv_b",
+      "observation": {
+        "details": "Read obfuscated local secret kv_b.",
+        "evidence": {
+          "secret_id": "prod/sys/kv_b"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s1",
+      "observation": {
+        "details": "Read obfuscated local secret s1.",
+        "evidence": {
+          "secret_id": "prod/app/s1"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s2",
+      "observation": {
+        "details": "Read obfuscated local secret s2.",
+        "evidence": {
+          "secret_id": "prod/app/s2"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s3",
+      "observation": {
+        "details": "Read obfuscated local secret s3.",
+        "evidence": {
+          "secret_id": "prod/app/s3"
+        }
+      }
+    },
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key",
+      "observation": {
+        "details": "Listed parameters.",
+        "discovered_parameters": [
+          "/prod/payroll/api_key",
+          "/prod/orders/export_token"
+        ]
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key",
+      "observation": {
+        "details": "Read payroll api key parameter.",
+        "evidence": {
+          "name": "/prod/payroll/api_key"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/orders/export_token",
+      "observation": {
+        "details": "Read orders export token parameter.",
+        "evidence": {
+          "name": "/prod/orders/export_token"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/app/cfg_a",
+      "observation": {
+        "details": "Read obfuscated local parameter.",
+        "evidence": {
+          "name": "/prod/app/cfg_a"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollDecryptRole",
+      "target": "arn:aws:kms:us-east-1:123456789012:key/payroll-runtime",
+      "observation": {
+        "details": "Decrypted payroll runtime material.",
+        "evidence": {
+          "key_id": "arn:aws:kms:us-east-1:123456789012:key/payroll-runtime"
+        }
+      }
+    }
+  ]
+}

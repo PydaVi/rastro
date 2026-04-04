@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+from collections import deque
 from pathlib import Path
+
+from operations.synthetic_catalog import get_synthetic_profile
 
 
 KEYWORD_WEIGHTS = {
@@ -79,7 +82,12 @@ def select_foundation_targets(
     profile_names = BUNDLE_RULES.get(active_bundle, BUNDLE_RULES["aws-foundation"])
     candidates: list[dict] = []
     resources = discovery_snapshot.get("resources", [])
-    structural_index = _build_structural_index(resources, discovery_snapshot.get("caller_identity", {}).get("Account"))
+    structural_index = _build_structural_index(
+        resources,
+        discovery_snapshot.get("caller_identity", {}).get("Account"),
+        discovery_snapshot.get("relationships", []),
+        discovery_snapshot.get("target"),
+    )
     for profile_name in profile_names:
         rule = PROFILE_RULES[profile_name]
         profile_candidates = []
@@ -119,6 +127,11 @@ def _build_candidate(profile_name: str, resource: dict, structural_index: dict) 
     candidate_profiles = metadata.get("candidate_profiles", [])
     inferred_profiles = _infer_candidate_profiles(resource, structural_index)
     active_profiles = candidate_profiles or inferred_profiles
+    execution_fixture_set = _infer_execution_fixture_set(resource, profile_name, structural_index)
+    synthetic_profile = _resolve_synthetic_profile_definition(execution_fixture_set, profile_name)
+    reachable_roles = _resolved_reachable_roles(resource, structural_index)
+    pivot_chain = _resolved_pivot_chain(resource, structural_index, reachable_roles)
+    chain_depth = _resolved_chain_depth(resource, reachable_roles, pivot_chain, structural_index)
 
     if active_profiles and profile_name not in active_profiles:
         return None
@@ -255,7 +268,6 @@ def _build_candidate(profile_name: str, resource: dict, structural_index: dict) 
         structural_score += 10
         reasons.append("prod_compute_role")
     if profile_name == "aws-external-entry-data":
-        reachable_roles = metadata.get("reachable_roles", [])
         if resource_account and structural_index["caller_account"] and resource_account != structural_index["caller_account"]:
             return None
         public_path_roles = []
@@ -284,7 +296,6 @@ def _build_candidate(profile_name: str, resource: dict, structural_index: dict) 
             structural_score += 10
             reasons.append("external_sensitive_data")
     if profile_name == "aws-cross-account-data":
-        reachable_roles = metadata.get("reachable_roles", [])
         if not resource_account or resource_account == structural_index["caller_account"]:
             return None
         cross_account_roles = [role for role in reachable_roles if _extract_account_id(role) == resource_account]
@@ -296,7 +307,6 @@ def _build_candidate(profile_name: str, resource: dict, structural_index: dict) 
         reasons.append("cross_account_reachability")
         signals["reachable_roles"] = reachable_roles
         signals["cross_account_roles"] = cross_account_roles
-        pivot_chain = metadata.get("pivot_chain", [])
         if pivot_chain:
             score += 10
             structural_score += 10
@@ -307,23 +317,23 @@ def _build_candidate(profile_name: str, resource: dict, structural_index: dict) 
                 structural_score += 15
                 reasons.append("direct_cross_account_chain")
             else:
-                score -= 10
-                structural_score -= 10
+                depth_penalty = 10 + ((len(pivot_chain) - 2) * 10)
+                score -= depth_penalty
+                structural_score -= depth_penalty
                 reasons.append("deep_chain_not_primary_cross_account")
         if resource["resource_type"] == "data_store.s3_object":
             score += 25
             structural_score += 25
             reasons.append("cross_account_object_signal")
     if profile_name == "aws-multi-step-data":
-        pivot_chain = metadata.get("pivot_chain", [])
         if len(pivot_chain) < 3:
             return None
         score += 25
         structural_score += 25
         reasons.append("multi_step_chain")
         signals["pivot_chain"] = pivot_chain
-        if metadata.get("reachable_roles"):
-            signals["reachable_roles"] = metadata["reachable_roles"]
+        if reachable_roles:
+            signals["reachable_roles"] = reachable_roles
         if resource["resource_type"] == "data_store.s3_object":
             score += 10
             structural_score += 10
@@ -388,7 +398,6 @@ def _build_candidate(profile_name: str, resource: dict, structural_index: dict) 
             structural_score += 5 * len(matched_tags)
             signals["semantic_tags"] = matched_tags
             reasons.append("semantic_tag_signal")
-    chain_depth = metadata.get("chain_depth")
     if isinstance(chain_depth, int) and profile_name in {"aws-external-entry-data", "aws-cross-account-data", "aws-multi-step-data"}:
         score += min(chain_depth * 5, 20)
         structural_score += min(chain_depth * 5, 20)
@@ -422,6 +431,9 @@ def _build_candidate(profile_name: str, resource: dict, structural_index: dict) 
             "lexical": lexical_score,
             "structural": structural_score,
         },
+        "execution_fixture_set": execution_fixture_set,
+        "fixture_path": str(synthetic_profile.fixture_path) if synthetic_profile else None,
+        "scope_template_path": str(synthetic_profile.scope_path) if synthetic_profile else None,
         "supporting_evidence": {
             "service": resource["service"],
             "region": resource["region"],
@@ -452,16 +464,25 @@ def _searchable_text(resource: dict) -> str:
     return " ".join(tokens)
 
 
-def _build_structural_index(resources: list[dict], caller_account: str | None) -> dict:
+def _build_structural_index(
+    resources: list[dict],
+    caller_account: str | None,
+    relationships: list[dict] | None = None,
+    target_name: str | None = None,
+) -> dict:
+    relationships = relationships or []
     role_to_instance_profiles: dict[str, list[str]] = {}
     profile_to_instances: dict[str, list[str]] = {}
     instance_to_public_surfaces: dict[str, list[str]] = {}
     role_to_lambda_functions: dict[str, list[str]] = {}
     bucket_to_objects: dict[str, list[str]] = {}
+    role_metadata: dict[str, dict] = {}
 
     for resource in resources:
         metadata = resource.get("metadata", {})
         identifier = resource["identifier"]
+        if resource["resource_type"] == "identity.role":
+            role_metadata[identifier] = metadata
         if resource["resource_type"] == "compute.instance_profile":
             role_arn = metadata.get("role")
             if role_arn:
@@ -471,7 +492,7 @@ def _build_structural_index(resources: list[dict], caller_account: str | None) -
             if profile_arn:
                 profile_to_instances.setdefault(profile_arn, []).append(identifier)
         if resource["resource_type"] in {"network.load_balancer", "network.api_gateway"}:
-            if metadata.get("exposure") == "public":
+            if metadata.get("exposure", "public") == "public":
                 target_instance = metadata.get("target_instance")
                 if target_instance:
                     instance_to_public_surfaces.setdefault(target_instance, []).append(identifier)
@@ -483,6 +504,21 @@ def _build_structural_index(resources: list[dict], caller_account: str | None) -
             bucket = metadata.get("bucket")
             if bucket:
                 bucket_to_objects.setdefault(f"arn:aws:s3:::{bucket}", []).append(identifier)
+
+    role_to_accessible_resources: dict[str, list[str]] = {}
+    role_to_assumable_roles: dict[str, list[str]] = {}
+    resource_to_roles: dict[str, list[str]] = {}
+    for relationship in relationships:
+        source = relationship.get("source")
+        target = relationship.get("target")
+        rel_type = relationship.get("type") or relationship.get("relationship_type") or relationship.get("kind")
+        if not source or not target or not rel_type:
+            continue
+        if rel_type in {"can_access", "can_read", "reads", "accesses"} and ":role/" in source:
+            role_to_accessible_resources.setdefault(source, []).append(target)
+            resource_to_roles.setdefault(target, []).append(source)
+        if rel_type in {"can_assume", "assume_role", "assumes"} and ":role/" in source and ":role/" in target:
+            role_to_assumable_roles.setdefault(source, []).append(target)
 
     role_to_instances: dict[str, list[str]] = {}
     role_to_public_surfaces: dict[str, list[str]] = {}
@@ -502,7 +538,13 @@ def _build_structural_index(resources: list[dict], caller_account: str | None) -
         "role_to_public_surfaces": {key: sorted(set(value)) for key, value in role_to_public_surfaces.items()},
         "role_to_lambda_functions": {key: sorted(set(value)) for key, value in role_to_lambda_functions.items()},
         "bucket_to_objects": {key: sorted(set(value)) for key, value in bucket_to_objects.items()},
+        "role_to_accessible_resources": {key: sorted(set(value)) for key, value in role_to_accessible_resources.items()},
+        "resource_to_roles": {key: sorted(set(value)) for key, value in resource_to_roles.items()},
+        "role_to_assumable_roles": {key: sorted(set(value)) for key, value in role_to_assumable_roles.items()},
+        "public_root_roles": sorted(role_to_public_surfaces.keys()),
+        "role_metadata": role_metadata,
         "caller_account": caller_account,
+        "target_name": target_name,
     }
 
 
@@ -528,7 +570,7 @@ def _infer_candidate_profiles(resource: dict, structural_index: dict) -> list[st
         if structural_index["role_to_instance_profiles"].get(identifier) or structural_index["role_to_instances"].get(identifier):
             inferred.append("aws-iam-compute-iam")
 
-    reachable_roles = metadata.get("reachable_roles", [])
+    reachable_roles = _resolved_reachable_roles(resource, structural_index)
     if reachable_roles:
         public_path_roles = [
             role_arn for role_arn in reachable_roles if structural_index["role_to_public_surfaces"].get(role_arn)
@@ -541,7 +583,7 @@ def _infer_candidate_profiles(resource: dict, structural_index: dict) -> list[st
             if cross_account_roles:
                 inferred.append("aws-cross-account-data")
 
-    pivot_chain = metadata.get("pivot_chain", [])
+    pivot_chain = _resolved_pivot_chain(resource, structural_index, reachable_roles)
     if len(pivot_chain) >= 3:
         inferred.append("aws-multi-step-data")
 
@@ -569,6 +611,129 @@ def _role_quality_score(role_arn: str, structural_index: dict) -> int:
     if "bridge" in role_text:
         score -= 10
     return score
+
+
+def _infer_execution_fixture_set(resource: dict, profile_name: str, structural_index: dict) -> str:
+    target_name = (structural_index.get("target_name") or "").lower()
+    if target_name.startswith("serverless-business-app"):
+        return "serverless-business-app"
+    if target_name.startswith("compute-pivot-app"):
+        return "compute-pivot-app"
+    if target_name.startswith("internal-data-platform"):
+        return "internal-data-platform"
+
+    metadata = resource.get("metadata", {})
+    resource_type = resource["resource_type"]
+    identifier = resource["identifier"]
+    resource_account = _extract_account_id(identifier)
+    caller_account = structural_index["caller_account"]
+    reachable_roles = _resolved_reachable_roles(resource, structural_index)
+    has_public_compute = any(structural_index["role_to_public_surfaces"].get(role_arn) for role_arn in reachable_roles)
+    has_compute_role = any(
+        structural_index["role_to_instance_profiles"].get(role_arn) or structural_index["role_to_instances"].get(role_arn)
+        for role_arn in reachable_roles
+    )
+    has_lambda_role = any(structural_index["role_to_lambda_functions"].get(role_arn) for role_arn in reachable_roles)
+    pivot_chain = _resolved_pivot_chain(resource, structural_index, reachable_roles)
+    chain_depth = _resolved_chain_depth(resource, reachable_roles, pivot_chain, structural_index) or 0
+
+    if resource_type == "compute.lambda_function" or profile_name == "aws-iam-lambda-data":
+        return "serverless-business-app"
+    if resource_type == "crypto.kms_key" or profile_name == "aws-iam-kms-data":
+        return "serverless-business-app"
+    if resource_account and caller_account and resource_account != caller_account:
+        return "mixed-generalization"
+    if chain_depth >= 3 and profile_name in {"aws-multi-step-data", "aws-cross-account-data"}:
+        return "mixed-generalization"
+    if profile_name == "aws-external-entry-data" and has_public_compute:
+        return "compute-pivot-app"
+    if profile_name == "aws-iam-compute-iam" and resource_type == "identity.role":
+        role_profiles = structural_index["role_to_instance_profiles"].get(identifier, [])
+        role_instances = structural_index["role_to_instances"].get(identifier, [])
+        if role_profiles or role_instances:
+            return "compute-pivot-app"
+
+    if profile_name == "aws-iam-role-chaining":
+        if structural_index["role_to_lambda_functions"].get(identifier):
+            return "serverless-business-app"
+        if structural_index["role_to_instance_profiles"].get(identifier) or structural_index["role_to_instances"].get(identifier):
+            return "compute-pivot-app"
+        return "mixed-generalization"
+
+    if profile_name in {"aws-iam-s3", "aws-iam-secrets", "aws-iam-ssm"}:
+        if profile_name == "aws-iam-s3":
+            return "mixed-generalization"
+        if has_public_compute or has_compute_role:
+            return "compute-pivot-app"
+        if has_lambda_role:
+            return "serverless-business-app"
+        return "mixed-generalization"
+
+    return "mixed-generalization"
+
+
+def _resolve_synthetic_profile_definition(profile_set: str, profile_name: str):
+    try:
+        return get_synthetic_profile(profile_set, profile_name)
+    except KeyError:
+        return None
+
+
+def _resolved_reachable_roles(resource: dict, structural_index: dict) -> list[str]:
+    metadata = resource.get("metadata", {})
+    reachable_roles = metadata.get("reachable_roles")
+    if reachable_roles:
+        return sorted(set(reachable_roles))
+    return structural_index["resource_to_roles"].get(resource["identifier"], [])
+
+
+def _resolved_pivot_chain(resource: dict, structural_index: dict, reachable_roles: list[str]) -> list[str]:
+    metadata = resource.get("metadata", {})
+    if metadata.get("pivot_chain"):
+        return metadata["pivot_chain"]
+    if not reachable_roles:
+        return []
+    public_roots = structural_index.get("public_root_roles", [])
+    if not public_roots:
+        return []
+    best_path: list[str] = []
+    for target_role in reachable_roles:
+        path = _find_shortest_role_path(public_roots, target_role, structural_index.get("role_to_assumable_roles", {}))
+        if path and (not best_path or len(path) < len(best_path)):
+            best_path = path
+    return best_path
+
+
+def _resolved_chain_depth(resource: dict, reachable_roles: list[str], pivot_chain: list[str], structural_index: dict) -> int | None:
+    metadata = resource.get("metadata", {})
+    chain_depth = metadata.get("chain_depth")
+    if isinstance(chain_depth, int):
+        return chain_depth
+    if pivot_chain:
+        return len(pivot_chain)
+    if reachable_roles:
+        public_path_roles = [role for role in reachable_roles if structural_index["role_to_public_surfaces"].get(role)]
+        if public_path_roles:
+            return 2
+    return None
+
+
+def _find_shortest_role_path(start_roles: list[str], target_role: str, adjacency: dict[str, list[str]]) -> list[str]:
+    queue: deque[tuple[str, list[str]]] = deque()
+    visited: set[str] = set()
+    for role in start_roles:
+        queue.append((role, [role]))
+    while queue:
+        current, path = queue.popleft()
+        if current in visited:
+            continue
+        visited.add(current)
+        if current == target_role:
+            return path
+        for next_role in adjacency.get(current, []):
+            if next_role not in visited:
+                queue.append((next_role, [*path, next_role]))
+    return []
 
 
 def _build_candidate_summary(candidates: list[dict]) -> dict:

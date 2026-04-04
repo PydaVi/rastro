@@ -7,7 +7,12 @@ from pathlib import Path
 from core.domain import Objective
 from operations.catalog import get_profile
 from operations.models import AuthorizationConfig, TargetConfig
-from operations.service import build_campaign_scope, validate_profile_access, validate_target
+from operations.service import (
+    build_campaign_scope,
+    build_campaign_scope_from_path,
+    validate_profile_access,
+    validate_target,
+)
 
 
 def synthesize_foundation_campaigns(
@@ -20,7 +25,6 @@ def synthesize_foundation_campaigns(
     dedupe_resource_targets: bool = False,
     profile_resolver=None,
 ) -> tuple[Path, Path, dict]:
-    profile_resolver = profile_resolver or get_profile
     issues = validate_target(target)
     if issues:
         raise ValueError("; ".join(issues))
@@ -38,21 +42,23 @@ def synthesize_foundation_campaigns(
         ordered = sorted(candidates, key=lambda item: (-item["score"], item["resource_arn"]))
 
         for candidate in ordered[:max_plans_per_profile]:
-            profile = _resolve_profile(profile_resolver, profile_name, candidate)
-            base_scope = build_campaign_scope(profile, target, authorization)
-            base_objective = Objective.model_validate_json(profile.objective_path.read_text())
+            fixture_path = candidate.get("fixture_path")
+            scope_template_path = candidate.get("scope_template_path")
+            if scope_template_path:
+                base_scope = build_campaign_scope_from_path(Path(scope_template_path), target, authorization)
+            else:
+                profile = _resolve_profile(profile_resolver, profile_name, candidate)
+                base_scope = build_campaign_scope(profile, target, authorization)
+                fixture_path = fixture_path or str(profile.fixture_path)
             candidate_slug = _slugify(candidate["resource_arn"])
             candidate_dir = generated_dir / profile_name / candidate_slug
             candidate_dir.mkdir(parents=True, exist_ok=True)
 
-            objective = base_objective.model_copy(deep=True)
-            objective.target = candidate["resource_arn"]
-            objective.description = (
-                f"Auto-generated campaign for {profile_name} against {candidate['resource_arn']}"
+            objective = Objective(
+                description=_build_generated_objective_description(profile_name, candidate),
+                target=candidate["resource_arn"],
+                success_criteria=_build_generated_success_criteria(candidate),
             )
-            success_criteria = dict(objective.success_criteria)
-            success_criteria["target_candidate_id"] = candidate["id"]
-            objective.success_criteria = success_criteria
 
             scope_data = base_scope.model_dump()
             allowed_resources = list(scope_data["allowed_resources"])
@@ -84,11 +90,13 @@ def synthesize_foundation_campaigns(
                     "resource_arn": candidate["resource_arn"],
                     "priority": _priority_for_score(candidate["score"]),
                     "planned_services": scope.allowed_services,
+                    "fixture_path": fixture_path,
                     "generated_objective": str(objective_path),
                     "generated_scope": str(scope_path),
                     "confidence": candidate["confidence"],
                     "score": candidate["score"],
                     "score_components": candidate.get("score_components", {}),
+                    "execution_fixture_set": candidate.get("execution_fixture_set"),
                 }
             )
 
@@ -121,7 +129,20 @@ def _priority_for_score(score: int) -> str:
     return "low"
 
 
+def _build_generated_objective_description(profile_name: str, candidate: dict) -> str:
+    return f"Auto-generated campaign for {profile_name} against {candidate['resource_arn']}"
+
+
+def _build_generated_success_criteria(candidate: dict) -> dict:
+    return {
+        "target_candidate_id": candidate["id"],
+        "mode": "target_observed",
+    }
+
+
 def _resolve_profile(profile_resolver, profile_name: str, candidate: dict):
+    if profile_resolver is None:
+        raise ValueError(f"profile_resolver is required to resolve profile {profile_name}")
     try:
         return profile_resolver(profile_name, candidate)
     except TypeError:

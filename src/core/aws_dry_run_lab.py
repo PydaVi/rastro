@@ -50,6 +50,9 @@ class AwsDryRunLab:
     def has_flag(self, flag: str) -> bool:
         return self.fixture.has_flag(flag)
 
+    def canonicalize(self, value):
+        return self.fixture.canonicalize(value)
+
     def _is_action_allowed(self, action) -> bool:
         return self._build_denied_observation(action) is None
 

@@ -157,9 +157,26 @@ class StateManager:
                 return True
         target = self._objective.target
         if target:
+            canonical_target = self._fixture.canonicalize(target)
             for action, observation in zip(self._actions_taken, self._observations):
-                if observation.success and action.target == target:
+                if not observation.success:
+                    continue
+                if self._fixture.canonicalize(action.target) == canonical_target:
                     return True
+                if self._observation_contains_target(observation.details, canonical_target):
+                    return True
+        return False
+
+    def _observation_contains_target(self, value, canonical_target: str | None) -> bool:
+        if canonical_target is None:
+            return False
+        canonical_value = self._fixture.canonicalize(value)
+        if isinstance(canonical_value, str):
+            return canonical_value == canonical_target
+        if isinstance(canonical_value, list):
+            return any(self._observation_contains_target(item, canonical_target) for item in canonical_value)
+        if isinstance(canonical_value, dict):
+            return any(self._observation_contains_target(item, canonical_target) for item in canonical_value.values())
         return False
 
     def _update_path_memory(self, action: Action, observation: Observation) -> None:

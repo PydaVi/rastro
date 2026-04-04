@@ -64,11 +64,19 @@ Um bloco tende a `mais generalização ofensiva` quando reduz dependência de:
 - profiles fixos
 - heurísticas lexicais simples
 - alvos pré-modelados
+- harness sintético excessivamente curado
 - paths muito roteirizados
 
 e aumenta:
 - discovery real
 - target selection semântico
+- inferência estrutural
+- selection por expressividade ofensiva
+- competição entre paths concorrentes
+- reachability real
+- modelagem explícita de credential acquisition
+- robustez em mixed environments
+- robustez com naming desfavorável ou obfuscado
 - pivôs via compute
 - external entry
 - cross-account
@@ -87,6 +95,53 @@ Um bloco tende a `mais operacionalização de campaigns conhecidas` quando aumen
 
 Essa régua existe para evitar drift de produto. O objetivo não é abandonar
 operacionalização, mas impedir que ela substitua o avanço em generalização ofensiva.
+
+### Critérios de progresso rumo ao attacker-thinker generalista
+
+O roadmap deve produzir sinais observáveis de progresso. Exemplos:
+
+- menos `profile-first`
+- menos metadata curada
+- mais inferência por `relationships`
+- mais mixed benchmarks
+- mais competição intra-superfície
+- mais competição entre entry surfaces
+- mais separação entre `identity reached` e `credentials acquired`
+- mais validação real de chains fora de IAM-first puro
+- mais promotion-to-real para classes `advanced` e `enterprise`
+- mais suporte a aliases e naming desfavorável sem perder estabilidade
+
+Um bloco não conta como progresso forte rumo ao polo generalista se aumentar só:
+- número de bundles
+- número de profiles
+- número de comandos da CLI
+- número de relatórios
+
+sem aumentar também inferência, competição, reachability ou robustez estrutural.
+
+### Sinais de drift indesejado
+
+Os seguintes sinais devem ser tratados como alerta explícito:
+
+- bundles crescendo mais rápido que a inferência
+- heurísticas lexicais crescendo sem contrapartida estrutural
+- novos profiles sem mixed benchmark correspondente
+- avanço operacional sem benchmark novo de generalização
+- excesso de correções específicas de harness sem ganho arquitetural
+- promotion-to-real ausente para classes `advanced`/`enterprise` que já estão
+  estáveis sinteticamente
+- dependência contínua de metadata curada quando `relationships` já poderiam
+  carregar a estrutura relevante
+
+### Regra operacional obrigatória
+
+Ao fechar cada bloco, registrar explicitamente:
+- o que aproximou o projeto do polo generalista
+- o que permaneceu dependente de campaigns conhecidas
+- qual é o próximo experimento com maior leverage para mover a régua
+
+Essa regra é obrigatória mesmo quando o bloco for principalmente operacional.
+O objetivo é tornar o drift visível cedo.
 
 ---
 
@@ -222,6 +277,12 @@ Direção atual do avanço: mais operacionalização de campaigns conhecidas
 Status: em progresso
 Direção atual do avanço: mais operacionalização de campaigns conhecidas
 
+Leitura obrigatória deste bloco:
+- aproxima o produto do uso operacional real
+- continua mais perto de `campaign validator` do que de `generalista ofensivo`
+- não deve crescer por muitos blocos consecutivos sem contrapartida em mixed
+  benchmark, inferência estrutural ou validação real fora de IAM-first
+
 Critério de entrada para runner containerizado:
 - nao iniciar containerizacao agora
 - iniciar somente apos:
@@ -271,6 +332,14 @@ Status do bloco 1:
   - correcao de ARN para parametros SSM
 - pendente: refinamento de limites/heuristicas
 Direção do avanço: mais generalização ofensiva
+O que aproximou o projeto do polo generalista:
+- discovery real como entrada do assessment
+- inventário menos dependente de alvo manual
+O que permaneceu dependente de campaigns conhecidas:
+- heurísticas iniciais ainda fortemente orientadas a foundation
+Próximo experimento de maior leverage:
+- target selection menos lexical e mais estrutural
+
 Status do bloco 2:
 - `target-selection run` implementado
 - artefatos `target_candidates.json` e `target_candidates.md` implementados
@@ -278,6 +347,14 @@ Status do bloco 2:
 - resultado observado: 15 candidatos, 5 `high confidence`
 - pendente: refinamento de heuristicas e reducao de ruido lexical
 Direção do avanço: mais generalização ofensiva
+O que aproximou o projeto do polo generalista:
+- ranking explícito de candidatos
+- primeiros sinais estruturais no selection
+O que permaneceu dependente de campaigns conhecidas:
+- metadata e naming ainda guiavam fortemente a priorização
+Próximo experimento de maior leverage:
+- synthesis menos `profile-first`
+
 Status do bloco 3:
 - `campaign-synthesis run` implementado
 - artefatos `campaign_plan.json` e `campaign_plan.md` implementados
@@ -287,6 +364,13 @@ Status do bloco 3:
 - ajuste aplicado: role chaining agora prioriza `DataAccessRole` sobre roles de auditoria
 - pendente: integrar `CampaignPlan[]` ao `assessment run`
 Direção do avanço: mais operacionalização de campaigns conhecidas
+O que aproximou o projeto do polo generalista:
+- campanhas passaram a ser sintetizadas, não só escritas manualmente
+O que permaneceu dependente de campaigns conhecidas:
+- plans ainda saem de profiles conhecidos e famílias fechadas
+Próximo experimento de maior leverage:
+- assessment discovery-driven com competição entre candidates
+
 Status do bloco 4:
 - `assessment run --bundle aws-foundation --discovery-driven` implementado
 - pipeline completo validado em AWS real
@@ -294,6 +378,12 @@ Status do bloco 4:
 - resultado observado: `assessment_ok=true`, 4/4 campanhas `passed`
 - proximo gap real: refinar reachability/pruning e heuristicas de target selection
 Direção do avanço: mais operacionalização de campaigns conhecidas
+O que aproximou o projeto do polo generalista:
+- discovery-driven deixou de exigir objetivo manual
+O que permaneceu dependente de campaigns conhecidas:
+- bundle foundation ainda domina o contrato do assessment
+Próximo experimento de maior leverage:
+- ambientes mistos e selection por expressividade ofensiva
 
 Próxima base de escala para o Produto 01:
 - `internal-data-platform` (foundation em escala)
@@ -546,6 +636,319 @@ Atualização adicional:
   - aproximou o selection de uma nocao melhor de qualidade de pivô
 Direção do avanço: mais generalização ofensiva
 
+Atualização adicional:
+- mixed resolver menos curado implementado com:
+  - `execution_fixture_set` inferido no selection
+  - propagacao em `campaign synthesis`
+  - resolucao no `get_mixed_synthetic_profile(...)`
+- regressao inicial de `aws-iam-s3` identificada e corrigida
+- rerun ponta a ponta confirmado em:
+  - `outputs_mixed_generalization_variant_a_assessment/`
+  - `outputs_mixed_generalization_variant_b_assessment/`
+  - `outputs_mixed_generalization_variant_c_assessment/`
+  - `outputs_mixed_generalization_variant_d_assessment/`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-049-mixed-resolver-structural-routing.md`
+- leitura do bloco:
+  - reduziu curadoria residual do harness sintetico
+  - tornou mais explicito o contrato entre selection e execution
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- benchmark misto com chain mais profunda e mais de um alvo forte por entry
+  surface implementado em:
+  - `fixtures/mixed_generalization_variant_e.discovery.json`
+- `mixed_generalization_cross_account` e `mixed_generalization_multi_step`
+  expandidos para suportar novos targets e scopes dedicados
+- resultado observado:
+  - `outputs_mixed_generalization_variant_e_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-050-mixed-generalization-deeper-chain-and-shared-entry.md`
+- leitura do bloco:
+  - aumentou a competicao entre targets fortes sob a mesma entry surface
+  - separou melhor `cross-account` direto de `multi-step` profundo
+  - pressionou o benchmark enterprise sem voltar a drift profile-first
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- benchmark misto com estrutura derivada de `relationships` implementado em:
+  - `fixtures/mixed_generalization_variant_f.discovery.json`
+- `target selection` agora pode derivar:
+  - `reachable_roles`
+  - `pivot_chain`
+  - `chain_depth`
+  a partir do inventario relacional, sem depender desses campos no metadata do
+  recurso
+- resultado observado:
+  - `outputs_mixed_generalization_variant_f_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-051-mixed-generalization-relationship-derived-structure.md`
+- leitura do bloco:
+  - reduziu curadoria estrutural residual no benchmark misto
+  - aproximou o selection de inferencia baseada em grafo
+  - aumentou a utilidade real do campo `relationships` no discovery snapshot
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- benchmark misto sem `semantic_tags` curado implementado em:
+  - `fixtures/mixed_generalization_variant_g.discovery.json`
+- resultado observado:
+  - `outputs_mixed_generalization_variant_g_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-052-mixed-generalization-without-semantic-tags.md`
+- leitura do bloco:
+  - removeu mais um atalho semantico do benchmark
+  - manteve selecao enterprise estavel com nomes reais + relacoes
+  - aumentou confianca de que o scorer estrutural ja sustenta parte do ganho
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- benchmark misto com pivots e entry surfaces obfuscados implementado em:
+  - `fixtures/mixed_generalization_variant_h.discovery.json`
+- falha inicial isolada como mismatch de harness sintetico:
+  - targets diretos de `role-chaining`, `lambda` e `kms` nao podiam ser
+    obfuscados sem quebrar fixtures ARN-exatos
+- correcao de benchmark aplicada preservando esses targets diretos
+- resultado observado apos rerun:
+  - `outputs_mixed_generalization_variant_h_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-053-mixed-generalization-obfuscated-target-harness-mismatch.md`
+- leitura do bloco:
+  - reduziu naming favorecido em pivots e entry surfaces
+  - isolou corretamente um limite do harness sintetico, nao do engine
+  - manteve o benchmark enterprise estavel apos a correcao
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- benchmark misto com alvos enterprise profundos menos nomeados por negocio
+  implementado em:
+  - `fixtures/mixed_generalization_variant_i.discovery.json`
+- fixtures mistos de `cross-account` e `multi-step` expandidos para aceitar os
+  aliases dos novos alvos
+- resultado observado:
+  - `outputs_mixed_generalization_variant_i_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-054-mixed-generalization-obfuscated-enterprise-targets.md`
+- leitura do bloco:
+  - reduziu naming de negocio nos alvos enterprise profundos
+  - preservou separacao estrutural entre `cross-account` e `multi-step`
+  - manteve o benchmark enterprise estavel ponta a ponta
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- benchmark misto com apoio lexical minimo nos alvos enterprise profundos
+  implementado em:
+  - `fixtures/mixed_generalization_variant_j.discovery.json`
+- `api-key` e `master` removidos dos nomes finais desses alvos
+- falha inicial isolada como mismatch localizado no harness de `cross-account`
+- fixture ampliado para suportar multiplos aliases do mesmo alvo sem quebrar
+  variantes anteriores
+- resultado observado apos rerun:
+  - `outputs_mixed_generalization_variant_j_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-055-mixed-generalization-low-lexical-enterprise-failure.md`
+- leitura do bloco:
+  - reduziu ainda mais o apoio lexical dos alvos enterprise
+  - confirmou que a separacao principal ja vem de estrutura
+  - expôs e corrigiu um limite localizado de harness, nao do engine
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- benchmark misto com alvos locais de S3 e SSM menos nomeados implementado em:
+  - `fixtures/mixed_generalization_variant_k.discovery.json`
+- fixtures sinteticos locais expandidos para suportar os aliases novos
+- resultado observado:
+  - `outputs_mixed_generalization_variant_k_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-056-mixed-generalization-obfuscated-local-targets.md`
+- leitura do bloco:
+  - reduziu naming favorecido tambem em alvos locais
+  - manteve estabilidade do benchmark sem depender de `api_key` no parametro local
+  - deixou o secret local compartilhado com `external-entry` como proximo alvo
+    de maior leverage
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- benchmark misto com obfuscacao do secret local compartilhado com
+  `external-entry` implementado em:
+  - `fixtures/mixed_generalization_variant_l.discovery.json`
+- falha inicial isolada como mismatch localizado no fixture set
+  `compute-pivot-app` usado pelo roteamento estrutural de `aws-iam-secrets`
+- fixture e scope `compute-pivot-app` expandidos para suportar os aliases:
+  - `prod/sys/kv_a`
+  - `prod/sys/kv_b`
+- resultado observado apos rerun:
+  - `outputs_mixed_generalization_variant_l_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-057-mixed-generalization-local-secret-obfuscation-failure.md`
+- leitura do bloco:
+  - reduziu naming favorecido tambem no secret local compartilhado entre
+    `aws-iam-secrets` e `aws-external-entry-data`
+  - expôs um acoplamento residual do harness ao `execution_fixture_set`
+    `compute-pivot-app`
+  - removeu esse acoplamento sem mudar o engine ofensivo
+- o que aproximou do polo generalista:
+  - menor dependencia de naming de negocio em alvo local compartilhado
+  - maior robustez do benchmark misto quando o profile pode ser roteado para
+    mais de um fixture set
+- o que permaneceu dependente de campaigns conhecidas:
+  - alias coverage ainda precisa ser mantida nos fixture sets sinteticos
+- proximo experimento com maior leverage:
+  - reduzir o apoio lexical restante no secret local compartilhado com
+    `external-entry`
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- benchmark misto com apoio lexical ainda menor no secret local compartilhado
+  implementado em:
+  - `fixtures/mixed_generalization_variant_m.discovery.json`
+- aliases reduzidos para:
+  - `prod/app/s1`
+  - `prod/app/s2`
+  - `prod/app/s3`
+- fixture sets `serverless-business-app` e `compute-pivot-app` expandidos
+  preventivamente para suportar os aliases novos
+- resultado observado:
+  - `outputs_mixed_generalization_variant_m_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-058-mixed-generalization-lower-lexical-local-secret.md`
+- leitura do bloco:
+  - reduziu mais um apoio lexical residual no alvo local compartilhado entre
+    `aws-iam-secrets` e `aws-external-entry-data`
+  - preservou a preferencia estrutural de `external-entry` pelo alvo S3 local
+  - manteve o benchmark enterprise estavel sem mudanca de engine
+- o que aproximou do polo generalista:
+  - menor dependencia de naming favorecido em secret local compartilhado
+  - maior robustez do mixed benchmark sob aliases menos expressivos
+- o que permaneceu dependente de campaigns conhecidas:
+  - fixture sets sinteticos ainda precisam de cobertura explicita de aliases
+- proximo experimento com maior leverage:
+  - reduzir naming favorecido restante em deep targets locais e enterprise sem
+    aumentar curadoria manual
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- benchmark misto com deep targets enterprise menos nomeados implementado em:
+  - `fixtures/mixed_generalization_variant_n.discovery.json`
+- aliases enterprise reduzidos para:
+  - `prod/x/t1`
+  - `prod/x/t2`
+- fixture sets `cross-account` e `multi-step` expandidos para suportar os
+  aliases novos
+- resultado observado:
+  - `outputs_mixed_generalization_variant_n_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-059-mixed-generalization-low-lexical-enterprise-aliases.md`
+- leitura do bloco:
+  - reduziu apoio lexical residual tambem nos alvos enterprise profundos
+  - manteve separacao estrutural entre `cross-account` e `multi-step`
+  - confirmou que `score_components.structural` ja domina nos dois casos
+- o que aproximou do polo generalista:
+  - menor dependencia de naming favorecido em targets enterprise
+  - maior evidência de inferencia por profundidade, fronteira de conta e
+    reachability estrutural
+- o que permaneceu dependente de campaigns conhecidas:
+  - fixture sets enterprise ainda exigem cobertura explicita de aliases
+- proximo experimento com maior leverage:
+  - reduzir curadoria manual remanescente de aliases e metadata nos fixture sets
+    mistos, sem perder estabilidade end-to-end
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- suporte generico de aliases implementado em:
+  - `src/core/fixture.py`
+- nova variante mista aberta com aliases de baixo valor semantico:
+  - `fixtures/mixed_generalization_variant_o.discovery.json`
+- aliases novos validados sem duplicacao sistematica de actions/transitions:
+  - local secret: `prod/r/a1`
+  - enterprise: `prod/r/e1`, `prod/r/e2`
+- resultado observado:
+  - `outputs_mixed_generalization_variant_o_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-060-mixed-generalization-generic-fixture-aliases.md`
+- leitura do bloco:
+  - reduziu curadoria manual do harness sintetico
+  - moveu a logica de alias para uma camada estrutural reutilizavel
+  - preservou estabilidade end-to-end com naming ainda menos favorecido
+- o que aproximou do polo generalista:
+  - menor dependencia de ajustes manuais por alias em fixture sets mistos
+  - maior capacidade de continuar pressionando naming desfavoravel sem
+    crescimento proporcional do harness
+- o que permaneceu dependente de campaigns conhecidas:
+  - o benchmark ainda depende de fixture sets sinteticos por familia de path
+- proximo experimento com maior leverage:
+  - reduzir metadata curada remanescente no benchmark misto, mantendo
+    estabilidade end-to-end
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- benchmark misto com metadata curada reduzida implementado em:
+  - `fixtures/mixed_generalization_variant_p.discovery.json`
+- `network.api_gateway` e `network.load_balancer` passaram a ser tratados como
+  publicos por default no selection, salvo `exposure=private`
+- metadata nao estrutural reduzida em:
+  - roles
+  - secrets
+  - parameters
+  - s3 objects
+  - kms keys
+  - instances
+- resultado observado:
+  - `outputs_mixed_generalization_variant_p_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-061-mixed-generalization-reduced-curated-metadata.md`
+- leitura do bloco:
+  - reduziu metadata curada remanescente sem quebrar o benchmark enterprise
+  - aumentou a parcela de inferencia sustentada por relationships e campos
+    estruturais minimos
+  - manteve separacao correta entre `external-entry`, `cross-account` e
+    `multi-step`
+- o que aproximou do polo generalista:
+  - menor dependencia de metadata nao estrutural
+  - maior evidencia de inferencia estrutural reutilizavel
+- o que permaneceu dependente de campaigns conhecidas:
+  - fixture set routing e objective generation ainda dependem de familias de path
+- proximo experimento com maior leverage:
+  - reduzir curadoria residual em fixture set routing ou objective generation
+    sem perder estabilidade end-to-end
+Direção do avanço: mais generalização ofensiva
+
 **5. Qualidade do Produto 01**
 - relatório técnico e executivo
 - remediação por path
@@ -606,6 +1009,662 @@ ou regressão do engine.
 2. API Gateway/Lambda public invoke → IAM role → data access
 3. S3 public write → Lambda trigger → IAM role → data access
 4. STS assume role via external ID leakage
+
+### External Entry Reachability Maturity
+
+`external entry` nao deve permanecer descrito apenas como:
+- reachability estrutural via metadata
+- path semantico plausivel
+- pivô credenciado controlado ate o dado
+
+O produto precisa evoluir para distinguir explicitamente, como estados e/ou
+criterios separados:
+
+- `network_reachable_from_internet`
+- `backend_reachable`
+- `credential_acquisition_possible`
+- `data_path_exploitable`
+
+Esses estados nao sao equivalentes.
+
+`external entry` so pode ser descrito como `public exploit path proved end-to-end`
+quando a cadeia completa estiver provada.
+
+Antes disso, a formulacao correta deve separar:
+- `public exposure structurally linked to privileged path`
+de
+- `public exploit path proved end-to-end`
+
+O roadmap de `external entry` deve incluir prova progressiva de:
+- route tables
+- security groups
+- Internet Gateway
+- listener/rules de ALB/NLB
+- integracao completa de API Gateway ate backend
+- reachability real fim a fim da internet ate o workload
+
+#### Bloco A — Modelagem explícita dos estados de reachability
+
+Objetivo:
+- introduzir os estados formais de maturidade de `external entry`
+- separar exposicao publica declarada de explorabilidade real
+
+O que o bloco prova:
+- o produto consegue representar, relatar e avaliar separadamente:
+  - `network_reachable_from_internet`
+  - `backend_reachable`
+  - `credential_acquisition_possible`
+  - `data_path_exploitable`
+
+O que ainda NAO prova:
+- reachability de rede AWS real
+- reachability fim a fim da internet ate o workload
+- exploit path real ate o dado final
+
+Direção do avanço: mais generalização ofensiva
+
+Status atual do Bloco A:
+- implementado no reporting com:
+  - `external_entry_maturity.applicable`
+  - `network_reachable_from_internet`
+  - `backend_reachable`
+  - `credential_acquisition_possible`
+  - `data_path_exploitable`
+  - `classification`
+- findings de `aws-external-entry-data` agora distinguem:
+  - `public exposure structurally linked to privileged path`
+  de
+  - `public exploit path proved end-to-end`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-062-external-entry-maturity-modeling.md`
+- o que aproximou do polo generalista:
+  - reduziu falso positivo conceitual em `external entry`
+  - separou melhor exposicao estrutural, credenciamento e explotabilidade
+- o que permaneceu dependente de campaigns conhecidas:
+  - os estados ainda sao inferidos por semantica de steps conhecidos
+  - ainda nao ha prova de reachability de rede AWS real
+- proximo experimento com maior leverage:
+  - discovery/relação de rede AWS para compute público
+
+Atualização adicional:
+- synthesis com objetivo derivado do candidato final foi endurecida para:
+  - nao herdar `success_criteria.flag` do profile base
+  - gerar `success_criteria.mode = target_observed`
+- a intervencao revelou acoplamento residual entre:
+  - objetivo gerado
+  - semantica de sucesso
+  - harness sintetico com targets canonicos
+- correcoes aplicadas:
+  - `target_observed` agora aceita prova por:
+    - `action.target`
+    - identidade/target observado em evidência canonicalizada
+  - fixture aliases passaram a cobrir os paths afetados
+- revalidacao observada:
+  - `outputs_mixed_generalization_variant_p_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-063-target-based-generated-objectives-reveal-synthetic-coupling.md`
+- o que aproximou do polo generalista:
+  - menor dependencia de objetivos herdados do profile base
+  - maior alinhamento entre candidato selecionado e criterio real de sucesso
+  - menor acoplamento entre harness sintético e target canônico
+- o que permaneceu dependente de campaigns conhecidas:
+  - fixture set routing ainda existe por familias de path
+  - mixed benchmark ainda depende de resolver sintético
+- proximo experimento com maior leverage:
+  - reduzir curadoria residual em fixture set routing ou objective generation
+    sem reintroduzir acoplamento de target canônico
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- `campaign_synthesis` deixou de depender de `profile.objective_path` para
+  gerar objetivos derivados
+- o objetivo gerado agora e construído somente com:
+  - `description`
+  - `target`
+  - `success_criteria`
+- validacao observada:
+  - teste unitario com `objective_path` inexistente passou
+  - `outputs_mixed_generalization_variant_p_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-064-profile-independent-objective-generation.md`
+- o que aproximou do polo generalista:
+  - menor dependencia de objetivos base por familia de path
+  - synthesis mais alinhada ao candidato selecionado, nao ao template do profile
+- o que permaneceu dependente de campaigns conhecidas:
+  - fixture set routing ainda existe por familias de path
+  - o resolver sintético misto continua como camada de compatibilidade
+- proximo experimento com maior leverage:
+  - reduzir curadoria residual em fixture set routing, sem degradar o mixed
+    benchmark enterprise
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- `execution_fixture_set` passou a ser inferido mais por estrutura do que por
+  lista fixa de profiles
+- sinais estruturais agora usados no routing:
+  - `resource_type`
+  - fronteira de conta
+  - `chain_depth`
+  - vínculo com compute publico
+  - vínculo com runtime serverless
+- validacao observada:
+  - `outputs_mixed_generalization_variant_p_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-065-structural-fixture-set-routing.md`
+- o que aproximou do polo generalista:
+  - menor dependencia de roteamento por nome do profile
+  - maior coerencia entre structure-aware selection e execution routing
+- o que permaneceu dependente de campaigns conhecidas:
+  - o resolver sintético misto ainda existe como camada separada
+  - fixture sets continuam organizados por familias de path
+- proximo experimento com maior leverage:
+  - reduzir o papel do resolver sintético misto sem perder estabilidade no
+    benchmark enterprise
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- `campaign_plan.json` passou a embutir `fixture_path`
+- `run_generated_campaign()` agora executa diretamente a partir do plano quando
+  `fixture_path` estiver presente
+- o `profile_resolver` ficou como fallback, nao como dependencia obrigatoria
+- validacao observada:
+  - teste unitario com `profile_resolver` proibido passou
+  - `outputs_mixed_generalization_variant_p_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-066-embedded-fixture-paths-reduce-mixed-resolver-dependence.md`
+- o que aproximou do polo generalista:
+  - plano de campanha mais auto-suficiente
+  - menor dependencia de conhecimento externo ao plano na execucao sintética
+- o que permaneceu dependente de campaigns conhecidas:
+  - resolver sintético ainda existe como fallback
+  - fixture sets continuam organizados por familias de path
+- proximo experimento com maior leverage:
+  - reduzir o papel do resolver sintético para casos realmente excepcionais,
+    sem perder estabilidade do benchmark enterprise
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- `target_selection` passou a embutir no candidato:
+  - `fixture_path`
+  - `scope_template_path`
+- `campaign_synthesis` passou a preferir esses caminhos embutidos, usando o
+  resolver apenas como fallback
+- validacao observada:
+  - teste unitario sem `profile_resolver` passou
+  - `outputs_mixed_generalization_variant_p_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-067-candidate-embedded-scope-and-fixture-contract.md`
+- o que aproximou do polo generalista:
+  - candidatos ficaram mais auto-suficientes
+  - synthesis passou a depender menos de catalogo externo por familia
+- o que permaneceu dependente de campaigns conhecidas:
+  - o resolver sintético ainda existe como fallback
+  - fixture sets continuam organizados por familias de path
+- proximo experimento com maior leverage:
+  - reduzir o fallback do resolver para casos realmente excepcionais, sem
+    perder estabilidade do benchmark enterprise
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- o benchmark `mixed_generalization_variant_p` passou a executar ponta a ponta
+  sem `profile_resolver`
+- `run_discovery_driven_assessment()` deixou de depender de resolver default
+  quando os artefatos gerados ja carregam:
+  - `fixture_path`
+  - `scope_template_path`
+- validacao observada:
+  - teste end-to-end sem resolver passou
+  - `outputs_mixed_generalization_variant_p_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-068-mixed-benchmark-without-profile-resolver.md`
+- o que aproximou do polo generalista:
+  - benchmark enterprise misto deixou de depender de resolver sintético
+  - mais do contrato passou a existir nos artefatos do proprio pipeline
+- o que permaneceu dependente de campaigns conhecidas:
+  - fixture sets sinteticos continuam organizados por familias de path
+  - ainda existe fallback de resolver por compatibilidade
+- proximo experimento com maior leverage:
+  - reduzir dependencia residual de fixture sets por familia sem perder
+    estabilidade do benchmark enterprise
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- fixture set unificado criado para `serverless-business-app` em:
+  - `fixtures/serverless_business_app_unified_lab.json`
+- classes consolidadas nesse fixture:
+  - `aws-iam-s3`
+  - `aws-iam-secrets`
+  - `aws-iam-ssm`
+  - `aws-iam-role-chaining`
+  - `aws-iam-lambda-data`
+  - `aws-iam-kms-data`
+- validacao observada:
+  - `outputs_serverless_business_app_variant_a_assessment/`
+  - `campaigns_total=4`
+  - `campaigns_passed=4`
+  - `assessment_ok=true`
+  - `outputs_mixed_generalization_variant_p_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-069-serverless-unified-fixture-set.md`
+- o que aproximou do polo generalista:
+  - menor dependencia de fixture sets por familia dentro do arquétipo serverless
+  - maior coerencia entre ambiente sintetico e multiplas classes concorrentes
+- o que permaneceu dependente de campaigns conhecidas:
+  - `compute-pivot-app` ainda tem fixture sets separados por familia
+  - `cross-account` e `multi-step` continuam especializados
+- proximo experimento com maior leverage:
+  - avaliar unificacao semelhante em `compute-pivot-app` ou decidir se o
+    próximo salto é promoção real seletiva
+Direção do avanço: mais generalização ofensiva
+
+Atualização adicional:
+- fixture set unificado criado para `compute-pivot-app` em:
+  - `fixtures/compute_pivot_app_unified_lab.json`
+- classes consolidadas nesse fixture:
+  - `aws-iam-s3`
+  - `aws-iam-secrets`
+  - `aws-iam-ssm`
+  - `aws-iam-role-chaining`
+  - `aws-iam-compute-iam`
+  - `aws-external-entry-data`
+- validacao observada:
+  - `outputs_compute_pivot_app_variant_a_assessment/`
+  - `campaigns_total=4`
+  - `campaigns_passed=4`
+  - `assessment_ok=true`
+  - `outputs_mixed_generalization_variant_p_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta arquitetural registrada em:
+  - `docs/experiments/EXP-070-compute-unified-fixture-set.md`
+- o que aproximou do polo generalista:
+  - menor dependencia de fixture sets por familia tambem no arquétipo compute
+  - maior proximidade entre arquétipo sintético e ambiente com multiplas classes
+    concorrentes
+- o que permaneceu dependente de campaigns conhecidas:
+  - `cross-account` e `multi-step` continuam especializados
+  - ainda existe fallback de resolver por compatibilidade
+- proximo experimento com maior leverage:
+  - consolidar formalmente o fechamento desta subfase e decidir o proximo salto
+    entre generalizacao ofensiva adicional e promoção real seletiva
+Direção do avanço: mais generalização ofensiva
+
+### Consolidação da subfase — Generalização ofensiva do segundo nível
+
+Status: concluída
+
+Escopo consolidado nesta subfase:
+- menos `profile-first`
+- menos dependencia de metadata curada
+- menos dependencia de `objective generation` por template de profile
+- menos dependencia de `profile_resolver` no benchmark misto
+- menos dependencia de fixture sets por familia nos arquétipos:
+  - `serverless-business-app`
+  - `compute-pivot-app`
+- mais inferencia por `relationships`
+- mais competicao:
+  - intra-superficie
+  - entre entry surfaces
+  - entre classes concorrentes
+- mais separacao entre:
+  - `identity reached`
+  - `credentials acquired`
+- mais robustez com naming desfavoravel e aliases
+- mixed benchmark enterprise estabilizado em:
+  - `outputs_mixed_generalization_variant_p_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+
+O que aproximou o projeto do polo generalista:
+- o pipeline discovery-driven enterprise passou a operar com muito menos
+  conhecimento escondido fora dos artefatos gerados
+- o benchmark misto deixou de depender de `profile_resolver`
+- o contrato candidato -> plano -> execução ficou mais auto-suficiente
+- os arquétipos sintéticos principais já suportam múltiplas classes no mesmo
+  fixture
+
+O que permaneceu dependente de campaigns conhecidas:
+- `cross-account` e `multi-step` ainda usam fixtures especializados
+- `cross-account` real continua bloqueado por requisito operacional de segunda
+  conta
+- `external entry` ainda carece de maturidade de reachability real de rede
+  além da exposição estrutural e do pivô credenciado
+- ainda existe fallback de resolver por compatibilidade, embora não seja mais
+  dependência central do mixed benchmark
+
+Decisão de transição:
+- o próximo salto de maior leverage não é mais reduzir harness sintético local
+- o próximo salto é aumentar prova real fora de `IAM-first` puro, preservando a
+  régua de `external entry`
+
+Próximo bloco escolhido:
+- `External Entry Reachability Maturity — Bloco B`
+  - discovery/relação de rede AWS para compute público
+  - com promoção seletiva posterior para AWS real
+
+Justificativa arquitetural:
+- esta subfase já empurrou suficientemente a generalização ofensiva sintética
+- o maior risco de drift agora é continuar refinando harness enquanto a prova
+  real de `external entry` permanece conceitualmente incompleta
+- avançar em reachability real mantém a prioridade AWS / Produto 01 e aumenta
+  generalização ofensiva em um eixo que ainda não está epistemicamente fechado
+Direção do avanço: mais generalização ofensiva
+
+### Próxima macrofase — Validação real de generalização ofensiva
+
+Status: iniciada
+
+Objetivo macro:
+- sair de `generalização sintética convincente`
+- para `generalização ofensiva parcialmente provada em AWS real`
+
+Critério macro de saída:
+- `external entry` com reachability de rede mais rigorosa que mera exposição
+  estrutural
+- pelo menos uma validação real forte fora de `IAM-first` puro
+- `cross-account real` preparado para execução imediata quando a segunda conta
+  estiver disponível
+
+Leitura arquitetural:
+- o produto já se afastou de `campaign validator puro`
+- mas ainda não pode ser tratado como `generalista ofensivo forte`
+- os gaps reais agora estão em:
+  - reachability de rede em `external entry`
+  - prova real fora de `IAM-first`
+  - `cross-account` real
+  - scorer estrutural ainda excessivamente hand-written
+
+#### Bloco 1 — External Entry Reachability Real
+
+Objetivo:
+- provar `external entry` com semântica de reachability mais rigorosa, sem
+  colapsar:
+  - exposição estrutural
+  - backend reachability
+  - credential acquisition
+  - data path exploitation
+
+O que o bloco prova:
+- o produto consegue modelar e começar a descobrir evidência de rede AWS para
+  entry surfaces públicas
+- `external entry` deixa de depender apenas de:
+  - metadata estrutural
+  - path semântico plausível
+  - pivô credenciado controlado
+
+O que ainda NÃO prova:
+- exploit HTTP arbitrário
+- universalidade para qualquer topologia AWS
+- `cross-account`
+
+Passos:
+1. ampliar discovery AWS para rede relevante de compute público:
+   - Internet Gateway
+   - route tables
+   - subnets
+   - security groups
+   - ENIs
+   - public IPs
+2. modelar relações de rede no inventory/relationships
+3. criar benchmark sintético de reachability com estados separados:
+   - superfície pública sem backend reachável
+   - backend reachável sem cred acquisition
+   - cred acquisition possível sem path ao dado
+   - cadeia completa
+4. refletir isso em selection / synthesis / reporting
+
+Critério de saída:
+- discovery e reporting distinguem explicitamente:
+  - `network_reachable_from_internet`
+  - `backend_reachable`
+  - `credential_acquisition_possible`
+  - `data_path_exploitable`
+- benchmark sintético novo validado
+Direção do avanço: mais generalização ofensiva
+
+#### Bloco 2 — Credential Acquisition Real Em Compute/External
+
+Objetivo:
+- endurecer a separação entre:
+  - `identity reached`
+  - `credentials acquired`
+
+O que o bloco prova:
+- o engine e o executor real não tratam pivô alcançado como credencial
+  automaticamente adquirida
+- reporting evita falso positivo operacional nessa fronteira
+
+O que ainda NÃO prova:
+- internet-to-backend fim a fim
+- `cross-account`
+
+Passos:
+1. revisar estado e reporting de credenciais adquiridas
+2. adicionar benchmarks focados em:
+   - compute pivot com identidade alcançada mas sem cred acquisition
+   - external entry com reachability parcial
+3. validar executor real e findings
+
+Critério de saída:
+- nenhuma chain é marcada como explorável só por `reached_role`
+- cred acquisition passa a ser prova explícita no produto
+Direção do avanço: mais generalização ofensiva
+
+#### Bloco 3 — External Entry Real End-to-End
+
+Objetivo:
+- obter a primeira validação real forte fora de `IAM-first` puro
+
+O que o bloco prova:
+- caminho real de:
+  - entry surface pública
+  - backend reachability
+  - credential acquisition
+  - acesso ao dado
+
+O que ainda NÃO prova:
+- generalização para todas as classes de `external entry`
+- `cross-account`
+
+Passos:
+1. desenhar lab efêmero real mínimo e barato
+2. subir ambiente
+3. rodar assessment/campaign discovery-driven
+4. coletar evidência de rede, pivô, credencial e dado
+5. destruir ambiente
+
+Critério de saída:
+- classificar corretamente:
+  - `public exposure structurally linked to privileged path`
+  ou
+  - `public exploit path proved end-to-end`
+- com evidência real de rede e não só de pivô
+Direção do avanço: mais generalização ofensiva
+
+#### Bloco 4 — Cross-Account Real Readiness
+
+Objetivo:
+- preparar `cross-account` real sem improviso nem pseudo-validação
+
+O que o bloco prova:
+- contrato operacional multi-account completo
+- readiness técnica e documental para promoção real
+
+O que ainda NÃO prova:
+- chain real cruzando duas contas
+
+Passos:
+1. consolidar contrato multi-account:
+   - target
+   - authorization
+   - trust
+   - evidência esperada
+2. preparar lab efêmero de duas contas
+3. preparar checklist operacional
+
+Critério de saída:
+- bloco pronto para execução imediata quando a segunda conta existir
+Direção do avanço: mais generalização ofensiva
+
+#### Bloco 5 — Cross-Account Real
+
+Dependência:
+- segunda conta controlada
+
+Objetivo:
+- obter a primeira validação real de `cross-account`
+
+O que o bloco prova:
+- trust real entre contas
+- `sts:AssumeRole` cruzando boundary
+- acesso ao dado na conta destino
+
+O que ainda NÃO prova:
+- cobertura total de enterprise
+
+Passos:
+1. subir lab efêmero de duas contas
+2. rodar assessment/campaign controlada
+3. coletar evidência real
+4. destruir ambiente
+
+Critério de saída:
+- primeira validação real de `cross-account`
+Direção do avanço: mais generalização ofensiva
+
+#### Bloco 6 — Menos Scorer Curado
+
+Objetivo:
+- reduzir a dependência restante de scorer estrutural excessivamente
+  hand-written
+
+O que o bloco prova:
+- maior parcela do ranking sustentada por:
+  - relationships
+  - reachability observada
+  - profundidade e qualidade estrutural da chain
+
+O que ainda NÃO prova:
+- autonomia total do scorer
+
+Passos:
+1. separar explicitamente:
+   - fato estrutural
+   - heurística manual
+2. tornar `score_components` mais auditável
+3. criar benchmark adversarial contra scorer curado
+
+Critério de saída:
+- menos peso em regra manual textual
+- mais peso em estrutura observada
+Direção do avanço: mais generalização ofensiva
+
+Decisão de início:
+- iniciar agora pelo `Bloco 1 — External Entry Reachability Real`
+- motivo:
+  - maior leverage real
+  - fecha o principal gap epistemológico de `external entry`
+  - mantém AWS primeiro e Produto 01 primeiro
+Direção do avanço: mais generalização ofensiva
+
+#### Bloco B — Discovery/relação de rede AWS para compute público
+
+Objetivo:
+- ampliar o discovery para capturar estrutura de rede relevante de compute
+  publico
+
+O que o bloco prova:
+- descoberta e relacao explicita de:
+  - Internet Gateway
+  - subnets
+  - route tables
+  - security groups
+  - public IP / ENI / instance profile
+
+O que ainda NAO prova:
+- listener/rule efetivo ate backend
+- integracao completa de API Gateway ate workload
+- exploracao fim a fim a partir da internet
+
+Direção do avanço: mais generalização ofensiva
+
+#### Bloco C — ALB/NLB/API Gateway to backend reachability
+
+Objetivo:
+- modelar e provar a cadeia de reachability entre entry surface e backend
+
+O que o bloco prova:
+- listener/rules de ALB/NLB
+- target groups e backend registrado
+- integracao de API Gateway ate Lambda / backend compute
+- separacao entre:
+  - superficie publica declarada
+  - backend realmente alcançavel
+
+O que ainda NAO prova:
+- aquisicao de credenciais
+- exploracao completa ate o dado final
+- validacao real de rede em AWS
+
+Direção do avanço: mais generalização ofensiva
+
+#### Bloco D — Promoção seletiva para AWS real com evidência de rede
+
+Objetivo:
+- promover `external entry` para AWS real com evidência de rede, nao apenas de
+  path credenciado controlado
+
+O que o bloco prova:
+- evidência real de reachability da internet ate o workload
+- distinção auditavel entre:
+  - reachability de rede
+  - aquisicao de credenciais
+  - explotabilidade do path ate o dado
+
+O que ainda NAO prova:
+- generalizacao total para todas as classes de `external entry`
+- exploit HTTP arbitrario ou vulnerabilidades de app
+
+Direção do avanço: mais generalização ofensiva
+
+#### Bloco E — Integração dessa semântica ao selection / synthesis / reporting
+
+Objetivo:
+- integrar maturidade de `external entry` ao pipeline discovery-driven
+
+O que o bloco prova:
+- `target selection` passa a considerar maturidade de reachability
+- `campaign synthesis` deixa explicito em qual nivel o path se encontra
+- reporting evita falso positivo conceitual em `external entry`
+
+O que ainda NAO prova:
+- prova automatica universal de internet-to-backend para qualquer ambiente AWS
+- cobertura total de `external entry` multi-servico
+
+Direção do avanço: mais generalização ofensiva
 
 ### Bundles operacionais (Produto 01)
 

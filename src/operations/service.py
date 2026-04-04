@@ -58,6 +58,21 @@ def build_campaign_scope(
     return Scope.model_validate(data)
 
 
+def build_campaign_scope_from_path(
+    scope_path: Path,
+    target: TargetConfig,
+    authorization: AuthorizationConfig,
+) -> Scope:
+    scope = Scope.model_validate_json(scope_path.read_text())
+    data = scope.model_dump()
+    data["aws_account_ids"] = target.accounts
+    data["allowed_regions"] = target.allowed_regions
+    data["authorized_by"] = authorization.authorized_by
+    data["authorized_at"] = authorization.authorized_at
+    data["authorization_document"] = authorization.authorization_document
+    return Scope.model_validate(data)
+
+
 def write_campaign_scope(
     profile: ProfileDefinition,
     target: TargetConfig,
@@ -159,12 +174,17 @@ def run_generated_campaign(
     profile_resolver = profile_resolver or get_profile
     profile_name = plan["profile"]
     validate_profile_access(profile_name, authorization)
-    profile = _resolve_profile(profile_resolver, profile_name, plan)
     generated_scope_path = Path(plan["generated_scope"])
     generated_objective_path = Path(plan["generated_objective"])
+    fixture_path = plan.get("fixture_path")
+    if fixture_path:
+        resolved_fixture_path = Path(fixture_path)
+    else:
+        profile = _resolve_profile(profile_resolver, profile_name, plan)
+        resolved_fixture_path = profile.fixture_path
     try:
         result = runner(
-            fixture_path=profile.fixture_path,
+            fixture_path=resolved_fixture_path,
             objective_path=generated_objective_path,
             scope_path=generated_scope_path,
             output_dir=output_dir,
@@ -255,8 +275,6 @@ def run_discovery_driven_assessment(
     discovery_runner = discovery_runner or run_foundation_discovery
     target_selector = target_selector or select_foundation_targets
     campaign_synthesizer = campaign_synthesizer or synthesize_foundation_campaigns
-    profile_resolver = profile_resolver or get_profile
-
     discovery_dir = output_dir / "discovery"
     candidates_dir = output_dir / "target-selection"
     campaign_plan_dir = output_dir / "campaign-synthesis"
@@ -316,6 +334,8 @@ def run_discovery_driven_assessment(
 
 
 def _resolve_profile(profile_resolver, profile_name: str, plan: dict):
+    if profile_resolver is None:
+        raise ValueError(f"profile_resolver is required to resolve profile {profile_name}")
     try:
         return profile_resolver(profile_name, plan)
     except TypeError:
@@ -432,6 +452,12 @@ def _build_path_summary(report: dict) -> str:
 
 def _build_evidence_summary(report: dict) -> str:
     executive_summary = report.get("executive_summary", {})
+    external_entry_maturity = executive_summary.get("external_entry_maturity") or {}
+    if external_entry_maturity.get("applicable"):
+        classification = external_entry_maturity.get("classification")
+        if classification == "public_exploit_path_proved_end_to_end":
+            return "Public exploit path proved end-to-end."
+        return "Public exposure structurally linked to privileged path."
     proof = executive_summary.get("proof")
     if proof:
         return f"Validated with proof: {proof}"
