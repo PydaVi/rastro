@@ -540,9 +540,12 @@ Decisões arquiteturais relevantes viram ADR em `docs/adr/`.
 
 ## Regra de orientação antes de propor próximos passos
 
-Antes de indicar o próximo passo, o agente deve ler o `PLAN.md` completo
-e garantir que a proposta está alinhada ao objetivo macro do projeto,
-evitando micro-otimizações que desviem o foco.
+Antes de indicar o próximo passo, o agente deve ler:
+- `PLAN.md`
+- `REGUA.md`
+
+e garantir que a proposta esta alinhada ao objetivo macro do projeto,
+evitando micro-otimizacoes que desviem o foco.
 
 Essa leitura deve incluir uma avaliação explícita de:
 - quanto o bloco atual aproximou o Rastro de generalização ofensiva
