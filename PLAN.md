@@ -1580,6 +1580,7 @@ Reteste IAM-privesc-heavy:
 - executado em ambiente real fortemente dominado por IAM privilege escalation
 - documentado em:
   - `docs/experiments/EXP-085-iam-heavy-blind-real-subcoverage-diagnosis.md`
+  - `docs/experiments/EXP-088-generalization-confidence-correction-after-iam-heavy.md`
 
 Resultado observado:
 - o discovery viu o lab novo:
@@ -1591,6 +1592,27 @@ Resultado observado:
 - findings vieram repetidos muitas vezes
 - a evidencia de `role chaining` ficou fraca e mais proxima de descoberta do
   que de exploracao provada
+
+Correcao de leitura obrigatoria:
+- a leitura anterior do progresso estava otimista demais
+- parte do que foi tratado como `generalizacao ofensiva` era, na pratica:
+  - maturidade de harness
+  - melhoria de runtime parcial
+  - melhoria de honestidade epistemologica
+  - melhoria de blind execution parcial
+- o reteste IAM-heavy reduziu a confianca na nota implicita de generalizacao do
+  produto
+- isso nao e regressao de software; e correcao de leitura arquitetural
+
+Julgamento explicito atualizado:
+- o nucleo atual ainda esta mais perto de `campaign validator` do que parecia
+- discovery e selection reais melhoraram, mas isso nao compensa:
+  - contrato de sucesso frouxo
+  - findings inflados por multiplicidade de principal
+  - runtime IAM-heavy ainda estreito
+  - distinctness de path mal modelado
+- continuar expandindo bundles, profiles e benchmarks sem refazer esses
+  contratos seria erro estrategico
 
 Leitura arquitetural:
 - esse reteste revelou subcobertura relevante
@@ -1791,6 +1813,43 @@ Critério de saída:
   - prova minima
   - contaminacao de harness
 
+Novo criterio de sucesso de medio prazo:
+- o produto precisa conseguir enfrentar o challenge `Wyatt` do CloudFoxable
+  como teste cego
+- `passar no Wyatt` nao significa reproduzir um write-up conhecido
+- significa convergir, com discovery e selection reais, para uma chain hibrida
+  app/network/cloud do tipo:
+  - foothold interno
+  - descoberta lateral relevante
+  - pivô via aplicação
+  - aquisição de credenciais de workload
+  - acesso final ao dado
+
+Regra obrigatoria para esse criterio:
+- o futuro teste do `Wyatt` deve ser cego para o engine
+- conhecimento humano previo sobre o challenge nao pode ser embutido como:
+  - fixture especifico
+  - profile especifico
+  - target selection ad hoc
+  - objetivo customizado para o ambiente
+  - scoring moldado para nomes/recursos do challenge
+
+Interpretacao correta:
+- `Wyatt` passa a ser criterio de sucesso epistemico, nao benchmark cosmetico
+- ele so conta se for resolvido em modo blind, com isolamento do conhecimento
+  adquirido por write-up, walkthrough ou memoria do operador
+
+O que esse criterio muda no roadmap:
+- work futuro que apenas melhore execution de campaigns conhecidas nao aproxima
+  o produto desse marco
+- work que aumente:
+  - path distinctness
+  - blind runtime hibrido
+  - app/network/cloud pivot
+  - credential acquisition real
+  - truthfulness de findings
+  passa a ter prioridade maior
+
 Direção do avanço: mais generalização ofensiva
 
 O que esse bloco aproxima do polo generalista:
@@ -1821,6 +1880,195 @@ Novo proximo experimento com maior leverage para mover a regua:
   - evidencia minima por classe
   - unicidade de findings
   - ausencia de contaminacao do harness
+- depois disso, preparar o primeiro teste cego orientado ao criterio `Wyatt`,
+  sem embutir conhecimento especifico do challenge no runtime, selection ou
+  portfolio
+
+#### Bloco prioritario — Reestruturação do núcleo para verdade de path e distinctness
+
+Objetivo:
+- refazer os contratos centrais que hoje permitem ao produto parecer mais
+  generalista no discurso do que no runtime e no reporting
+- tirar do centro do nucleo:
+  - `target_observed` como criterio upstream de sucesso
+  - findings inflados por multiplicidade de principal
+  - agregacao guiada por volume bruto em vez de path distinto
+
+Premissa explicita:
+- o problema atual nao e cosmetico
+- nao e so `falta de mais portfolio`
+- existe divida arquitetural critica no contrato de:
+  - objective / success
+  - finding / evidence
+  - aggregation / distinctness
+  - coverage measurement
+
+O que precisa parar imediatamente:
+1. parar de tratar `campaigns_passed` como proxy de progresso ofensivo
+2. parar de promover findings volumosos como sinal de coverage
+3. parar de abrir novos benchmarks sinteticos ou novas families vistosas antes
+   de corrigir distinctness e truthfulness do core
+4. parar de aceitar `target_observed` como centro do contrato de verdade
+5. parar de interpretar multiplicidade de principal contra o mesmo alvo como
+   coverage ofensiva
+
+O que precisa ser refeito no nucleo:
+1. reescrever o contrato de objective/success para remover o papel central de
+   `target_observed`
+2. separar explicitamente:
+   - sucesso de campanha
+   - estado de prova
+   - impacto validado
+3. redefinir findings para distinguir:
+   - `distinct attack path`
+   - `same path, multiple principals`
+   - `same target, multiple proofs`
+4. revisar agregacao/deduplicacao com chave orientada a path distinto e nao a
+   volume de campaigns
+5. expor `finding_state` por item no output principal, nao so no agregado
+6. revisar metricas de coverage para:
+   - coverage por classe ofensiva
+   - coverage por distinct path
+   - multiplicidade de principal separada
+7. reavaliar `BlindRealRuntime` e synthesis para que runtime/evidence nao
+   herdem semantica frouxa do objective
+
+O que esse bloco prova:
+- que o produto ficou epistemicamente mais honesto
+- que findings deixam de inflar coverage artificialmente
+- que o proximo reteste IAM-heavy medira diversidade estrutural de path, nao
+  apenas volume de principals sobre o mesmo recurso
+
+O que ele ainda nao prova:
+- nao prova generalizacao forte por si so
+- nao prova cobertura IAM-privesc satisfatoria
+- nao substitui reteste real
+- prepara o proximo reteste para medir a coisa certa
+
+Critérios obrigatorios antes de qualquer novo reteste relevante:
+1. `validated` nao pode coexistir com `target_observed` como criterio upstream
+   principal
+2. cada finding final precisa representar:
+   - um path distinto
+   - ou uma classe distinta explicitamente justificada
+3. `assessment_findings.md` precisa expor `finding_state` por item
+4. volume bruto de findings nao conta como progresso
+5. reteste IAM-heavy so volta a ter leverage quando:
+   - runtime blind real estiver puro
+   - aggregation estiver orientada a distinct path
+   - coverage estiver medida por classe ofensiva e distinctness
+
+Direção do avanço: mais generalização ofensiva
+
+O que esse bloco aproxima do polo generalista:
+- reduz autoengano do produto
+- troca volume de campanha por verdade de path
+- reorienta o produto para distinctness estrutural e prova minima real
+
+O que permanece dependente de campaigns conhecidas:
+- o portfolio IAM-privesc ainda sera de classes conhecidas
+- o runtime ainda precisara ser ampliado classe por classe
+- a generalizacao forte continuara nao provada ate reteste real posterior
+
+Regra de priorizacao explicita:
+- esse bloco tem mais leverage do que qualquer novo benchmark vistoso
+- esse bloco tem mais leverage do que qualquer novo reteste IAM-heavy agora
+- rerodar antes dele aumentaria ruido e inflaria leitura de progresso
+
+Reclassificacao obrigatoria dos avancos recentes:
+- melhorias de `blind real` recentes contam como:
+  - melhoria parcial de blind execution
+  - melhoria de runtime/harness
+  - melhoria de honestidade epistemologica
+- elas nao contam, por si so, como prova de generalizacao forte
+
+Novo proximo experimento com maior leverage para mover a regua:
+- fechar primeiro `Core truthfulness and path distinctness`
+- depois rerodar IAM-heavy com:
+  - runtime blind real puro
+  - distinct path quality
+  - coverage por classe ofensiva
+  - findings com prova minima e sem inflacao por principal
+
+#### Bloco futuro — Blind Hybrid Challenge Readiness (`Wyatt` gate)
+
+Objetivo:
+- preparar o produto para um teste cego de challenge hibrido app/network/cloud
+  em AWS real, usando `Wyatt` como gate epistemico de medio prazo
+
+Hipotese central:
+- o produto so pode alegar aproximacao real do polo `generalista ofensivo`
+  quando conseguir convergir, em modo cego, para uma chain do tipo:
+  - foothold inicial
+  - descoberta lateral relevante
+  - pivô via aplicação
+  - aquisição de credenciais de workload
+  - acesso final ao dado
+
+Premissa obrigatoria:
+- esse gate nao pode ser resolvido com conhecimento incorporado do challenge
+- walkthrough, write-up e memoria humana do ambiente nao podem virar:
+  - fixture
+  - profile
+  - objective
+  - scope
+  - scoring rule
+  - selection hack
+
+O que esse bloco prova:
+- que o produto saiu do quadrante de `campaign validator` IAM/data-only
+  e entrou em um nivel inicial de ofensiva hibrida blind
+- que o runtime, selection e reporting conseguem sustentar um challenge mais
+  proximo de atacante real do que de campaign conhecida
+
+O que ele ainda nao prova:
+- generalizacao ampla para qualquer challenge do CloudFoxable
+- cobertura total de appsec/cloud pivot
+- autonomia ofensiva madura em qualquer ambiente hostil
+
+Dependencias obrigatorias antes de abrir esse gate:
+1. fechar `Reestruturacao do nucleo para verdade de path e distinctness`
+2. fechar `Reestruturacao do nucleo para blind real IAM-heavy`
+3. runtime blind real com acoes intermediarias hibridas suficientes
+4. findings agregados por distinct path, nao por multiplicidade de principal
+5. evidencia minima por classe e por estagio de prova
+
+Critério de entrada:
+- quando o produto ja nao inflar coverage por:
+  - `target_observed`
+  - volume bruto de findings
+  - multiplicidade de principal
+- e quando o runtime blind real puder representar mais do que:
+  - `AssumeRole`
+  - `SimulatePrincipalPolicy`
+  - acesso final a dado
+
+Critério de saída:
+- executar `Wyatt` como teste cego
+- registrar explicitamente:
+  - onde o engine convergiu sem ajuda
+  - onde travou
+  - se o bloqueio foi de:
+    - discovery
+    - selection
+    - runtime
+    - representacao
+    - evidence/reporting
+- o teste so conta como sucesso se a convergencia vier de comportamento blind
+  real e nao de conhecimento previamente embutido
+
+Direção do avanço: mais generalização ofensiva
+
+O que esse bloco aproxima do polo generalista:
+- introduz um gate real de challenge hibrido
+- desloca o eixo do produto para app/network/cloud pivot
+- reduz espaco para autoengano baseado em benchmark estruturado
+
+O que permanece dependente de campaigns conhecidas:
+- classes ofensivas ainda podem continuar sendo modeladas
+- parte do portfolio ainda sera explicitamente nomeada
+- mas o teste final desse gate deve isolar o conhecimento especifico do
+  challenge
 
 #### Bloco 1 — External Entry Reachability Real
 

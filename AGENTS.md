@@ -173,6 +173,23 @@ Estados minimos a perseguir quando o dominio exigir prova progressiva:
 - `exploited`
 - `validated_impact`
 
+Regra dura adicional:
+- `target_observed` nao pode continuar como centro do contrato de verdade do
+  produto
+- se `success_criteria` upstream continuar frouxo, qualquer leitura otimista de
+  coverage ou generalizacao deve ser tratada como inflacao de confianca
+- findings volumosos nao contam como progresso se vierem de multiplicidade de
+  principal sobre o mesmo alvo sem distinct path claro
+
+Quando `assessment_findings` crescer mais em volume do que em diversidade
+estrutural, o agente deve presumir:
+- inflacao de resultado
+- problema de agregacao
+- problema de distinctness
+- ou overclaim de evidencia
+
+Isso nao e detalhe de reporting. E erro arquitetural do nucleo.
+
 ### Regra permanente para ambientes IAM-heavy
 
 Em ambientes IAM-heavy, o agente não deve interpretar subcobertura como
@@ -199,6 +216,14 @@ O agente deve primeiro testar a hipotese mais dura:
 - absence de action space real intermediario
 - overclaim no reporting
 - contaminacao residual do modo blind por harness sintetico
+
+Tambem deve presumir como suspeita central:
+- findings agregando melhor `quantos principals tocam o mesmo alvo`
+  do que `quantos attack paths distintos foram provados`
+
+Multiplicidade de principal nao e proxy aceitavel de coverage ofensiva.
+Se um mesmo recurso final aparece dezenas de vezes, isso deve ser tratado
+primeiro como problema de distinctness, nao como sinal de generalizacao.
 
 ### Pergunta interna obrigatória antes do próximo passo
 
