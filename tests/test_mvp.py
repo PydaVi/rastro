@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from app.main import _build_execution_surface, app, execute_run, run
+from app.main import _build_execution_surface, _restore_objective_target_access_actions, app, execute_run, run
 from core.attack_graph import AttackGraph
 from core.audit import AuditLogger
 from core.domain import Action, ActionType, Decision, Objective, Observation, Scope
@@ -76,8 +76,36 @@ class FakeAwsClient:
             "Arn": "arn:aws:iam::123456789012:user/analyst",
         }
 
+    def list_users(self, region: str, credentials=None):
+        return [
+            "arn:aws:iam::123456789012:user/analyst",
+            "arn:aws:iam::123456789012:user/auditor",
+        ]
+
     def list_roles(self, region: str, credentials=None):
         return ["arn:aws:iam::123456789012:role/AuditRole"]
+
+    def get_role_details(self, region: str, role_name: str, credentials=None):
+        return {
+            "Arn": f"arn:aws:iam::123456789012:role/{role_name}",
+            "AssumeRolePolicyDocument": {
+                "Statement": [
+                    {
+                        "Principal": {
+                            "AWS": "arn:aws:iam::123456789012:role/BrokerRole"
+                        }
+                    }
+                ]
+            },
+            "AttachedPolicies": [
+                {
+                    "PolicyName": "AdministratorAccess" if role_name == "AuditRole" else "ReadOnlyAccess",
+                    "PolicyArn": f"arn:aws:iam::aws:policy/{'AdministratorAccess' if role_name == 'AuditRole' else 'ReadOnlyAccess'}",
+                }
+            ],
+            "InlinePolicyNames": ["CreatePolicyVersionInline"] if role_name == "AuditRole" else [],
+            "PermissionsBoundary": None,
+        }
 
     def assume_role(self, region: str, role_arn: str, session_name: str, credentials=None):
         self.assume_role_calls.append(
@@ -111,6 +139,253 @@ class FakeAwsClient:
                 "SessionToken": "token",
             }
         }
+
+    def simulate_principal_policy(
+        self,
+        region: str,
+        policy_source_arn: str,
+        action_names: list[str],
+        resource_arns: list[str],
+        credentials=None,
+    ):
+        return {
+            "EvaluationResults": [
+                {
+                    "EvalDecision": "allowed",
+                }
+            ]
+        }
+
+    def get_object(self, region: str, bucket: str, object_key: str, credentials=None):
+        self.get_object_calls.append(
+            {
+                "region": region,
+                "bucket": bucket,
+                "object_key": object_key,
+                "credentials": credentials,
+            }
+        )
+        return {
+            "ContentLength": 24,
+            "ETag": '"etag"',
+            "Preview": "payroll-preview",
+        }
+
+    def list_objects(self, region: str, bucket: str, prefix=None, credentials=None):
+        return ["payroll.csv", "notes.txt"]
+
+    def list_buckets(self, region: str, credentials=None):
+        return ["sensitive-finance-data", "public-reports"]
+
+    def list_secrets(self, region: str, name_prefix=None, credentials=None):
+        if name_prefix == "prod/":
+            return ["prod/payroll-api-key"]
+        if name_prefix == "archive/":
+            return ["archive/payroll-history"]
+        return ["reports/quarterly-summary"]
+
+    def list_parameters_by_path(self, region: str, path: str, credentials=None):
+        self.parameter_path_calls.append(path)
+        if path == "/prod":
+            return ["/prod/payroll/api_key"]
+        if path == "/finance":
+            return ["/finance/quarterly/reporting_key"]
+        if path == "/customer":
+            return ["/customer/payroll/runtime_key"]
+        return []
+
+    def get_secret_value(self, region: str, secret_id: str, credentials=None):
+        return {
+            "ARN": f"arn:aws:secretsmanager:{region}:123456789012:secret:{secret_id}",
+            "Name": secret_id,
+            "VersionId": "example-version",
+            "SecretString": "payroll-api-key-preview",
+        }
+
+    def get_parameter(self, region: str, name: str, credentials=None):
+        return {
+            "ARN": f"arn:aws:ssm:{region}:123456789012:parameter/{name.lstrip('/')}",
+            "Name": name,
+            "Type": "SecureString",
+            "Value": "parameter-preview",
+            "Version": 1,
+        }
+
+    def get_instance_profile(self, region: str, instance_profile_name: str, credentials=None):
+        return {
+            "Arn": f"arn:aws:iam::123456789012:instance-profile/{instance_profile_name}",
+            "InstanceProfileName": instance_profile_name,
+            "Roles": ["arn:aws:iam::123456789012:role/PayrollAppInstanceRole"],
+        }
+
+    def list_instance_profile_associations(self, region: str, instance_profile_arn: str, credentials=None):
+        return [
+            {
+                "InstanceId": "i-0123456789abcdef0",
+                "State": "associated",
+                "AssociationId": "iip-assoc-123",
+            }
+        ]
+
+    def describe_instance(self, region: str, instance_id: str, credentials=None):
+        return {
+            "InstanceId": instance_id,
+            "PublicIpAddress": "54.1.2.3",
+            "PrivateIpAddress": "172.31.0.10",
+            "State": "running",
+            "SubnetId": "subnet-123",
+            "VpcId": "vpc-123",
+            "SecurityGroupIds": ["sg-123"],
+            "IamInstanceProfileArn": "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+            "MetadataOptions": {"HttpTokens": "optional"},
+        }
+
+    def list_instance_profiles(self, region: str, credentials=None):
+        return [
+            {
+                "Arn": "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+                "InstanceProfileName": "PayrollAppInstanceProfile",
+                "Roles": ["arn:aws:iam::123456789012:role/PayrollAppInstanceRole"],
+            }
+        ]
+
+    def list_instances(self, region: str, credentials=None):
+        return [
+            {
+                "InstanceId": "i-0123456789abcdef0",
+                "Arn": "arn:aws:ec2:us-east-1:550192603632:instance/i-0123456789abcdef0",
+                "SubnetId": "subnet-123",
+                "VpcId": "vpc-123",
+                "PublicIpAddress": "54.1.2.3",
+                "PrivateIpAddress": "172.31.0.10",
+                "State": "running",
+                "SecurityGroupIds": ["sg-123"],
+                "IamInstanceProfileArn": "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+                "MetadataOptions": {"HttpTokens": "optional"},
+            }
+        ]
+
+    def list_internet_gateways(self, region: str, credentials=None):
+        return [
+            {
+                "InternetGatewayId": "igw-123",
+                "Attachments": [{"VpcId": "vpc-123"}],
+            }
+        ]
+
+    def list_route_tables(self, region: str, credentials=None):
+        return [
+            {
+                "RouteTableId": "rtb-123",
+                "VpcId": "vpc-123",
+                "Associations": [{"SubnetId": "subnet-123"}],
+                "Routes": [{"DestinationCidrBlock": "0.0.0.0/0", "GatewayId": "igw-123"}],
+            }
+        ]
+
+    def list_subnets(self, region: str, credentials=None):
+        return [
+            {
+                "SubnetId": "subnet-123",
+                "VpcId": "vpc-123",
+                "AvailabilityZone": "us-east-1a",
+                "MapPublicIpOnLaunch": True,
+            }
+        ]
+
+    def list_security_groups(self, region: str, credentials=None):
+        return [
+            {
+                "GroupId": "sg-123",
+                "VpcId": "vpc-123",
+                "GroupName": "public-payroll-app",
+                "IpPermissions": [
+                    {"FromPort": 80, "IpRanges": [{"CidrIp": "0.0.0.0/0"}]},
+                    {"FromPort": 443, "IpRanges": [{"CidrIp": "0.0.0.0/0"}]},
+                ],
+            }
+        ]
+
+    def list_load_balancers(self, region: str, credentials=None):
+        return [
+            {
+                "LoadBalancerArn": "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/app/public-webhook-bridge",
+                "DNSName": "public-webhook-bridge-123.us-east-1.elb.amazonaws.com",
+                "Scheme": "internet-facing",
+                "VpcId": "vpc-123",
+                "State": "active",
+            }
+        ]
+
+    def list_rest_apis(self, region: str, credentials=None):
+        return [
+            {
+                "RestApiId": "payroll-webhook-public",
+                "Arn": "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public",
+                "Name": "payroll-webhook-public",
+                "EndpointConfiguration": {"types": ["REGIONAL"]},
+            }
+        ]
+
+    def list_api_stages(self, region: str, rest_api_id: str, credentials=None):
+        return [
+            {
+                "StageName": "prod",
+                "DeploymentId": "dep-123",
+            }
+        ]
+
+    def list_target_groups(self, region: str, credentials=None):
+        return [
+            {
+                "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:550192603632:targetgroup/payroll-webhook-tg/123",
+                "LoadBalancerArns": [
+                    "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/app/public-webhook-bridge"
+                ],
+                "TargetType": "instance",
+                "Protocol": "HTTP",
+                "Port": 80,
+                "VpcId": "vpc-123",
+                "HealthCheckProtocol": "HTTP",
+            }
+        ]
+
+    def describe_target_health(self, region: str, target_group_arn: str, credentials=None):
+        return [
+            {
+                "TargetId": "i-0123456789abcdef0",
+                "Port": 80,
+                "State": "healthy",
+                "Reason": None,
+                "Description": None,
+            }
+        ]
+
+    def list_listeners(self, region: str, load_balancer_arn: str, credentials=None):
+        return [
+            {
+                "ListenerArn": f"{load_balancer_arn}/listener/app/123/456",
+                "Port": 443,
+                "Protocol": "HTTPS",
+                "TargetGroupArns": [
+                    "arn:aws:elasticloadbalancing:us-east-1:550192603632:targetgroup/payroll-webhook-tg/123"
+                ],
+            }
+        ]
+
+    def list_listener_rules(self, region: str, listener_arn: str, credentials=None):
+        return []
+
+    def list_api_integrations(self, region: str, rest_api_id: str, credentials=None):
+        return [
+            {
+                "ResourcePath": "/webhook",
+                "HttpMethod": "POST",
+                "Type": "HTTP_PROXY",
+                "Uri": "http://172.31.0.10/webhook",
+                "ConnectionType": "INTERNET",
+            }
+        ]
 
 
 def test_fixture_expands_alias_actions_and_matches_alias_transition() -> None:
@@ -706,11 +981,470 @@ def test_aws_real_executor_supports_external_entry_compute_pivot() -> None:
         "ec2:DescribeInstances",
         "iam:GetInstanceProfile",
         "ec2:DescribeIamInstanceProfileAssociations",
+        "ec2:DescribeRouteTables",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeInternetGateways",
     ]
     assert pivot_observation.details["response_summary"]["public_ip"] == "54.1.2.3"
+    assert pivot_observation.details["response_summary"]["network_reachable_from_internet"] is True
+    assert pivot_observation.details["response_summary"]["backend_reachable"] is True
+    assert pivot_observation.details["network_reachable_from_internet"] is True
+    assert pivot_observation.details["backend_reachable"] is True
+    assert pivot_observation.details["evidence"]["network_path"]["route_to_internet_gateway"] is True
+    assert pivot_observation.details["evidence"]["network_path"]["security_group_public_ingress"] is True
     assert pivot_observation.details["evidence"]["entry_surface_arn"].endswith(
         "instance/i-0123456789abcdef0"
     )
+
+
+def test_aws_real_executor_supports_alb_external_entry_network_evidence() -> None:
+    fixture = Fixture(
+        {
+            "name": "aws-alb-external-entry-compute-pivot-test",
+            "state": {
+                "flags": [],
+                "identities": {
+                    "arn:aws:iam::123456789012:user/platform-analyst": {
+                        "available_actions": [
+                            {
+                                "action_type": "access_resource",
+                                "target": "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/app/public-webhook-bridge",
+                                "parameters": {
+                                    "service": "ec2",
+                                    "region": "us-east-1",
+                                    "resource_arn": "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/app/public-webhook-bridge",
+                                    "instance_id": "i-0123456789abcdef0",
+                                    "instance_profile_arn": "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+                                },
+                                "tool": "ec2_instance_profile_pivot",
+                            }
+                        ]
+                    }
+                },
+            },
+            "transitions": [
+                {
+                    "action_type": "access_resource",
+                    "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+                    "target": "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/app/public-webhook-bridge",
+                    "observation": {
+                        "details": "Pivoted from public ALB surface into the attached role.",
+                        "evidence": {
+                            "reached_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+                        },
+                    },
+                }
+            ],
+        }
+    )
+    scope = Scope.model_construct(
+        target="aws",
+        allowed_actions=[ActionType.ACCESS_RESOURCE],
+        allowed_resources=[
+            "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/app/public-webhook-bridge",
+            "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+            "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+        ],
+        max_steps=3,
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["ec2", "iam", "elasticloadbalancing"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+        planner=None,
+    )
+    executor = AwsRealExecutor(fixture=fixture, scope=scope, client=FakeAwsClient())
+    pivot_action = fixture.enumerate_actions(None)[0]
+    pivot_observation = executor.execute(pivot_action)
+
+    assert pivot_observation.success is True
+    assert pivot_observation.details["request_summary"]["api_calls"] == [
+        "ec2:DescribeInstances",
+        "iam:GetInstanceProfile",
+        "ec2:DescribeIamInstanceProfileAssociations",
+        "ec2:DescribeRouteTables",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeInternetGateways",
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeListeners",
+        "elasticloadbalancing:DescribeTargetGroups",
+        "elasticloadbalancing:DescribeTargetHealth",
+    ]
+    load_balancer_path = pivot_observation.details["evidence"]["network_path"]["load_balancer"]
+    assert load_balancer_path["internet_facing"] is True
+    assert load_balancer_path["listener_forwarding"] is True
+    assert load_balancer_path["target_health"] == "healthy"
+    assert pivot_observation.details["network_reachable_from_internet"] is True
+    assert pivot_observation.details["backend_reachable"] is True
+
+
+def test_aws_real_executor_supports_api_gateway_external_entry_network_evidence() -> None:
+    fixture = Fixture(
+        {
+            "name": "aws-apigw-external-entry-compute-pivot-test",
+            "state": {
+                "flags": [],
+                "identities": {
+                    "arn:aws:iam::123456789012:user/platform-analyst": {
+                        "available_actions": [
+                            {
+                                "action_type": "access_resource",
+                                "target": "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public",
+                                "parameters": {
+                                    "service": "ec2",
+                                    "region": "us-east-1",
+                                    "resource_arn": "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public",
+                                    "instance_id": "i-0123456789abcdef0",
+                                    "instance_profile_arn": "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+                                    "target_load_balancer_arn": "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/app/public-webhook-bridge",
+                                },
+                                "tool": "ec2_instance_profile_pivot",
+                            }
+                        ]
+                    }
+                },
+            },
+            "transitions": [
+                {
+                    "action_type": "access_resource",
+                    "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+                    "target": "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public",
+                    "observation": {
+                        "details": "Pivoted from public API Gateway surface into the attached role.",
+                        "evidence": {
+                            "reached_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+                        },
+                    },
+                }
+            ],
+        }
+    )
+    scope = Scope.model_construct(
+        target="aws",
+        allowed_actions=[ActionType.ACCESS_RESOURCE],
+        allowed_resources=[
+            "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public",
+            "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/app/public-webhook-bridge",
+            "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+            "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+        ],
+        max_steps=3,
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["ec2", "iam", "elasticloadbalancing", "apigateway"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+        planner=None,
+    )
+    executor = AwsRealExecutor(fixture=fixture, scope=scope, client=FakeAwsClient())
+    pivot_action = fixture.enumerate_actions(None)[0]
+    pivot_observation = executor.execute(pivot_action)
+
+    assert pivot_observation.success is True
+    assert pivot_observation.details["request_summary"]["api_calls"] == [
+        "ec2:DescribeInstances",
+        "iam:GetInstanceProfile",
+        "ec2:DescribeIamInstanceProfileAssociations",
+        "ec2:DescribeRouteTables",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeInternetGateways",
+        "apigateway:GET",
+        "apigateway:GetStages",
+        "apigateway:GetIntegration",
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeListeners",
+        "elasticloadbalancing:DescribeTargetGroups",
+        "elasticloadbalancing:DescribeTargetHealth",
+    ]
+    api_gateway_path = pivot_observation.details["evidence"]["network_path"]["api_gateway"]
+    assert api_gateway_path["public_stage"] is True
+    assert api_gateway_path["integration_active"] is True
+    assert api_gateway_path["target_load_balancer_arn"].endswith("public-webhook-bridge")
+    assert pivot_observation.details["network_reachable_from_internet"] is True
+    assert pivot_observation.details["backend_reachable"] is True
+
+
+def test_aws_real_executor_supports_nlb_external_entry_network_evidence() -> None:
+    class FakeNlbAwsClient(FakeAwsClient):
+        def list_load_balancers(self, region: str, credentials=None):
+            return [
+                {
+                    "LoadBalancerArn": "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/net/public-webhook-bridge",
+                    "DNSName": "public-webhook-bridge-123.us-east-1.elb.amazonaws.com",
+                    "Scheme": "internet-facing",
+                    "VpcId": "vpc-123",
+                    "State": "active",
+                }
+            ]
+
+        def list_target_groups(self, region: str, credentials=None):
+            return [
+                {
+                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:550192603632:targetgroup/payroll-webhook-ntg/123",
+                    "LoadBalancerArns": [
+                        "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/net/public-webhook-bridge"
+                    ],
+                    "TargetType": "instance",
+                    "Protocol": "TCP",
+                    "Port": 80,
+                    "VpcId": "vpc-123",
+                    "HealthCheckProtocol": "TCP",
+                }
+            ]
+
+        def list_listeners(self, region: str, load_balancer_arn: str, credentials=None):
+            return [
+                {
+                    "ListenerArn": f"{load_balancer_arn}/listener/net/123/456",
+                    "Port": 80,
+                    "Protocol": "TCP",
+                    "TargetGroupArns": [
+                        "arn:aws:elasticloadbalancing:us-east-1:550192603632:targetgroup/payroll-webhook-ntg/123"
+                    ],
+                }
+            ]
+
+    fixture = Fixture(
+        {
+            "name": "aws-nlb-external-entry-compute-pivot-test",
+            "state": {
+                "flags": [],
+                "identities": {
+                    "arn:aws:iam::123456789012:user/platform-analyst": {
+                        "available_actions": [
+                            {
+                                "action_type": "access_resource",
+                                "target": "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/net/public-webhook-bridge",
+                                "parameters": {
+                                    "service": "ec2",
+                                    "region": "us-east-1",
+                                    "resource_arn": "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/net/public-webhook-bridge",
+                                    "instance_id": "i-0123456789abcdef0",
+                                    "instance_profile_arn": "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+                                    "target_group_arn": "arn:aws:elasticloadbalancing:us-east-1:550192603632:targetgroup/payroll-webhook-ntg/123",
+                                },
+                                "tool": "ec2_instance_profile_pivot",
+                            }
+                        ]
+                    }
+                },
+            },
+            "transitions": [
+                {
+                    "action_type": "access_resource",
+                    "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+                    "target": "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/net/public-webhook-bridge",
+                    "observation": {
+                        "details": "Pivoted from public NLB surface into the attached role.",
+                        "evidence": {
+                            "reached_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+                        },
+                    },
+                }
+            ],
+        }
+    )
+    scope = Scope.model_construct(
+        target="aws",
+        allowed_actions=[ActionType.ACCESS_RESOURCE],
+        allowed_resources=[
+            "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/net/public-webhook-bridge",
+            "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+            "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+        ],
+        max_steps=3,
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["ec2", "iam", "elasticloadbalancing"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+        planner=None,
+    )
+    executor = AwsRealExecutor(fixture=fixture, scope=scope, client=FakeNlbAwsClient())
+    pivot_action = fixture.enumerate_actions(None)[0]
+    pivot_observation = executor.execute(pivot_action)
+
+    assert pivot_observation.success is True
+    assert pivot_observation.details["request_summary"]["api_calls"] == [
+        "ec2:DescribeInstances",
+        "iam:GetInstanceProfile",
+        "ec2:DescribeIamInstanceProfileAssociations",
+        "ec2:DescribeRouteTables",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeInternetGateways",
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeListeners",
+        "elasticloadbalancing:DescribeTargetGroups",
+        "elasticloadbalancing:DescribeTargetHealth",
+    ]
+    load_balancer_path = pivot_observation.details["evidence"]["network_path"]["load_balancer"]
+    assert load_balancer_path["internet_facing"] is True
+    assert load_balancer_path["listener_public"] is True
+    assert load_balancer_path["listener_forwarding"] is True
+    assert load_balancer_path["target_health"] == "healthy"
+    assert pivot_observation.details["network_reachable_from_internet"] is True
+    assert pivot_observation.details["backend_reachable"] is True
+
+
+def test_aws_real_executor_supports_alb_listener_rule_evidence() -> None:
+    class FakeAlbRulesAwsClient(FakeAwsClient):
+        def list_target_groups(self, region: str, credentials=None):
+            return [
+                {
+                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:550192603632:targetgroup/payroll-webhook-tg/123",
+                    "LoadBalancerArns": [
+                        "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/app/public-webhook-bridge"
+                    ],
+                    "TargetType": "instance",
+                    "Protocol": "HTTP",
+                    "Port": 80,
+                    "VpcId": "vpc-123",
+                    "HealthCheckProtocol": "HTTP",
+                },
+                {
+                    "TargetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:550192603632:targetgroup/decoy-webhook-tg/456",
+                    "LoadBalancerArns": [
+                        "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/app/public-webhook-bridge"
+                    ],
+                    "TargetType": "instance",
+                    "Protocol": "HTTP",
+                    "Port": 80,
+                    "VpcId": "vpc-123",
+                    "HealthCheckProtocol": "HTTP",
+                },
+            ]
+
+        def list_listener_rules(self, region: str, listener_arn: str, credentials=None):
+            return [
+                {
+                    "RuleArn": f"{listener_arn}/rule/payroll",
+                    "Priority": "10",
+                    "IsDefault": False,
+                    "TargetGroupArns": [
+                        "arn:aws:elasticloadbalancing:us-east-1:550192603632:targetgroup/payroll-webhook-tg/123"
+                    ],
+                    "Conditions": [
+                        {
+                            "Field": "path-pattern",
+                            "Values": ["/payroll/*"],
+                            "PathPatternConfig": {"Values": ["/payroll/*"]},
+                        }
+                    ],
+                },
+                {
+                    "RuleArn": f"{listener_arn}/rule/default",
+                    "Priority": "default",
+                    "IsDefault": True,
+                    "TargetGroupArns": [
+                        "arn:aws:elasticloadbalancing:us-east-1:550192603632:targetgroup/decoy-webhook-tg/456"
+                    ],
+                    "Conditions": [],
+                },
+            ]
+
+        def describe_target_health(self, region: str, target_group_arn: str, credentials=None):
+            if target_group_arn.endswith("/123"):
+                return [
+                    {
+                        "TargetId": "i-0123456789abcdef0",
+                        "Port": 80,
+                        "State": "healthy",
+                        "Reason": None,
+                        "Description": None,
+                    }
+                ]
+            return [
+                {
+                    "TargetId": "i-decoy",
+                    "Port": 80,
+                    "State": "healthy",
+                    "Reason": None,
+                    "Description": None,
+                }
+            ]
+
+    fixture = Fixture(
+        {
+            "name": "aws-alb-rule-external-entry-compute-pivot-test",
+            "state": {
+                "flags": [],
+                "identities": {
+                    "arn:aws:iam::123456789012:user/platform-analyst": {
+                        "available_actions": [
+                            {
+                                "action_type": "access_resource",
+                                "target": "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/app/public-webhook-bridge",
+                                "parameters": {
+                                    "service": "ec2",
+                                    "region": "us-east-1",
+                                    "resource_arn": "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/app/public-webhook-bridge",
+                                    "instance_id": "i-0123456789abcdef0",
+                                    "instance_profile_arn": "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+                                    "target_group_arn": "arn:aws:elasticloadbalancing:us-east-1:550192603632:targetgroup/payroll-webhook-tg/123",
+                                    "request_path": "/payroll/export.csv",
+                                },
+                                "tool": "ec2_instance_profile_pivot",
+                            }
+                        ]
+                    }
+                },
+            },
+            "transitions": [
+                {
+                    "action_type": "access_resource",
+                    "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+                    "target": "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/app/public-webhook-bridge",
+                    "observation": {
+                        "details": "Pivoted from rule-matched ALB surface into the attached role.",
+                        "evidence": {
+                            "reached_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+                        },
+                    },
+                }
+            ],
+        }
+    )
+    scope = Scope.model_construct(
+        target="aws",
+        allowed_actions=[ActionType.ACCESS_RESOURCE],
+        allowed_resources=[
+            "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/app/public-webhook-bridge",
+            "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+            "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+        ],
+        max_steps=3,
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["ec2", "iam", "elasticloadbalancing"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+        planner=None,
+    )
+    executor = AwsRealExecutor(fixture=fixture, scope=scope, client=FakeAlbRulesAwsClient())
+    pivot_action = fixture.enumerate_actions(None)[0]
+    pivot_observation = executor.execute(pivot_action)
+
+    assert pivot_observation.success is True
+    assert "elasticloadbalancing:DescribeRules" in pivot_observation.details["request_summary"]["api_calls"]
+    load_balancer_path = pivot_observation.details["evidence"]["network_path"]["load_balancer"]
+    assert load_balancer_path["multiple_target_groups_observed"] is True
+    assert load_balancer_path["matched_listener_rule_priorities"] == ["10"]
+    assert load_balancer_path["matched_target_groups"] == [
+        "arn:aws:elasticloadbalancing:us-east-1:550192603632:targetgroup/payroll-webhook-tg/123"
+    ]
+    assert load_balancer_path["request_path"] == "/payroll/export.csv"
 
 
 def test_aws_real_executor_can_acquire_surrogate_credentials_for_pivoted_role() -> None:
@@ -1100,12 +1834,276 @@ def test_run_foundation_discovery_writes_artifacts(tmp_path: Path) -> None:
     assert snapshot["summary"]["buckets"] == 2
     assert snapshot["summary"]["secrets"] == 1
     assert snapshot["summary"]["parameters"] == 2
+    assert snapshot["summary"]["instance_profiles"] == 1
+    assert snapshot["summary"]["instances"] == 1
+    assert snapshot["summary"]["internet_gateways"] == 1
+    assert snapshot["summary"]["route_tables"] == 1
+    assert snapshot["summary"]["subnets"] == 1
+    assert snapshot["summary"]["security_groups"] == 1
+    assert snapshot["summary"]["load_balancers"] == 1
+    assert snapshot["summary"]["api_gateways"] == 1
+    assert snapshot["summary"]["target_groups"] == 1
+    assert snapshot["summary"]["lb_listeners"] == 1
+    assert snapshot["summary"]["api_integrations"] == 1
+    assert snapshot["summary"]["relationships"] >= 5
     assert all(":role/aws-service-role/" not in resource["identifier"] for resource in snapshot["resources"])
     assert any(
         resource["identifier"] == "arn:aws:ssm:us-east-1:550192603632:parameter/prod/payroll/api_key"
         for resource in snapshot["resources"]
         if resource["resource_type"] == "secret.ssm_parameter"
     )
+    assert any(
+        resource["resource_type"] == "compute.ec2_instance"
+        and resource["metadata"]["network_reachable_from_internet"] is True
+        for resource in snapshot["resources"]
+    )
+    assert any(
+        relationship["type"] == "routes_to_internet_gateway"
+        for relationship in snapshot["relationships"]
+    )
+    assert any(
+        relationship["type"] == "uses_instance_profile"
+        for relationship in snapshot["relationships"]
+    )
+    assert any(
+        resource["resource_type"] == "network.load_balancer"
+        and resource["metadata"]["internet_facing"] is True
+        for resource in snapshot["resources"]
+    )
+    assert any(
+        resource["resource_type"] == "network.api_gateway"
+        and resource["metadata"]["public_stage"] is True
+        for resource in snapshot["resources"]
+    )
+    audit_role = next(
+        resource
+        for resource in snapshot["resources"]
+        if resource["resource_type"] == "identity.role"
+        and resource["identifier"] == "arn:aws:iam::123456789012:role/AuditRole"
+    )
+    assert "arn:aws:iam::123456789012:role/BrokerRole" in audit_role["metadata"]["trust_principals"]
+    assert "AdministratorAccess" in audit_role["metadata"]["attached_policy_names"]
+    assert "CreatePolicyVersionInline" in audit_role["metadata"]["inline_policy_names"]
+    assert any(
+        relationship["type"] == "can_assume"
+        and relationship["source"] == "arn:aws:iam::123456789012:role/BrokerRole"
+        and relationship["target"] == "arn:aws:iam::123456789012:role/AuditRole"
+        for relationship in snapshot["relationships"]
+    )
+
+
+def test_target_selection_prioritizes_iam_privesc_role_signals(tmp_path: Path) -> None:
+    discovery_snapshot = {
+        "target": "aws-blind-real",
+        "bundle": "aws-foundation",
+        "caller_identity": {"Account": "123456789012"},
+        "resources": [
+            {
+                "service": "iam",
+                "resource_type": "identity.role",
+                "identifier": "arn:aws:iam::123456789012:role/privesc-CreatePolicyVersion-role",
+                "metadata": {
+                    "trust_principals": ["*"],
+                    "attached_policy_names": ["CreatePolicyVersionRole"],
+                    "attached_policy_arns": ["arn:aws:iam::aws:policy/CreatePolicyVersionRole"],
+                    "inline_policy_names": ["PassRoleInline"],
+                },
+            },
+            {
+                "service": "iam",
+                "resource_type": "identity.role",
+                "identifier": "arn:aws:iam::123456789012:role/boring-audit-role",
+                "metadata": {
+                    "trust_principals": ["arn:aws:iam::123456789012:role/BrokerRole"],
+                    "attached_policy_names": ["ReadOnlyAccess"],
+                    "attached_policy_arns": ["arn:aws:iam::aws:policy/ReadOnlyAccess"],
+                    "inline_policy_names": [],
+                },
+            },
+        ],
+        "relationships": [],
+    }
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        max_candidates_per_profile=5,
+        bundle_name="aws-foundation",
+    )
+
+    role_candidates = [candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-role-chaining"]
+    assert role_candidates[0]["resource_arn"] == "arn:aws:iam::123456789012:role/privesc-CreatePolicyVersion-role"
+    assert "policy_escalation_signal" in role_candidates[0]["selection_reason"]
+
+
+def test_run_foundation_discovery_collects_public_compute_network_relationships(tmp_path: Path) -> None:
+    target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
+    authorization_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path)
+
+    _, _, snapshot = run_foundation_discovery(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        client=FakeAwsClient(),
+    )
+
+    resource_map = {resource["identifier"]: resource for resource in snapshot["resources"]}
+    instance_arn = "arn:aws:ec2:us-east-1:550192603632:instance/i-0123456789abcdef0"
+    subnet_arn = "arn:aws:ec2:us-east-1:550192603632:subnet/subnet-123"
+    route_table_arn = "arn:aws:ec2:us-east-1:550192603632:route-table/rtb-123"
+    internet_gateway_arn = "arn:aws:ec2:us-east-1:550192603632:internet-gateway/igw-123"
+    security_group_arn = "arn:aws:ec2:us-east-1:550192603632:security-group/sg-123"
+
+    assert resource_map[subnet_arn]["resource_type"] == "network.subnet"
+    assert resource_map[route_table_arn]["metadata"]["routes_to_internet"] is True
+    assert resource_map[security_group_arn]["metadata"]["public_ingress_ports"] == [80, 443]
+    assert resource_map[instance_arn]["metadata"]["security_group_ids"] == ["sg-123"]
+
+    assert {
+        (relationship["source"], relationship["target"], relationship["type"])
+        for relationship in snapshot["relationships"]
+    } >= {
+        (instance_arn, subnet_arn, "deployed_in_subnet"),
+        (instance_arn, security_group_arn, "protected_by_security_group"),
+        (subnet_arn, route_table_arn, "associated_with_route_table"),
+        (route_table_arn, internet_gateway_arn, "routes_to_internet_gateway"),
+    }
+
+
+def test_run_foundation_discovery_collects_public_surfaces_metadata(tmp_path: Path) -> None:
+    target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
+    authorization_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path)
+
+    _, _, snapshot = run_foundation_discovery(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        client=FakeAwsClient(),
+    )
+
+    resource_map = {resource["identifier"]: resource for resource in snapshot["resources"]}
+    alb_arn = "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/app/public-webhook-bridge"
+    api_arn = "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public"
+
+    assert resource_map[alb_arn]["metadata"]["exposure"] == "public"
+    assert resource_map[alb_arn]["metadata"]["dns_public"] is True
+    assert resource_map[api_arn]["metadata"]["exposure"] == "public"
+    assert resource_map[api_arn]["metadata"]["public_stage"] is True
+
+
+def test_run_foundation_discovery_collects_surface_to_backend_relationships(tmp_path: Path) -> None:
+    target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
+    authorization_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path)
+
+    _, _, snapshot = run_foundation_discovery(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        client=FakeAwsClient(),
+    )
+
+    resource_map = {resource["identifier"]: resource for resource in snapshot["resources"]}
+    target_group_arn = "arn:aws:elasticloadbalancing:us-east-1:550192603632:targetgroup/payroll-webhook-tg/123"
+    listener_arn = (
+        "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/app/public-webhook-bridge"
+        "/listener/app/123/456"
+    )
+    integration_arn = (
+        "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public"
+        "/integration/POST/webhook"
+    )
+    load_balancer_arn = "arn:aws:elasticloadbalancing:us-east-1:550192603632:loadbalancer/app/public-webhook-bridge"
+    api_arn = "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public"
+    instance_arn = "arn:aws:ec2:us-east-1:550192603632:instance/i-0123456789abcdef0"
+
+    assert resource_map[target_group_arn]["resource_type"] == "network.target_group"
+    assert resource_map[listener_arn]["metadata"]["listener_forwarding"] is True
+    assert resource_map[integration_arn]["metadata"]["integration_status"] == "active"
+    assert resource_map[integration_arn]["metadata"]["target_instance"] == instance_arn
+
+    assert {
+        (relationship["source"], relationship["target"], relationship["type"])
+        for relationship in snapshot["relationships"]
+    } >= {
+        (load_balancer_arn, listener_arn, "exposes_listener"),
+        (listener_arn, target_group_arn, "forwards_to_target_group"),
+        (load_balancer_arn, target_group_arn, "uses_target_group"),
+        (api_arn, integration_arn, "uses_integration"),
+        (integration_arn, instance_arn, "integrates_with_instance"),
+    }
+
+
+def test_selection_uses_discovered_listener_and_integration_relationships_for_external_entry(
+    tmp_path: Path,
+) -> None:
+    target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
+    authorization_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path)
+
+    _, _, snapshot = run_foundation_discovery(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "discovery",
+        client=FakeAwsClient(),
+    )
+
+    snapshot["bundle"] = "aws-advanced"
+    snapshot["resources"].append(
+        {
+            "service": "secretsmanager",
+            "resource_type": "secret.secrets_manager",
+            "identifier": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll/backend-db-password",
+            "region": "us-east-1",
+            "metadata": {
+                "name": "prod/payroll/backend-db-password",
+                "classification": "restricted",
+                "reachable_roles": ["arn:aws:iam::123456789012:role/PayrollAppInstanceRole"],
+            },
+            "source": "synthetic-augmentation",
+        }
+    )
+    snapshot["resources"].append(
+        {
+            "service": "iam",
+            "resource_type": "identity.role",
+            "identifier": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+            "region": "us-east-1",
+            "metadata": {"workload": "ec2", "tier": "prod"},
+            "source": "synthetic-augmentation",
+        }
+    )
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=snapshot,
+        output_dir=tmp_path / "selection",
+        bundle_name="aws-advanced",
+    )
+
+    top_external = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-external-entry-data")
+    assert top_external["resource_arn"].endswith("prod/payroll/backend-db-password")
+    assert "network_reachability_proved" in top_external["selection_reason"]
+    assert "backend_reachability_proved" in top_external["selection_reason"]
+    assert top_external["external_entry_reachability"]["network_reachable_from_internet"]["status"] == "proved"
+    assert top_external["external_entry_reachability"]["backend_reachable"]["status"] == "proved"
 
 
 def test_discovery_run_cli_reports_artifacts(tmp_path: Path, monkeypatch) -> None:
@@ -1425,6 +2423,422 @@ def test_run_generated_campaign_can_execute_without_profile_resolver_when_plan_h
     assert result.report_json is not None
 
 
+def test_run_generated_campaign_builds_blind_real_runtime_without_fixture_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RASTRO_ENABLE_AWS_REAL", "1")
+    target = load_target(Path("examples/target_aws_blind_real.json"))
+    authorization = load_authorization(Path("examples/authorization_aws_blind_real.json"))
+    scope_path = tmp_path / "scope.json"
+    objective_path = tmp_path / "objective.json"
+    scope_path.write_text(
+        json.dumps(
+            {
+                "target": "aws",
+                "allowed_actions": ["enumerate", "assume_role", "access_resource"],
+                "allowed_resources": [
+                    "arn:aws:s3:::pydavi-terraform-state/brain-k8s-lab/dev/terraform.tfstate",
+                    "arn:aws:iam::123456789012:role/SyntheticRole",
+                ],
+                "max_steps": 6,
+                "dry_run": True,
+                "aws_account_ids": ["550192603632"],
+                "allowed_regions": ["us-east-1"],
+                "allowed_services": ["iam", "s3"],
+                "authorized_by": "PydaVi",
+                "authorized_at": "2026-04-04",
+                "authorization_document": "docs/authorization-blind-real.md",
+            }
+        )
+    )
+    objective_path.write_text(
+        json.dumps(
+            {
+                "description": "blind real s3 target",
+                "target": "arn:aws:s3:::pydavi-terraform-state/brain-k8s-lab/dev/terraform.tfstate",
+                "success_criteria": {"mode": "target_observed"},
+            }
+        )
+    )
+    plan = {
+        "profile": "aws-iam-s3",
+        "resource_arn": "arn:aws:s3:::pydavi-terraform-state/brain-k8s-lab/dev/terraform.tfstate",
+        "generated_scope": str(scope_path),
+        "generated_objective": str(objective_path),
+        "fixture_path": str(Path("fixtures/mixed_generalization_iam_s3_lab.json")),
+    }
+    discovery_snapshot = {
+        "caller_identity": {"Account": "550192603632"},
+        "resources": [
+            {
+                "identifier": "arn:aws:iam::550192603632:role/brain-teste-4-dev-cw-role",
+                "resource_type": "identity.role",
+                "service": "iam",
+                "metadata": {},
+            }
+        ],
+    }
+    calls: dict = {}
+
+    def fake_runner(**kwargs):
+        calls.update(kwargs)
+        report_json = tmp_path / "report.json"
+        report_md = tmp_path / "report.md"
+        report_json.write_text("{}")
+        report_md.write_text("# report\n")
+        return {
+            "objective_met": True,
+            "preflight": {"ok": True, "details": {}},
+            "report_json": report_json,
+            "report_md": report_md,
+            "attack_graph": tmp_path / "attack_graph.mmd",
+        }
+
+    result = run_generated_campaign(
+        plan=plan,
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        runner=fake_runner,
+        discovery_snapshot=discovery_snapshot,
+    )
+
+    assert result.status == "passed"
+    assert calls["fixture_path"] is None
+    assert calls.get("runtime_fixture") is not None
+    runtime_fixture = calls["runtime_fixture"]
+    actions = runtime_fixture.enumerate_actions(None)
+    assert any(action.tool == "iam_passrole" for action in actions)
+    assert any(action.tool == "s3_read_sensitive" for action in actions)
+    assert any(action.tool == "iam_create_policy_version" for action in actions)
+    assert any(action.tool == "iam_attach_role_policy" for action in actions)
+    assert any(action.tool == "iam_pass_role_service_create" for action in actions)
+    rewritten_scope = json.loads(scope_path.read_text())
+    assert rewritten_scope["dry_run"] is False
+    assert "arn:aws:iam::123456789012:role/SyntheticRole" not in rewritten_scope["allowed_resources"]
+    assert "arn:aws:iam::550192603632:role/brain-teste-4-dev-cw-role" in rewritten_scope["allowed_resources"]
+
+
+def test_run_generated_campaign_uses_discovered_user_entry_identity_for_blind_real(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RASTRO_ENABLE_AWS_REAL", "1")
+    target = load_target(Path("examples/target_aws_blind_real.json"))
+    authorization = load_authorization(Path("examples/authorization_aws_blind_real.json"))
+    scope_path = tmp_path / "scope.json"
+    objective_path = tmp_path / "objective.json"
+    scope_path.write_text(
+        json.dumps(
+            {
+                "target": "aws",
+                "allowed_actions": ["enumerate", "assume_role", "access_resource"],
+                "allowed_resources": ["arn:aws:s3:::bucket-a/payroll.csv"],
+                "max_steps": 6,
+                "dry_run": True,
+                "aws_account_ids": ["123456789012"],
+                "allowed_regions": ["us-east-1"],
+                "allowed_services": ["iam", "s3"],
+                "authorized_by": "PydaVi",
+                "authorized_at": "2026-04-04",
+                "authorization_document": "docs/authorization-blind-real.md",
+            }
+        )
+    )
+    objective_path.write_text(
+        json.dumps(
+            {
+                "description": "blind real per user",
+                "target": "arn:aws:s3:::bucket-a/payroll.csv",
+                "success_criteria": {"mode": "target_observed"},
+            }
+        )
+    )
+    calls: dict = {}
+
+    def fake_runner(**kwargs):
+        calls.update(kwargs)
+        report_json = tmp_path / "report.json"
+        report_md = tmp_path / "report.md"
+        report_json.write_text("{}")
+        report_md.write_text("# report\n")
+        return {
+            "objective_met": True,
+            "preflight": {"ok": True, "details": {}},
+            "report_json": report_json,
+            "report_md": report_md,
+            "attack_graph": tmp_path / "attack_graph.mmd",
+        }
+
+    result = run_generated_campaign(
+        plan={
+            "id": "aws-iam-s3:test-user",
+            "profile": "aws-iam-s3",
+            "resource_arn": "arn:aws:s3:::bucket-a/payroll.csv",
+            "generated_scope": str(scope_path),
+            "generated_objective": str(objective_path),
+            "entry_identities": ["arn:aws:iam::123456789012:user/auditor"],
+        },
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        runner=fake_runner,
+        discovery_snapshot={
+            "caller_identity": {"Account": "123456789012"},
+            "resources": [
+                {
+                    "service": "iam",
+                    "resource_type": "identity.role",
+                    "identifier": "arn:aws:iam::123456789012:role/AppRole",
+                    "region": "us-east-1",
+                    "metadata": {},
+                }
+            ],
+        },
+    )
+
+    assert result.status == "passed"
+    runtime_fixture = calls["runtime_fixture"]
+    actions = runtime_fixture.enumerate_actions(None)
+    assert all(action.actor == "arn:aws:iam::123456789012:user/auditor" for action in actions)
+    assert any(action.tool == "iam_simulate_assume_role" for action in actions)
+    assert any(action.tool == "iam_simulate_target_access" for action in actions)
+
+
+def test_discovery_driven_assessment_expands_plans_for_discovered_users(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("RASTRO_ENABLE_AWS_REAL", "1")
+    target = load_target(Path("examples/target_aws_blind_real.json"))
+    authorization = load_authorization(Path("examples/authorization_aws_blind_real.json"))
+    discovery_snapshot = {
+        "target": "aws-blind-real-assessment",
+        "bundle": "aws-foundation",
+        "caller_identity": {"Account": "123456789012"},
+        "resources": [
+            {
+                "service": "iam",
+                "resource_type": "identity.user",
+                "identifier": "arn:aws:iam::123456789012:user/analyst",
+                "region": "us-east-1",
+                "metadata": {},
+            },
+            {
+                "service": "iam",
+                "resource_type": "identity.user",
+                "identifier": "arn:aws:iam::123456789012:user/auditor",
+                "region": "us-east-1",
+                "metadata": {},
+            },
+        ],
+        "relationships": [],
+    }
+
+    def fake_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        discovery_json = output_dir / "discovery.json"
+        discovery_md = output_dir / "discovery.md"
+        discovery_json.write_text(json.dumps(discovery_snapshot, indent=2))
+        discovery_md.write_text("# discovery\n")
+        return discovery_json, discovery_md, discovery_snapshot
+
+    def fake_target_selector(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "bundle": "aws-foundation",
+            "candidates": [
+                {
+                    "id": "cand:s3",
+                    "resource_arn": "arn:aws:s3:::bucket-a/payroll.csv",
+                    "resource_type": "data_store.s3_object",
+                    "profile_family": "aws-iam-s3",
+                    "score": 100,
+                    "confidence": "high",
+                }
+            ],
+        }
+        p = output_dir / "target_candidates.json"
+        m = output_dir / "target_candidates.md"
+        p.write_text(json.dumps(payload, indent=2))
+        m.write_text("# candidates\n")
+        return p, m, payload
+
+    seen_actors: list[str] = []
+
+    def fake_runner(**kwargs):
+        runtime_fixture = kwargs["runtime_fixture"]
+        actors = {action.actor for action in runtime_fixture.enumerate_actions(None)}
+        seen_actors.extend(sorted(actors))
+        out = kwargs["output_dir"]
+        out.mkdir(parents=True, exist_ok=True)
+        report_json = out / "report.json"
+        report_md = out / "report.md"
+        actor = sorted(actors)[0]
+        report_json.write_text(
+            json.dumps(
+                {
+                    "objective": {"target": "arn:aws:s3:::bucket-a/payroll.csv"},
+                    "executive_summary": {
+                        "initial_identity": actor,
+                        "effective_entry_identity": actor,
+                        "final_resource": "arn:aws:s3:::bucket-a/payroll.csv",
+                    },
+                    "steps": [],
+                }
+            )
+        )
+        report_md.write_text("# report\n")
+        return {
+            "objective_met": True,
+            "preflight": {"ok": True, "details": {}},
+            "report_json": report_json,
+            "report_md": report_md,
+            "attack_graph": out / "attack_graph.mmd",
+        }
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "assessment",
+        runner=fake_runner,
+        discovery_runner=fake_discovery_runner,
+        target_selector=fake_target_selector,
+        max_steps=4,
+    )
+
+    assert assessment.summary["campaigns_total"] == 2
+    assert sorted(seen_actors) == [
+        "arn:aws:iam::123456789012:user/analyst",
+        "arn:aws:iam::123456789012:user/auditor",
+    ]
+
+
+def test_action_shaping_prefers_direct_objective_access_globally() -> None:
+    objective = Objective(
+        description="read target object",
+        target="arn:aws:s3:::bucket-a/payroll.csv",
+        success_criteria={"mode": "target_observed"},
+    )
+    scope = Scope(
+        target="aws",
+        allowed_actions=["enumerate", "assume_role", "access_resource"],
+        allowed_resources=["arn:aws:s3:::bucket-a/payroll.csv", "arn:aws:iam::123456789012:role/AppRole"],
+        dry_run=True,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam", "s3"],
+        authorized_by="tester",
+        authorized_at="2026-04-04",
+        authorization_document="doc",
+    )
+    snapshot = StateManager(
+        objective=objective,
+        scope=scope,
+        fixture=Fixture.load(Path("fixtures/mixed_generalization_iam_s3_lab.json")),
+    ).snapshot()
+    actions = [
+        Action(
+            action_type=ActionType.ASSUME_ROLE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target="arn:aws:iam::123456789012:role/AppRole",
+            parameters={"service": "iam", "region": "us-east-1", "role_arn": "arn:aws:iam::123456789012:role/AppRole"},
+            tool="iam_passrole",
+        ),
+        Action(
+            action_type=ActionType.ACCESS_RESOURCE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target="arn:aws:s3:::bucket-a/payroll.csv",
+            parameters={"service": "s3", "region": "us-east-1", "bucket": "bucket-a", "object_key": "payroll.csv"},
+            tool="s3_read_sensitive",
+        ),
+    ]
+
+    shaped = shape_available_actions(snapshot, actions)
+
+    assert len(shaped) == 1
+    assert shaped[0].tool == "s3_read_sensitive"
+
+
+def test_real_execution_restores_direct_objective_access_even_if_tool_preconditions_filter_it() -> None:
+    objective = Objective(
+        description="read target object",
+        target="arn:aws:s3:::bucket-a/payroll.csv",
+        success_criteria={"mode": "target_observed"},
+    )
+    scope = Scope(
+        target="aws",
+        allowed_actions=["enumerate", "assume_role", "access_resource"],
+        allowed_resources=["arn:aws:s3:::bucket-a/payroll.csv"],
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam", "s3"],
+        authorized_by="tester",
+        authorized_at="2026-04-04",
+        authorization_document="doc",
+    )
+    snapshot = StateManager(
+        objective=objective,
+        scope=scope,
+        fixture=Fixture.load(Path("fixtures/mixed_generalization_iam_s3_lab.json")),
+    ).snapshot()
+    access_action = Action(
+        action_type=ActionType.ACCESS_RESOURCE,
+        actor="arn:aws:iam::123456789012:user/analyst",
+        target="arn:aws:s3:::bucket-a/payroll.csv",
+        parameters={"service": "s3", "region": "us-east-1", "bucket": "bucket-a", "object_key": "payroll.csv"},
+        tool="s3_read_sensitive",
+    )
+
+    restored = _restore_objective_target_access_actions(snapshot, [access_action], [], scope)
+
+    assert restored == [access_action]
+
+
+def test_write_assessment_summary_prefers_effective_entry_identity_for_findings(tmp_path: Path) -> None:
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir(parents=True, exist_ok=True)
+    (campaign_dir / "report.json").write_text(
+        json.dumps(
+            {
+                "objective": {"target": "arn:aws:s3:::bucket-a/payroll.csv"},
+                "executive_summary": {
+                    "initial_identity": "arn:aws:iam::123456789012:role/starting-role",
+                    "effective_entry_identity": "arn:aws:iam::123456789012:role/starting-role",
+                    "actual_caller_identity": "arn:aws:sts::123456789012:assumed-role/starting-role/rastro-entry-session",
+                    "final_resource": "arn:aws:s3:::bucket-a/payroll.csv",
+                    "proof": {"bucket": "bucket-a", "object_key": "payroll.csv"},
+                },
+                "execution_policy": {"allowed_services": ["s3"]},
+                "mitre_techniques": [],
+                "steps": [],
+            }
+        )
+    )
+    (campaign_dir / "report.md").write_text("# report\n")
+    result = AssessmentResult(
+        bundle="aws-foundation",
+        target="lab",
+        campaigns=[
+            CampaignResult(
+                status="passed",
+                profile="aws-iam-s3",
+                output_dir=campaign_dir,
+                generated_scope=campaign_dir / "scope.json",
+                objective_met=True,
+                preflight_ok=True,
+                report_json=campaign_dir / "report.json",
+                report_md=campaign_dir / "report.md",
+            )
+        ],
+    )
+
+    write_assessment_summary(result, tmp_path)
+
+    findings = json.loads((tmp_path / "assessment_findings.json").read_text())
+    assert findings["findings"][0]["entry_point"] == "arn:aws:iam::123456789012:role/starting-role"
+
+
 def test_campaign_synthesis_can_use_candidate_embedded_paths_without_profile_resolver(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     target = load_target(repo_root / "examples" / "target_aws_foundation.local.json")
@@ -1445,6 +2859,12 @@ def test_campaign_synthesis_can_use_candidate_embedded_paths_without_profile_res
                 "execution_fixture_set": "compute-pivot-app",
                 "fixture_path": str(repo_root / "fixtures" / "compute_pivot_app_external_entry_lab.json"),
                 "scope_template_path": str(repo_root / "examples" / "scope_compute_pivot_app_external_entry.json"),
+                "external_entry_reachability": {
+                    "network_reachable_from_internet": {"status": "proved", "evidence": ["surface"]},
+                    "backend_reachable": {"status": "proved", "evidence": ["instance"]},
+                    "credential_acquisition_possible": {"status": "structural", "evidence": ["role"]},
+                    "data_path_exploitable": {"status": "not_observed", "evidence": None},
+                },
             }
         ],
     }
@@ -1452,7 +2872,7 @@ def test_campaign_synthesis_can_use_candidate_embedded_paths_without_profile_res
     def failing_profile_resolver(*args, **kwargs):
         raise AssertionError("profile_resolver should not be used when candidate embeds fixture/scope paths")
 
-    _, _, payload = synthesize_foundation_campaigns(
+    _, md_path, payload = synthesize_foundation_campaigns(
         candidates_payload=candidates_payload,
         target=target,
         authorization=authorization,
@@ -1461,6 +2881,8 @@ def test_campaign_synthesis_can_use_candidate_embedded_paths_without_profile_res
     )
 
     assert payload["plans"][0]["fixture_path"].endswith("compute_pivot_app_external_entry_lab.json")
+    assert payload["plans"][0]["external_entry_reachability"]["network_reachable_from_internet"]["status"] == "proved"
+    assert "external_entry_reachability=network=proved, backend=proved, credentials=structural" in md_path.read_text()
 
 
 def test_mixed_generalization_variant_p_supports_enterprise_discovery_driven_end_to_end_without_profile_resolver(
@@ -2240,6 +3662,100 @@ def test_compute_pivot_app_variant_b_selects_external_entry_target_from_structur
     assert top_external["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll/backend-db-password"
     assert "external_reachability_signal" in top_external["selection_reason"]
     assert "public_path_roles" in top_external["signals"]
+    assert top_external["external_entry_reachability"]["network_reachable_from_internet"]["status"] == "structural"
+    assert top_external["external_entry_reachability"]["backend_reachable"]["status"] == "structural"
+    assert top_external["external_entry_reachability"]["credential_acquisition_possible"]["status"] == "structural"
+
+
+def test_external_entry_selection_uses_api_gateway_and_alb_backend_reachability_signals(
+    tmp_path: Path,
+) -> None:
+    discovery_snapshot = {
+        "target": "compute-pivot-app-reachability-variant",
+        "bundle": "aws-advanced",
+        "caller_identity": {
+            "Account": "123456789012",
+            "Arn": "arn:aws:iam::123456789012:user/platform-analyst",
+        },
+        "resources": [
+            {
+                "service": "iam",
+                "resource_type": "identity.role",
+                "identifier": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+                "region": "us-east-1",
+                "metadata": {"workload": "ec2", "tier": "prod"},
+            },
+            {
+                "service": "ec2",
+                "resource_type": "compute.instance_profile",
+                "identifier": "arn:aws:iam::123456789012:instance-profile/PayrollAppProfile",
+                "region": "us-east-1",
+                "metadata": {"role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"},
+            },
+            {
+                "service": "ec2",
+                "resource_type": "compute.ec2_instance",
+                "identifier": "arn:aws:ec2:us-east-1:123456789012:instance/i-payrollapp04",
+                "region": "us-east-1",
+                "metadata": {
+                    "name": "runtime-node-04",
+                    "instance_profile": "arn:aws:iam::123456789012:instance-profile/PayrollAppProfile",
+                    "subnet_id": "subnet-123",
+                    "security_group_ids": ["sg-123"],
+                },
+            },
+            {
+                "service": "apigateway",
+                "resource_type": "network.api_gateway",
+                "identifier": "arn:aws:apigateway:us-east-1::/restapis/runtime-edge",
+                "region": "us-east-1",
+                "metadata": {
+                    "exposure": "public",
+                    "public_stage": True,
+                    "integration_status": "active",
+                    "target_instance": "arn:aws:ec2:us-east-1:123456789012:instance/i-payrollapp04",
+                },
+            },
+            {
+                "service": "elasticloadbalancing",
+                "resource_type": "network.load_balancer",
+                "identifier": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/runtime-edge",
+                "region": "us-east-1",
+                "metadata": {
+                    "exposure": "public",
+                    "listener_public": True,
+                    "listener_forwarding": True,
+                    "target_health": "healthy",
+                    "target_instance": "arn:aws:ec2:us-east-1:123456789012:instance/i-payrollapp04",
+                },
+            },
+            {
+                "service": "secretsmanager",
+                "resource_type": "secret.secrets_manager",
+                "identifier": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/app/s1",
+                "region": "us-east-1",
+                "metadata": {
+                    "name": "prod/app/s1",
+                    "classification": "restricted",
+                    "reachable_roles": ["arn:aws:iam::123456789012:role/PayrollAppInstanceRole"],
+                },
+            },
+        ],
+        "relationships": [],
+    }
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        bundle_name="aws-advanced",
+    )
+
+    top_external = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-external-entry-data")
+
+    assert "network_reachability_proved" in top_external["selection_reason"]
+    assert "backend_reachability_proved" in top_external["selection_reason"]
+    assert top_external["external_entry_reachability"]["network_reachable_from_internet"]["status"] == "proved"
+    assert top_external["external_entry_reachability"]["backend_reachable"]["status"] == "proved"
 
 
 def test_compute_pivot_app_variant_b_supports_advanced_discovery_driven_end_to_end(
@@ -3826,6 +5342,178 @@ def test_write_assessment_summary_external_entry_uses_maturity_language(tmp_path
     assert "public exploit path proved end-to-end" not in findings_content
 
 
+def test_write_assessment_summary_deduplicates_findings_with_same_report(tmp_path: Path) -> None:
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir(parents=True, exist_ok=True)
+    report_json = campaign_dir / "report.json"
+    report_json.write_text(
+        json.dumps(
+            {
+                "objective": {"target": "arn:aws:s3:::sensitive-finance-data/payroll.csv"},
+                "executive_summary": {
+                    "initial_identity": "arn:aws:iam::123456789012:user/analyst",
+                    "final_resource": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+                    "proof": {"bucket": "sensitive-finance-data", "object_key": "payroll.csv"},
+                },
+                "execution_policy": {"allowed_services": ["s3"]},
+                "mitre_techniques": [],
+                "steps": [
+                    {
+                        "action": {
+                            "action_type": "access_resource",
+                            "actor": "arn:aws:iam::123456789012:user/analyst",
+                            "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+                        },
+                        "observation": {"success": True, "details": {"evidence": {"bucket": "sensitive-finance-data"}}},
+                    }
+                ],
+            }
+        )
+    )
+    (campaign_dir / "report.md").write_text("# report\n")
+    result = AssessmentResult(
+        bundle="aws-foundation",
+        target="lab",
+        campaigns=[
+            CampaignResult(
+                status="passed",
+                campaign_id="plan-1",
+                profile="aws-iam-s3",
+                output_dir=campaign_dir,
+                generated_scope=campaign_dir / "a.scope.json",
+                objective_met=True,
+                preflight_ok=True,
+                report_json=report_json,
+                report_md=campaign_dir / "report.md",
+            ),
+            CampaignResult(
+                status="passed",
+                campaign_id="plan-2",
+                profile="aws-iam-s3",
+                output_dir=campaign_dir,
+                generated_scope=campaign_dir / "b.scope.json",
+                objective_met=True,
+                preflight_ok=True,
+                report_json=report_json,
+                report_md=campaign_dir / "report.md",
+            ),
+        ],
+    )
+
+    write_assessment_summary(result, tmp_path)
+
+    findings = json.loads((tmp_path / "assessment_findings.json").read_text())
+    assert findings["summary"]["findings_total"] == 1
+    assert findings["summary"]["validated_findings"] == 1
+
+
+def test_role_chaining_without_proof_is_observed_not_validated(tmp_path: Path) -> None:
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir(parents=True, exist_ok=True)
+    (campaign_dir / "report.json").write_text(
+        json.dumps(
+            {
+                "objective": {"target": "arn:aws:iam::123456789012:role/TargetRole"},
+                "executive_summary": {
+                    "initial_identity": "arn:aws:iam::123456789012:user/analyst",
+                    "final_resource": "arn:aws:iam::123456789012:role/TargetRole",
+                    "proof": None,
+                },
+                "execution_policy": {"allowed_services": ["iam"]},
+                "mitre_techniques": [],
+                "steps": [
+                    {
+                        "action": {
+                            "action_type": "enumerate",
+                            "actor": "arn:aws:iam::123456789012:user/analyst",
+                            "target": None,
+                        },
+                        "observation": {"success": True, "details": {"discovered_roles": ["arn:aws:iam::123456789012:role/TargetRole"]}},
+                    }
+                ],
+            }
+        )
+    )
+    (campaign_dir / "report.md").write_text("# report\n")
+
+    result = AssessmentResult(
+        bundle="aws-foundation",
+        target="lab",
+        campaigns=[
+            CampaignResult(
+                status="passed",
+                profile="aws-iam-role-chaining",
+                output_dir=campaign_dir,
+                generated_scope=campaign_dir / "scope.json",
+                objective_met=True,
+                preflight_ok=True,
+                report_json=campaign_dir / "report.json",
+                report_md=campaign_dir / "report.md",
+            )
+        ],
+    )
+
+    write_assessment_summary(result, tmp_path)
+
+    findings = json.loads((tmp_path / "assessment_findings.json").read_text())
+    finding = findings["findings"][0]
+    assert finding["status"] == "observed"
+    assert finding["evidence_level"] == "observed"
+    assert finding["finding_state"] == "reachable"
+    assert "minimum proof" in finding["evidence_summary"]
+
+
+def test_assessment_finding_state_validated_impact(tmp_path: Path) -> None:
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir(parents=True, exist_ok=True)
+    report_json = campaign_dir / "report.json"
+    report_json.write_text(
+        json.dumps(
+            {
+                "objective": {"target": "arn:aws:s3:::bucket-a/payroll.csv"},
+                "executive_summary": {
+                    "initial_identity": "arn:aws:iam::123456789012:user/analyst",
+                    "final_resource": "arn:aws:s3:::bucket-a/payroll.csv",
+                    "proof": {"bucket": "bucket-a", "object_key": "payroll.csv"},
+                },
+                "execution_policy": {"allowed_services": ["s3"]},
+                "steps": [
+                    {
+                        "action": {
+                            "action_type": "access_resource",
+                            "actor": "arn:aws:iam::123456789012:user/analyst",
+                            "target": "arn:aws:s3:::bucket-a/payroll.csv",
+                        },
+                        "observation": {"success": True, "details": {"evidence": {"bucket": "bucket-a"}}},
+                    }
+                ],
+            }
+        )
+    )
+    (campaign_dir / "report.md").write_text("# report\n")
+    result = AssessmentResult(
+        bundle="aws-foundation",
+        target="lab",
+        campaigns=[
+            CampaignResult(
+                status="passed",
+                campaign_id="plan-validated-impact",
+                profile="aws-iam-s3",
+                output_dir=campaign_dir,
+                generated_scope=campaign_dir / "scope.json",
+                objective_met=True,
+                preflight_ok=True,
+                report_json=report_json,
+                report_md=campaign_dir / "report.md",
+            )
+        ],
+    )
+    write_assessment_summary(result, tmp_path)
+
+    findings = json.loads((tmp_path / "assessment_findings.json").read_text())
+    finding = findings["findings"][0]
+    assert finding["finding_state"] == "validated_impact"
+
 def test_run_campaign_marks_preflight_failure_without_crashing(tmp_path: Path) -> None:
     target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
     authorization_path = (
@@ -4652,6 +6340,44 @@ def test_aws_dry_run_lab_filters_disallowed_services() -> None:
     assert observation.details["reason"] == "service_not_allowed"
 
 
+def test_report_includes_blind_real_execution_context(tmp_path: Path) -> None:
+    objective = Objective(
+        description="read target object",
+        target="arn:aws:s3:::bucket-a/payroll.csv",
+        success_criteria={"mode": "target_observed"},
+    )
+    scope = Scope(
+        target="aws",
+        allowed_actions=["enumerate", "assume_role", "access_resource"],
+        allowed_resources=["arn:aws:s3:::bucket-a/payroll.csv"],
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam", "s3"],
+        authorized_by="tester",
+        authorized_at="2026-04-04",
+        authorization_document="doc",
+    )
+    fixture = Fixture.load(Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_iam_s3_lab.json")
+    state = StateManager(objective=objective, scope=scope, fixture=fixture)
+
+    report = ReportGenerator(tmp_path).generate(
+        state.snapshot(),
+        AttackGraph(),
+        AuditLogger(tmp_path / "audit.jsonl"),
+        state.initial_state(),
+        objective_met=False,
+        execution_context={
+            "runtime_mode": "blind_real",
+            "synthetic_fixture_used": False,
+        },
+    )
+
+    summary = report["json"]["executive_summary"]
+    assert summary["runtime_mode"] == "blind_real"
+    assert summary["synthetic_fixture_used"] is False
+
+
 def test_aws_dry_run_lab_filters_disallowed_regions_and_accounts() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     fixture = Fixture.load(repo_root / "fixtures" / "aws_dry_run_lab.json")
@@ -5271,6 +6997,86 @@ def test_external_entry_report_tracks_reachability_maturity(tmp_path: Path) -> N
     assert maturity["data_path_exploitable"]["status"] == "not_observed"
     assert "## External Entry Maturity" in report_md
     assert "public_exposure_structurally_linked_to_privileged_path" in report_md
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "expected_statuses", "expected_classification", "expected_objective_met"),
+    [
+        (
+            "compute_pivot_app_external_entry_surface_only_lab.json",
+            {
+                "network_reachable_from_internet": "structural",
+                "backend_reachable": "not_observed",
+                "credential_acquisition_possible": "not_observed",
+                "data_path_exploitable": "not_observed",
+            },
+            "public_exposure_structurally_linked_to_privileged_path",
+            False,
+        ),
+        (
+            "compute_pivot_app_external_entry_backend_reachable_lab.json",
+            {
+                "network_reachable_from_internet": "proved",
+                "backend_reachable": "proved",
+                "credential_acquisition_possible": "not_observed",
+                "data_path_exploitable": "not_observed",
+            },
+            "public_exposure_structurally_linked_to_privileged_path",
+            False,
+        ),
+        (
+            "compute_pivot_app_external_entry_credential_acquisition_lab.json",
+            {
+                "network_reachable_from_internet": "proved",
+                "backend_reachable": "proved",
+                "credential_acquisition_possible": "proved",
+                "data_path_exploitable": "not_observed",
+            },
+            "public_exposure_structurally_linked_to_privileged_path",
+            False,
+        ),
+        (
+            "compute_pivot_app_external_entry_end_to_end_lab.json",
+            {
+                "network_reachable_from_internet": "proved",
+                "backend_reachable": "proved",
+                "credential_acquisition_possible": "proved",
+                "data_path_exploitable": "proved",
+            },
+            "public_exploit_path_proved_end_to_end",
+            True,
+        ),
+    ],
+)
+def test_external_entry_reachability_maturity_benchmark_states(
+    tmp_path: Path,
+    fixture_name: str,
+    expected_statuses: dict[str, str],
+    expected_classification: str,
+    expected_objective_met: bool,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fixture_path = repo_root / "fixtures" / fixture_name
+    objective_path = repo_root / "examples" / "objective_external_entry_reachability_benchmark.json"
+    scope_path = repo_root / "examples" / "scope_compute_pivot_app_external_entry.json"
+    output_dir = tmp_path / fixture_name.replace(".json", "")
+
+    run(
+        fixture_path=fixture_path,
+        objective_path=objective_path,
+        scope_path=scope_path,
+        output_dir=output_dir,
+        max_steps=6,
+        seed=1,
+    )
+
+    report = json.loads((output_dir / "report.json").read_text())
+    maturity = report["executive_summary"]["external_entry_maturity"]
+
+    assert report["objective_met"] is expected_objective_met
+    assert maturity["classification"] == expected_classification
+    for key, expected in expected_statuses.items():
+        assert maturity[key]["status"] == expected
 
 
 def test_mock_planner_prefers_higher_scored_assume_role() -> None:

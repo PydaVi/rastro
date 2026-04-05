@@ -1,0 +1,100 @@
+{
+  "name": "compute-pivot-app-external-entry-end-to-end-lab",
+  "description": "Synthetic external entry state with public exploit path proved end-to-end.",
+  "version": "0.1",
+  "state": {
+    "flags": [],
+    "identities": {
+      "arn:aws:iam::123456789012:user/platform-analyst": {
+        "available_actions": [
+          {
+            "action_type": "enumerate",
+            "target": "arn:aws:iam::123456789012:root",
+            "parameters": {
+              "service": "iam",
+              "region": "us-east-1"
+            },
+            "tool": "iam_list_roles"
+          }
+        ]
+      }
+    }
+  },
+  "transitions": [
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:root",
+      "observation": {
+        "details": "Enumerated public compute surfaces with full chain candidate.",
+        "discovered_roles": [
+          "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+        ]
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:user/platform-analyst": {
+          "available_actions": [
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public",
+              "parameters": {
+                "service": "apigateway",
+                "region": "us-east-1",
+                "resource_arn": "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public"
+              },
+              "tool": "ec2_instance_profile_pivot"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public",
+      "observation": {
+        "details": "Proved public path to backend and acquired workload credentials.",
+        "evidence": {
+          "entry_surface": "payroll-webhook-public",
+          "network_reachable_from_internet": true,
+          "backend_reachable": true,
+          "instance_profile_arn": "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile",
+          "reached_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+          "credential_acquisition": {
+            "source": "instance_profile_credentials",
+            "role_arn": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+          }
+        }
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/PayrollAppInstanceRole": {
+          "available_actions": [
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+              "parameters": {
+                "service": "s3",
+                "region": "us-east-1",
+                "bucket": "compute-payroll-dumps-prod",
+                "object_key": "payroll/2026-03/payroll.csv"
+              },
+              "tool": "s3_read_sensitive"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+      "observation": {
+        "details": "Read payroll dump after public exploit path.",
+        "evidence": {
+          "bucket": "compute-payroll-dumps-prod",
+          "object_key": "payroll/2026-03/payroll.csv"
+        }
+      }
+    }
+  ]
+}

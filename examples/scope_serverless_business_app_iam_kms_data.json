@@ -1,0 +1,35 @@
+{
+  "target": "aws",
+  "allowed_actions": [
+    "enumerate",
+    "analyze",
+    "assume_role",
+    "access_resource"
+  ],
+  "allowed_resources": [
+    "arn:aws:iam::123456789012:root",
+    "arn:aws:iam::123456789012:role/PayrollDecryptRole",
+    "arn:aws:iam::123456789012:role/BillingWorkerRole",
+    "arn:aws:kms:us-east-1:123456789012:key/payroll-runtime",
+    "arn:aws:kms:us-east-1:123456789012:key/billing-runtime"
+  ],
+  "max_steps": 8,
+  "planner": {
+    "backend": "mock"
+  },
+  "dry_run": true,
+  "aws_account_ids": [
+    "123456789012"
+  ],
+  "allowed_regions": [
+    "us-east-1"
+  ],
+  "allowed_services": [
+    "iam",
+    "sts",
+    "kms"
+  ],
+  "authorized_by": "Demo Operator",
+  "authorized_at": "2026-03-28",
+  "authorization_document": "docs/authorization-demo.md"
+}

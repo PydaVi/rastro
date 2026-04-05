@@ -1,0 +1,63 @@
+{
+  "name": "compute-pivot-app-external-entry-surface-only-lab",
+  "description": "Synthetic external entry state with only public surface exposure observed.",
+  "version": "0.1",
+  "state": {
+    "flags": [],
+    "identities": {
+      "arn:aws:iam::123456789012:user/platform-analyst": {
+        "available_actions": [
+          {
+            "action_type": "enumerate",
+            "target": "arn:aws:iam::123456789012:root",
+            "parameters": {
+              "service": "iam",
+              "region": "us-east-1"
+            },
+            "tool": "iam_list_roles"
+          }
+        ]
+      }
+    }
+  },
+  "transitions": [
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:root",
+      "observation": {
+        "details": "Enumerated internet-facing application surfaces.",
+        "discovered_roles": [
+          "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+        ]
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:user/platform-analyst": {
+          "available_actions": [
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public",
+              "parameters": {
+                "service": "apigateway",
+                "region": "us-east-1",
+                "resource_arn": "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public"
+              },
+              "tool": "ec2_instance_profile_pivot"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public",
+      "observation": {
+        "details": "Observed public surface structurally linked to payroll workload.",
+        "evidence": {
+          "entry_surface": "payroll-webhook-public"
+        }
+      }
+    }
+  ]
+}

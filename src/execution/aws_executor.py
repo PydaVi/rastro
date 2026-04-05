@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 
 from core.domain import Action, ActionType, Observation, Scope
-from core.fixture import Fixture
 from execution.aws_client import AwsClient, AwsCredentials, Boto3AwsClient
 
 
@@ -32,33 +32,37 @@ class AwsRealExecutorStub:
 
 @dataclass
 class AwsRealExecutor:
-    fixture: Fixture
+    fixture: object
     scope: Scope
     client: AwsClient | None = None
     _assumed_credentials: AwsCredentials | None = field(default=None, init=False)
     _assumed_role_arn: str | None = field(default=None, init=False)
     _credentials_by_actor: dict[str, AwsCredentials] = field(default_factory=dict, init=False)
     _base_actor_arn: str | None = field(default=None, init=False)
+    _entry_assumed_identity_arn: str | None = field(default=None, init=False)
 
     def execute(self, action: Action) -> Observation:
         client = self.client or Boto3AwsClient()
         if self._base_actor_arn is None:
             self._base_actor_arn = action.actor
+        self._ensure_entry_actor_credentials(client, action)
         denial = _build_policy_denial(action, self.scope)
         if denial is not None:
             return denial
 
         if action.action_type == ActionType.ANALYZE:
-            transition = self.fixture.execute(action)
             details = {
-                **transition.details,
-                "details": transition.details.get(
+                "details": details.get(
                     "details",
                     "Executed analysis step without AWS API call.",
                 ),
                 "execution_mode": "real",
                 "real_api_called": False,
             }
+            if hasattr(self.fixture, "observe_real"):
+                return self.fixture.observe_real(action, details)
+            transition = self.fixture.execute(action)
+            details = {**transition.details, **details}
             return Observation(success=transition.success, details=details)
 
         try:
@@ -66,6 +70,8 @@ class AwsRealExecutor:
                 details = self._execute_iam_list_roles(client, action)
             elif action.tool == "iam_passrole":
                 details = self._execute_iam_passrole(client, action)
+            elif action.tool == "iam_simulate_assume_role":
+                details = self._execute_iam_simulate_assume_role(client, action)
             elif action.tool == "s3_list_bucket":
                 details = self._execute_s3_list_bucket(client, action)
             elif action.tool == "s3_read_sensitive":
@@ -80,6 +86,14 @@ class AwsRealExecutor:
                 details = self._execute_ssm_read_parameter(client, action)
             elif action.tool == "ec2_instance_profile_pivot":
                 details = self._execute_ec2_instance_profile_pivot(client, action)
+            elif action.tool == "iam_create_policy_version":
+                details = self._execute_iam_policy_abuse_probe(client, action, "iam:CreatePolicyVersion")
+            elif action.tool == "iam_attach_role_policy":
+                details = self._execute_iam_policy_abuse_probe(client, action, "iam:AttachRolePolicy")
+            elif action.tool == "iam_pass_role_service_create":
+                details = self._execute_iam_policy_abuse_probe(client, action, "iam:PassRole")
+            elif action.tool == "iam_simulate_target_access":
+                details = self._execute_iam_simulate_target_access(client, action)
             else:
                 return Observation(
                     success=False,
@@ -109,25 +123,33 @@ class AwsRealExecutor:
                     "error": str(exc),
                     "tool": action.tool,
                     "execution_mode": "real",
-                    "real_api_called": False,
+                    "real_api_called": True,
                 },
             )
 
+        details = {
+            **details,
+            "execution_mode": "real",
+            "real_api_called": True,
+        }
+        if hasattr(self.fixture, "observe_real"):
+            return self.fixture.observe_real(action, details)
         transition = self.fixture.execute(action)
         merged_details = {
             **transition.details,
             **details,
-            "execution_mode": "real",
-            "real_api_called": True,
         }
         return Observation(success=transition.success, details=merged_details)
 
     def _execute_iam_list_roles(self, client: AwsClient, action: Action) -> dict:
         region = _required_parameter(action, "region")
-        identity = client.get_caller_identity(region=region)
-        roles = client.list_roles(region=region)
+        actor_credentials = self._credentials_for_actor(action.actor)
+        identity = client.get_caller_identity(region=region, credentials=actor_credentials)
+        roles = client.list_roles(region=region, credentials=actor_credentials)
         return {
             "details": "Executed sts:GetCallerIdentity and iam:ListRoles against AWS.",
+            "declared_actor": action.actor,
+            "effective_actor": action.actor,
             "aws_identity": {
                 "account_id": identity["Account"],
                 "arn": identity["Arn"],
@@ -207,6 +229,44 @@ class AwsRealExecutor:
                 "policy_decision": decision,
             },
         }
+
+    def _execute_iam_simulate_assume_role(self, client: AwsClient, action: Action) -> dict:
+        region = _required_parameter(action, "region")
+        role_arn = action.parameters.get("role_arn") or action.target
+        if not role_arn:
+            raise ValueError("iam_simulate_assume_role requires role_arn or target")
+        simulation = client.simulate_principal_policy(
+            region=region,
+            policy_source_arn=action.actor,
+            action_names=["sts:AssumeRole"],
+            resource_arns=[role_arn],
+            credentials=self._credentials_for_actor(action.actor),
+        )
+        decision = "implicitDeny"
+        results = simulation.get("EvaluationResults", [])
+        if results:
+            decision = results[0].get("EvalDecision", decision)
+        details = {
+            "details": f"Simulated sts:AssumeRole against {role_arn}.",
+            "effective_actor": action.actor,
+            "request_summary": {
+                "api_calls": ["iam:SimulatePrincipalPolicy"],
+                "simulated_action": "sts:AssumeRole",
+                "target_role_arn": role_arn,
+            },
+            "response_summary": {
+                "policy_decision": decision,
+            },
+            "simulated_policy_result": {
+                "action": "sts:AssumeRole",
+                "resource": role_arn,
+                "decision": decision,
+            },
+            "aws_region": region,
+        }
+        if decision.lower() == "allowed":
+            details["granted_role"] = role_arn
+        return details
 
     def _execute_s3_read_sensitive(self, client: AwsClient, action: Action) -> dict:
         region = _required_parameter(action, "region")
@@ -401,6 +461,34 @@ class AwsRealExecutor:
             region=region,
             reached_role=reached_role,
         )
+        network_evidence = self._build_instance_network_evidence(
+            client=client,
+            region=region,
+            actor=action.actor,
+            resource_arn=resource_arn,
+            instance_details=instance_details,
+            target_group_arn=action.parameters.get("target_group_arn"),
+            target_load_balancer_arn=action.parameters.get("target_load_balancer_arn"),
+            request_path=action.parameters.get("request_path"),
+        )
+        request_api_calls = [
+            *(
+                ["ec2:DescribeInstances"]
+                if instance_id
+                else []
+            ),
+            "iam:GetInstanceProfile",
+            "ec2:DescribeIamInstanceProfileAssociations",
+            *network_evidence["api_calls"],
+            *(
+                [
+                    "sts:AssumeRole",
+                    "sts:GetCallerIdentity",
+                ]
+                if credential_acquisition
+                else []
+            ),
+        ]
 
         return {
             "details": (
@@ -413,28 +501,14 @@ class AwsRealExecutor:
                 "reached_role": reached_role,
                 "instance": instance_details,
                 "instance_associations": associations,
+                **network_evidence["details"],
                 **({"credential_acquisition": credential_acquisition} if credential_acquisition else {}),
             },
             "reached_role": reached_role,
+            **network_evidence["status"],
             "aws_region": region,
             "request_summary": {
-                "api_calls": [
-                    *(
-                        ["ec2:DescribeInstances"]
-                        if instance_id
-                        else []
-                    ),
-                    "iam:GetInstanceProfile",
-                    "ec2:DescribeIamInstanceProfileAssociations",
-                    *(
-                        [
-                            "sts:AssumeRole",
-                            "sts:GetCallerIdentity",
-                        ]
-                        if credential_acquisition
-                        else []
-                    ),
-                ],
+                "api_calls": request_api_calls,
                 "entry_surface_arn": resource_arn,
                 "instance_profile_arn": profile_arn,
                 "instance_id": instance_id,
@@ -444,6 +518,8 @@ class AwsRealExecutor:
                 "association_count": len(associations),
                 "sample_instances": [item["InstanceId"] for item in associations[:3]],
                 "public_ip": (instance_details or {}).get("PublicIpAddress"),
+                "network_reachable_from_internet": network_evidence["status"]["network_reachable_from_internet"],
+                "backend_reachable": network_evidence["status"]["backend_reachable"],
                 **(
                     {"credentialed_identity": credential_acquisition.get("assumed_identity", {}).get("arn")}
                     if credential_acquisition
@@ -452,6 +528,495 @@ class AwsRealExecutor:
             },
         }
 
+    def _execute_iam_policy_abuse_probe(
+        self,
+        client: AwsClient,
+        action: Action,
+        policy_action: str,
+    ) -> dict:
+        region = _required_parameter(action, "region")
+        role_arn = action.parameters.get("role_arn") or action.target
+        if not role_arn:
+            raise ValueError(f"{action.tool} requires role_arn or target")
+        simulation = client.simulate_principal_policy(
+            region=region,
+            policy_source_arn=action.actor,
+            action_names=[policy_action],
+            resource_arns=[role_arn],
+            credentials=self._credentials_for_actor(action.actor),
+        )
+        decision = "implicitDeny"
+        results = simulation.get("EvaluationResults", [])
+        if results:
+            decision = results[0].get("EvalDecision", decision)
+        return {
+            "details": f"Simulated {policy_action} against {role_arn}.",
+            "request_summary": {
+                "api_calls": ["iam:SimulatePrincipalPolicy"],
+                "simulated_action": policy_action,
+                "target_role_arn": role_arn,
+            },
+            "response_summary": {
+                "policy_decision": decision,
+            },
+            "simulated_policy_result": {
+                "action": policy_action,
+                "resource": role_arn,
+                "decision": decision,
+            },
+            "aws_region": region,
+        }
+
+    def _execute_iam_simulate_target_access(self, client: AwsClient, action: Action) -> dict:
+        region = _required_parameter(action, "region")
+        policy_action = _required_parameter(action, "policy_action")
+        policy_resource = _required_parameter(action, "policy_resource")
+        simulation = client.simulate_principal_policy(
+            region=region,
+            policy_source_arn=action.actor,
+            action_names=[policy_action],
+            resource_arns=[policy_resource],
+            credentials=self._credentials_for_actor(action.actor),
+        )
+        decision = "implicitDeny"
+        results = simulation.get("EvaluationResults", [])
+        if results:
+            decision = results[0].get("EvalDecision", decision)
+        details = {
+            "details": f"Simulated {policy_action} against {policy_resource}.",
+            "effective_actor": action.actor,
+            "request_summary": {
+                "api_calls": ["iam:SimulatePrincipalPolicy"],
+                "simulated_action": policy_action,
+                "target_resource": policy_resource,
+            },
+            "response_summary": {
+                "policy_decision": decision,
+            },
+            "simulated_policy_result": {
+                "action": policy_action,
+                "resource": policy_resource,
+                "decision": decision,
+            },
+            "aws_region": region,
+        }
+        if decision.lower() == "allowed":
+            details["evidence"] = {
+                "policy_action": policy_action,
+                "resource": policy_resource,
+                "accessed_via": action.actor,
+                "simulated": True,
+            }
+        return details
+
+    def _build_instance_network_evidence(
+        self,
+        client: AwsClient,
+        region: str,
+        actor: str,
+        resource_arn: str,
+        instance_details: dict | None,
+        target_group_arn: str | None = None,
+        target_load_balancer_arn: str | None = None,
+        request_path: str | None = None,
+    ) -> dict:
+        details: dict = {
+            "entry_surface_kind": "ec2_instance",
+        }
+        status = {
+            "network_reachable_from_internet": False,
+            "backend_reachable": False,
+        }
+        api_calls: list[str] = []
+        if not instance_details:
+            return {"details": details, "status": status, "api_calls": api_calls}
+
+        subnet_id = instance_details.get("SubnetId")
+        vpc_id = instance_details.get("VpcId")
+        security_group_ids = instance_details.get("SecurityGroupIds") or []
+        public_ip = instance_details.get("PublicIpAddress")
+        state = instance_details.get("State")
+
+        details.update(
+            {
+                "entry_surface_arn": resource_arn,
+                "public_ip": public_ip,
+                "subnet_id": subnet_id,
+                "vpc_id": vpc_id,
+                "security_group_ids": security_group_ids,
+                "instance_state": state,
+            }
+        )
+
+        route_tables = client.list_route_tables(
+            region=region,
+            credentials=self._credentials_for_actor(actor),
+        )
+        subnets = client.list_subnets(
+            region=region,
+            credentials=self._credentials_for_actor(actor),
+        )
+        security_groups = client.list_security_groups(
+            region=region,
+            credentials=self._credentials_for_actor(actor),
+        )
+        internet_gateways = client.list_internet_gateways(
+            region=region,
+            credentials=self._credentials_for_actor(actor),
+        )
+        api_calls.extend(
+            [
+                "ec2:DescribeRouteTables",
+                "ec2:DescribeSubnets",
+                "ec2:DescribeSecurityGroups",
+                "ec2:DescribeInternetGateways",
+            ]
+        )
+
+        subnet = next((item for item in subnets if item.get("SubnetId") == subnet_id), None)
+        gateway_ids = {
+            gateway.get("InternetGatewayId")
+            for gateway in internet_gateways
+            if any(attachment.get("VpcId") == vpc_id for attachment in gateway.get("Attachments", []))
+            and gateway.get("InternetGatewayId")
+        }
+        associated_route_tables = []
+        route_to_igw = False
+        for table in route_tables:
+            if table.get("VpcId") != vpc_id:
+                continue
+            associations = table.get("Associations", [])
+            subnet_match = any(association.get("SubnetId") == subnet_id for association in associations)
+            main_match = any(association.get("Main") is True for association in associations)
+            if not subnet_match and not main_match:
+                continue
+            associated_route_tables.append(table.get("RouteTableId"))
+            for route in table.get("Routes", []):
+                if route.get("DestinationCidrBlock") != "0.0.0.0/0":
+                    continue
+                if route.get("GatewayId") in gateway_ids:
+                    route_to_igw = True
+                    break
+
+        security_group_evidence = []
+        public_ingress = False
+        for group in security_groups:
+            if group.get("GroupId") not in security_group_ids:
+                continue
+            ingress_rules = group.get("IpPermissions", [])
+            for permission in ingress_rules:
+                cidrs = [item.get("CidrIp") for item in permission.get("IpRanges", []) if item.get("CidrIp")]
+                ipv6_cidrs = [item.get("CidrIpv6") for item in permission.get("Ipv6Ranges", []) if item.get("CidrIpv6")]
+                is_public = "0.0.0.0/0" in cidrs or "::/0" in ipv6_cidrs
+                if is_public:
+                    public_ingress = True
+                security_group_evidence.append(
+                    {
+                        "group_id": group.get("GroupId"),
+                        "from_port": permission.get("FromPort"),
+                        "to_port": permission.get("ToPort"),
+                        "ip_protocol": permission.get("IpProtocol"),
+                        "public": is_public,
+                    }
+                )
+
+        instance_network_proved = bool(public_ip and route_to_igw and public_ingress)
+        instance_backend_proved = instance_network_proved and state == "running"
+
+        details.update(
+            {
+                "network_path": {
+                    "subnet_public_ip_on_launch": (subnet or {}).get("MapPublicIpOnLaunch"),
+                    "internet_gateway_ids": sorted(gateway_ids),
+                    "route_table_ids": associated_route_tables,
+                    "route_to_internet_gateway": route_to_igw,
+                    "security_group_public_ingress": public_ingress,
+                    "security_group_rules": security_group_evidence,
+                }
+            }
+        )
+        if ":loadbalancer/" in resource_arn:
+            alb_evidence = self._build_load_balancer_network_evidence(
+                client=client,
+                region=region,
+                actor=actor,
+                resource_arn=resource_arn,
+                instance_id=instance_details.get("InstanceId"),
+                target_group_arn=target_group_arn,
+                request_path=request_path,
+            )
+            details["network_path"]["load_balancer"] = alb_evidence["details"]
+            api_calls.extend(alb_evidence["api_calls"])
+        status["network_reachable_from_internet"] = instance_network_proved
+        status["backend_reachable"] = instance_backend_proved
+        if ":loadbalancer/" in resource_arn:
+            status["network_reachable_from_internet"] = alb_evidence["status"]["network_reachable_from_internet"]
+            status["backend_reachable"] = alb_evidence["status"]["backend_reachable"]
+        if resource_arn.startswith("arn:aws:apigateway:"):
+            api_gateway_evidence = self._build_api_gateway_network_evidence(
+                client=client,
+                region=region,
+                actor=actor,
+                resource_arn=resource_arn,
+                instance_id=instance_details.get("InstanceId"),
+                target_group_arn=target_group_arn,
+                target_load_balancer_arn=target_load_balancer_arn,
+                request_path=request_path,
+            )
+            details["network_path"]["api_gateway"] = api_gateway_evidence["details"]
+            api_calls.extend(api_gateway_evidence["api_calls"])
+            status["network_reachable_from_internet"] = api_gateway_evidence["status"]["network_reachable_from_internet"]
+            status["backend_reachable"] = api_gateway_evidence["status"]["backend_reachable"]
+        return {"details": details, "status": status, "api_calls": api_calls}
+
+    def _build_load_balancer_network_evidence(
+        self,
+        client: AwsClient,
+        region: str,
+        actor: str,
+        resource_arn: str,
+        instance_id: str | None,
+        target_group_arn: str | None = None,
+        request_path: str | None = None,
+    ) -> dict:
+        load_balancers = client.list_load_balancers(
+            region=region,
+            credentials=self._credentials_for_actor(actor),
+        )
+        listeners = client.list_listeners(
+            region=region,
+            load_balancer_arn=resource_arn,
+            credentials=self._credentials_for_actor(actor),
+        )
+        listener_rules = []
+        for listener in listeners:
+            listener_arn = listener.get("ListenerArn")
+            if not listener_arn:
+                continue
+            for rule in client.list_listener_rules(
+                region=region,
+                listener_arn=listener_arn,
+                credentials=self._credentials_for_actor(actor),
+            ):
+                listener_rules.append(
+                    {
+                        **rule,
+                        "ListenerArn": listener_arn,
+                        "ListenerPort": listener.get("Port"),
+                    }
+                )
+        target_groups = client.list_target_groups(
+            region=region,
+            credentials=self._credentials_for_actor(actor),
+        )
+        api_calls = [
+            "elasticloadbalancing:DescribeLoadBalancers",
+            "elasticloadbalancing:DescribeListeners",
+            "elasticloadbalancing:DescribeTargetGroups",
+        ]
+        if listener_rules:
+            api_calls.append("elasticloadbalancing:DescribeRules")
+        load_balancer = next((item for item in load_balancers if item.get("LoadBalancerArn") == resource_arn), {})
+        listener_target_group_arns = sorted(
+            {
+                target_group_arn
+                for listener in listeners
+                for target_group_arn in listener.get("TargetGroupArns", [])
+                if target_group_arn
+            }
+            | {
+                target_group_arn
+                for rule in listener_rules
+                for target_group_arn in rule.get("TargetGroupArns", [])
+                if target_group_arn
+            }
+        )
+        relevant_target_groups = [
+            item for item in target_groups if item.get("TargetGroupArn") in listener_target_group_arns
+        ]
+        target_health_descriptions: dict[str, list[dict]] = {}
+        for target_group in relevant_target_groups:
+            current_target_group_arn = target_group.get("TargetGroupArn")
+            if not current_target_group_arn:
+                continue
+            target_health_descriptions[current_target_group_arn] = client.describe_target_health(
+                region=region,
+                target_group_arn=current_target_group_arn,
+                credentials=self._credentials_for_actor(actor),
+            )
+        if target_health_descriptions:
+            api_calls.append("elasticloadbalancing:DescribeTargetHealth")
+
+        listener_public = any(listener.get("Port") in {80, 443} for listener in listeners)
+        matched_listener_rules = self._match_listener_rules(listener_rules, request_path)
+        matched_rule_target_group_arns = sorted(
+            {
+                item
+                for rule in matched_listener_rules
+                for item in rule.get("TargetGroupArns", [])
+                if item
+            }
+        )
+        considered_target_group_arns = matched_rule_target_group_arns or listener_target_group_arns
+        if target_group_arn and target_group_arn in listener_target_group_arns:
+            considered_target_group_arns = [target_group_arn]
+        listener_forwarding = bool(considered_target_group_arns)
+        target_health = "unhealthy"
+        matched_target_groups = []
+        for target_group_arn, descriptions in target_health_descriptions.items():
+            if target_group_arn not in considered_target_group_arns:
+                continue
+            if any(
+                description.get("TargetId") == instance_id and description.get("State") == "healthy"
+                for description in descriptions
+            ):
+                target_health = "healthy"
+                matched_target_groups.append(target_group_arn)
+
+        details = {
+            "load_balancer_arn": resource_arn,
+            "dns_name": load_balancer.get("DNSName"),
+            "internet_facing": load_balancer.get("Scheme") == "internet-facing",
+            "state": load_balancer.get("State"),
+            "listener_public": listener_public,
+            "listener_forwarding": listener_forwarding,
+            "listener_ports": [listener.get("Port") for listener in listeners if listener.get("Port") is not None],
+            "target_group_arns": listener_target_group_arns,
+            "multiple_target_groups_observed": len(listener_target_group_arns) > 1,
+            "matched_listener_rule_arns": [rule.get("RuleArn") for rule in matched_listener_rules if rule.get("RuleArn")],
+            "matched_listener_rule_priorities": [
+                rule.get("Priority")
+                for rule in matched_listener_rules
+                if rule.get("Priority") is not None
+            ],
+            "request_path": request_path,
+            "matched_target_groups": matched_target_groups,
+            "target_health": target_health,
+        }
+        status = {
+            "network_reachable_from_internet": bool(
+                details["internet_facing"] and details["dns_name"] and listener_public
+            ),
+            "backend_reachable": bool(
+                details["internet_facing"]
+                and listener_forwarding
+                and target_health == "healthy"
+            ),
+        }
+        return {"details": details, "status": status, "api_calls": api_calls}
+
+    def _match_listener_rules(self, listener_rules: list[dict], request_path: str | None) -> list[dict]:
+        if not request_path:
+            return []
+        matched = []
+        for rule in listener_rules:
+            for condition in rule.get("Conditions", []):
+                if condition.get("Field") != "path-pattern":
+                    continue
+                patterns = condition.get("Values") or (condition.get("PathPatternConfig") or {}).get("Values", [])
+                if any(self._path_matches_pattern(request_path, pattern) for pattern in patterns if pattern):
+                    matched.append(rule)
+                    break
+        return matched
+
+    def _path_matches_pattern(self, value: str, pattern: str) -> bool:
+        regex = "^" + re.escape(pattern).replace("\\*", ".*").replace("\\?", ".") + "$"
+        return bool(re.match(regex, value))
+
+    def _build_api_gateway_network_evidence(
+        self,
+        client: AwsClient,
+        region: str,
+        actor: str,
+        resource_arn: str,
+        instance_id: str | None,
+        target_group_arn: str | None,
+        target_load_balancer_arn: str | None,
+        request_path: str | None,
+    ) -> dict:
+        rest_api_id = _rest_api_id_from_arn(resource_arn)
+        if not rest_api_id:
+            return {
+                "details": {
+                    "rest_api_arn": resource_arn,
+                    "public_stage": False,
+                    "integration_active": False,
+                    "target_load_balancer_arn": target_load_balancer_arn,
+                },
+                "status": {
+                    "network_reachable_from_internet": False,
+                    "backend_reachable": False,
+                },
+                "api_calls": [],
+            }
+
+        apis = client.list_rest_apis(
+            region=region,
+            credentials=self._credentials_for_actor(actor),
+        )
+        stages = client.list_api_stages(
+            region=region,
+            rest_api_id=rest_api_id,
+            credentials=self._credentials_for_actor(actor),
+        )
+        integrations = client.list_api_integrations(
+            region=region,
+            rest_api_id=rest_api_id,
+            credentials=self._credentials_for_actor(actor),
+        )
+        api_calls = [
+            "apigateway:GET",
+            "apigateway:GetStages",
+            "apigateway:GetIntegration",
+        ]
+        api = next((item for item in apis if item.get("RestApiId") == rest_api_id), {})
+        endpoint_types = ((api.get("EndpointConfiguration") or {}).get("types")) or []
+        public_stage = bool(stages) and "PRIVATE" not in endpoint_types
+        integration_active = bool(integrations)
+        matched_integration_uris = [
+            item.get("Uri")
+            for item in integrations
+            if item.get("Uri")
+        ]
+
+        downstream_evidence = None
+        if target_load_balancer_arn:
+            downstream_evidence = self._build_load_balancer_network_evidence(
+                client=client,
+                region=region,
+                actor=actor,
+                resource_arn=target_load_balancer_arn,
+                instance_id=instance_id,
+                target_group_arn=target_group_arn,
+                request_path=request_path,
+            )
+            api_calls.extend(downstream_evidence["api_calls"])
+
+        details = {
+            "rest_api_arn": resource_arn,
+            "rest_api_id": rest_api_id,
+            "endpoint_types": endpoint_types,
+            "stage_names": [item.get("StageName") for item in stages],
+            "public_stage": public_stage,
+            "integration_active": integration_active,
+            "integration_uris": matched_integration_uris,
+            "target_load_balancer_arn": target_load_balancer_arn,
+        }
+        if downstream_evidence:
+            details["downstream_load_balancer"] = downstream_evidence["details"]
+        status = {
+            "network_reachable_from_internet": public_stage,
+            "backend_reachable": integration_active,
+        }
+        if downstream_evidence:
+            status["network_reachable_from_internet"] = (
+                public_stage and downstream_evidence["status"]["network_reachable_from_internet"]
+            )
+            status["backend_reachable"] = (
+                integration_active and downstream_evidence["status"]["backend_reachable"]
+            )
+        return {"details": details, "status": status, "api_calls": api_calls}
+
     def _credentials_for_actor(self, actor: str) -> AwsCredentials | None:
         credentials = self._credentials_by_actor.get(actor)
         if credentials is not None:
@@ -459,6 +1024,33 @@ class AwsRealExecutor:
         if actor == self._base_actor_arn:
             return None
         raise MissingActorCredentialsError(actor)
+
+    def _ensure_entry_actor_credentials(self, client: AwsClient, action: Action) -> None:
+        actor = action.actor
+        if actor != self._base_actor_arn:
+            return
+        if actor in self._credentials_by_actor:
+            return
+        if ":role/" not in actor:
+            return
+        region = action.parameters.get("region") or (self.scope.allowed_regions[0] if self.scope.allowed_regions else None)
+        if not region:
+            return
+        assumed = client.assume_role(
+            region=region,
+            role_arn=actor,
+            session_name="rastro-entry-session",
+            credentials=None,
+        )
+        credentials = assumed["Credentials"]
+        actor_credentials = {
+            "AccessKeyId": credentials["AccessKeyId"],
+            "SecretAccessKey": credentials["SecretAccessKey"],
+            "SessionToken": credentials["SessionToken"],
+        }
+        self._credentials_by_actor[actor] = actor_credentials
+        identity = client.get_caller_identity(region=region, credentials=actor_credentials)
+        self._entry_assumed_identity_arn = identity.get("Arn")
 
     def _acquire_pivot_credentials_if_configured(
         self,
@@ -514,6 +1106,13 @@ def _instance_profile_name_from_arn(value: str | None) -> str | None:
     if not value or ":instance-profile/" not in value:
         return None
     return value.rsplit("/", 1)[-1]
+
+
+def _rest_api_id_from_arn(value: str | None) -> str | None:
+    if not value or "/restapis/" not in value:
+        return None
+    suffix = value.split("/restapis/", 1)[1]
+    return suffix.split("/", 1)[0]
 
 
 def _build_policy_denial(action: Action, scope: Scope) -> Observation | None:

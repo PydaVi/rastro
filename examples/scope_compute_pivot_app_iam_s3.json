@@ -1,0 +1,37 @@
+{
+  "target": "aws",
+  "allowed_actions": [
+    "enumerate",
+    "analyze",
+    "assume_role",
+    "access_resource"
+  ],
+  "allowed_resources": [
+    "arn:aws:iam::123456789012:root",
+    "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+    "arn:aws:iam::123456789012:role/SupportBastionRole",
+    "arn:aws:s3:::compute-payroll-dumps-prod",
+    "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+    "arn:aws:s3:::compute-app-logs-prod",
+    "arn:aws:s3:::compute-app-logs-prod/nginx/access.log"
+  ],
+  "max_steps": 7,
+  "planner": {
+    "backend": "mock"
+  },
+  "dry_run": true,
+  "aws_account_ids": [
+    "123456789012"
+  ],
+  "allowed_regions": [
+    "us-east-1"
+  ],
+  "allowed_services": [
+    "iam",
+    "sts",
+    "s3"
+  ],
+  "authorized_by": "Demo Operator",
+  "authorized_at": "2026-03-28",
+  "authorization_document": "docs/authorization-demo.md"
+}

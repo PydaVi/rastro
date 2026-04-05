@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate compute-pivot role chaining to the payroll app instance role.",
+  "target": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+  "success_criteria": {
+    "flag": "compute_pivot_foundation_role_chain"
+  }
+}

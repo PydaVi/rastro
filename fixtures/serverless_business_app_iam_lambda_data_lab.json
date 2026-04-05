@@ -1,0 +1,51 @@
+{
+  "name": "serverless-business-app-iam-lambda-data-lab",
+  "description": "Synthetic IAM to Lambda to data environment for serverless-business-app.",
+  "version": "0.1",
+  "state": {
+    "flags": [],
+    "identities": {
+      "arn:aws:iam::123456789012:user/platform-analyst": {
+        "available_actions": [
+          {"action_type": "enumerate", "target": "arn:aws:iam::123456789012:root", "parameters": {"service": "iam", "region": "us-east-1"}, "tool": "iam_list_roles"},
+          {"action_type": "assume_role", "target": "arn:aws:iam::123456789012:role/PublicApiBridgeRole", "parameters": {"service": "sts", "region": "us-east-1", "role_arn": "arn:aws:iam::123456789012:role/PublicApiBridgeRole", "session_name": "sba-bridge"}, "tool": "iam_passrole"}
+        ]
+      }
+    }
+  },
+  "transitions": [
+    {"action_type": "enumerate", "actor": "arn:aws:iam::123456789012:user/platform-analyst", "target": "arn:aws:iam::123456789012:root", "observation": {"details": "Listed roles.", "discovered_roles": ["arn:aws:iam::123456789012:role/PublicApiBridgeRole", "arn:aws:iam::123456789012:role/PayrollHandlerRole"]}},
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:role/PublicApiBridgeRole",
+      "observation": {"granted_role": "arn:aws:iam::123456789012:role/PublicApiBridgeRole", "details": "Assumed PublicApiBridgeRole."},
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/PublicApiBridgeRole": {
+          "available_actions": [
+            {"action_type": "access_resource", "target": "arn:aws:lambda:us-east-1:123456789012:function:payroll-handler", "parameters": {"service": "lambda", "region": "us-east-1", "function_name": "payroll-handler"}, "tool": "lambda_invoke"}
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PublicApiBridgeRole",
+      "target": "arn:aws:lambda:us-east-1:123456789012:function:payroll-handler",
+      "observation": {"details": "Invoked payroll-handler Lambda.", "invoked_function": "payroll-handler"},
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/PayrollHandlerRole": {
+          "available_actions": [
+            {"action_type": "access_resource", "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key", "parameters": {"service": "secretsmanager", "region": "us-east-1", "secret_id": "prod/payroll-api-key"}, "tool": "secretsmanager_read_secret"}
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key",
+      "observation": {"details": "Read payroll api key via Lambda execution role.", "evidence": {"secret_id": "prod/payroll-api-key"}}
+    }
+  ]
+}

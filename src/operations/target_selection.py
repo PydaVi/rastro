@@ -257,6 +257,19 @@ def _build_candidate(profile_name: str, resource: dict, structural_index: dict) 
         structural_score -= 10
         reasons.append("public_role_penalty")
     if profile_name == "aws-iam-role-chaining":
+        trust_principals = structural_index["role_trust_principals"].get(identifier, [])
+        escalation_signals = structural_index["role_policy_escalation_signals"].get(identifier, [])
+        if "*" in trust_principals:
+            score += 20
+            structural_score += 20
+            reasons.append("broad_trust_signal")
+            signals["trust_principals"] = trust_principals
+        if escalation_signals:
+            bonus = min(40, 10 + 5 * len(escalation_signals))
+            score += bonus
+            structural_score += bonus
+            reasons.append("policy_escalation_signal")
+            signals["policy_escalation_signals"] = escalation_signals
         lambda_functions = structural_index["role_to_lambda_functions"].get(identifier, [])
         if lambda_functions:
             score += 10
@@ -281,6 +294,16 @@ def _build_candidate(profile_name: str, resource: dict, structural_index: dict) 
         reasons.append("external_reachability_signal")
         signals["reachable_roles"] = reachable_roles
         signals["public_path_roles"] = public_path_roles
+        external_entry_reachability = _infer_external_entry_reachability(public_path_roles, structural_index)
+        signals["external_entry_reachability"] = external_entry_reachability
+        if external_entry_reachability["network_reachable_from_internet"]["status"] == "proved":
+            score += 10
+            structural_score += 10
+            reasons.append("network_reachability_proved")
+        if external_entry_reachability["backend_reachable"]["status"] == "proved":
+            score += 10
+            structural_score += 10
+            reasons.append("backend_reachability_proved")
         public_role_score = sum(_role_quality_score(role_arn, structural_index) for role_arn in public_path_roles)
         if public_role_score:
             score += public_role_score
@@ -436,9 +459,10 @@ def _build_candidate(profile_name: str, resource: dict, structural_index: dict) 
         "scope_template_path": str(synthetic_profile.scope_path) if synthetic_profile else None,
         "supporting_evidence": {
             "service": resource["service"],
-            "region": resource["region"],
+            "region": resource.get("region"),
             "metadata": resource.get("metadata", {}),
         },
+        "external_entry_reachability": signals.get("external_entry_reachability"),
     }
 
 
@@ -474,7 +498,25 @@ def _build_structural_index(
     role_to_instance_profiles: dict[str, list[str]] = {}
     profile_to_instances: dict[str, list[str]] = {}
     instance_to_public_surfaces: dict[str, list[str]] = {}
+    instance_metadata: dict[str, dict] = {}
+    public_surface_metadata: dict[str, dict] = {}
+    listener_metadata: dict[str, dict] = {}
+    target_group_metadata: dict[str, dict] = {}
+    api_integration_metadata: dict[str, dict] = {}
+    subnet_to_route_tables: dict[str, list[str]] = {}
+    route_table_to_internet_gateways: dict[str, list[str]] = {}
+    instance_to_security_groups: dict[str, list[str]] = {}
+    security_group_public_ingress: dict[str, list[int]] = {}
+    load_balancer_to_listeners: dict[str, list[str]] = {}
+    listener_to_target_groups: dict[str, list[str]] = {}
+    api_gateway_to_integrations: dict[str, list[str]] = {}
+    integration_to_instances: dict[str, list[str]] = {}
+    integration_to_load_balancers: dict[str, list[str]] = {}
     role_to_lambda_functions: dict[str, list[str]] = {}
+    role_trust_principals: dict[str, list[str]] = {}
+    role_attached_policy_names: dict[str, list[str]] = {}
+    role_inline_policy_names: dict[str, list[str]] = {}
+    role_policy_escalation_signals: dict[str, list[str]] = {}
     bucket_to_objects: dict[str, list[str]] = {}
     role_metadata: dict[str, dict] = {}
 
@@ -483,19 +525,38 @@ def _build_structural_index(
         identifier = resource["identifier"]
         if resource["resource_type"] == "identity.role":
             role_metadata[identifier] = metadata
+            role_trust_principals[identifier] = metadata.get("trust_principals", [])
+            role_attached_policy_names[identifier] = metadata.get("attached_policy_names", [])
+            role_inline_policy_names[identifier] = metadata.get("inline_policy_names", [])
+            role_policy_escalation_signals[identifier] = _policy_escalation_signals(metadata)
         if resource["resource_type"] == "compute.instance_profile":
             role_arn = metadata.get("role")
             if role_arn:
                 role_to_instance_profiles.setdefault(role_arn, []).append(identifier)
         if resource["resource_type"] == "compute.ec2_instance":
+            instance_metadata[identifier] = metadata
             profile_arn = metadata.get("instance_profile")
             if profile_arn:
                 profile_to_instances.setdefault(profile_arn, []).append(identifier)
         if resource["resource_type"] in {"network.load_balancer", "network.api_gateway"}:
+            public_surface_metadata[identifier] = metadata
             if metadata.get("exposure", "public") == "public":
                 target_instance = metadata.get("target_instance")
                 if target_instance:
                     instance_to_public_surfaces.setdefault(target_instance, []).append(identifier)
+        if resource["resource_type"] == "network.lb_listener":
+            listener_metadata[identifier] = metadata
+        if resource["resource_type"] == "network.target_group":
+            target_group_metadata[identifier] = metadata
+        if resource["resource_type"] == "network.api_integration":
+            api_integration_metadata[identifier] = metadata
+        if resource["resource_type"] == "network.route_table":
+            for subnet_id in metadata.get("subnet_ids", []):
+                subnet_to_route_tables.setdefault(subnet_id, []).append(identifier)
+            for internet_gateway_id in metadata.get("internet_gateway_ids", []):
+                route_table_to_internet_gateways.setdefault(identifier, []).append(internet_gateway_id)
+        if resource["resource_type"] == "network.security_group":
+            security_group_public_ingress[identifier] = metadata.get("public_ingress_ports", [])
         if resource["resource_type"] == "compute.lambda_function":
             role_arn = metadata.get("role")
             if role_arn:
@@ -519,9 +580,62 @@ def _build_structural_index(
             resource_to_roles.setdefault(target, []).append(source)
         if rel_type in {"can_assume", "assume_role", "assumes"} and ":role/" in source and ":role/" in target:
             role_to_assumable_roles.setdefault(source, []).append(target)
+        if rel_type == "associated_with_route_table" and ":subnet/" in source and ":route-table/" in target:
+            subnet_to_route_tables.setdefault(source.rsplit("/", 1)[-1], []).append(target)
+        if rel_type == "routes_to_internet_gateway" and ":route-table/" in source:
+            route_table_to_internet_gateways.setdefault(source, []).append(target)
+        if rel_type == "protected_by_security_group" and ":instance/" in source and ":security-group/" in target:
+            instance_to_security_groups.setdefault(source, []).append(target)
+        if rel_type == "exposes_listener" and ":loadbalancer/" in source:
+            load_balancer_to_listeners.setdefault(source, []).append(target)
+        if rel_type == "forwards_to_target_group" and ":listener/" in source:
+            listener_to_target_groups.setdefault(source, []).append(target)
+        if rel_type == "uses_integration" and ":apigateway:" in source:
+            api_gateway_to_integrations.setdefault(source, []).append(target)
+        if rel_type == "integrates_with_instance" and "/integration/" in source:
+            integration_to_instances.setdefault(source, []).append(target)
+        if rel_type == "integrates_with_load_balancer" and "/integration/" in source:
+            integration_to_load_balancers.setdefault(source, []).append(target)
 
     role_to_instances: dict[str, list[str]] = {}
     role_to_public_surfaces: dict[str, list[str]] = {}
+    instance_network_maturity: dict[str, dict[str, object]] = {}
+    for instance_arn, metadata in instance_metadata.items():
+        subnet_id = metadata.get("subnet_id")
+        route_tables = subnet_to_route_tables.get(subnet_id, [])
+        security_groups = instance_to_security_groups.get(instance_arn, [])
+        if not security_groups:
+            security_groups = [
+                _as_ec2_resource_arn(caller_account, group_id, "security-group")
+                for group_id in metadata.get("security_group_ids", [])
+            ]
+        has_internet_route = any(route_table_to_internet_gateways.get(route_table) for route_table in route_tables)
+        has_public_ingress = any(security_group_public_ingress.get(group_arn) for group_arn in security_groups)
+        explicit_public_exposure = bool(metadata.get("public_ip")) or str(metadata.get("exposure", "")).startswith("public")
+        network_status = "not_observed"
+        backend_status = "not_observed"
+        if explicit_public_exposure:
+            network_status = "structural"
+            backend_status = "structural"
+        if metadata.get("public_ip") and has_internet_route and has_public_ingress:
+            network_status = "proved"
+            backend_status = "proved"
+            instance_to_public_surfaces.setdefault(instance_arn, []).append(instance_arn)
+        elif str(metadata.get("exposure", "")).startswith("public"):
+            instance_to_public_surfaces.setdefault(instance_arn, []).append(instance_arn)
+        if instance_to_public_surfaces.get(instance_arn):
+            if network_status == "not_observed":
+                network_status = "structural"
+            if backend_status == "not_observed":
+                backend_status = "structural"
+        instance_network_maturity[instance_arn] = {
+            "network_reachable_from_internet": network_status,
+            "backend_reachable": backend_status,
+            "public_surfaces": sorted(set(instance_to_public_surfaces.get(instance_arn, []))),
+            "security_groups": sorted(set(security_groups)),
+            "route_tables": sorted(set(route_tables)),
+        }
+
     for role_arn, profiles in role_to_instance_profiles.items():
         for profile_arn in profiles:
             instances = profile_to_instances.get(profile_arn, [])
@@ -537,12 +651,26 @@ def _build_structural_index(
         "role_to_instances": {key: sorted(set(value)) for key, value in role_to_instances.items()},
         "role_to_public_surfaces": {key: sorted(set(value)) for key, value in role_to_public_surfaces.items()},
         "role_to_lambda_functions": {key: sorted(set(value)) for key, value in role_to_lambda_functions.items()},
+        "role_trust_principals": role_trust_principals,
+        "role_attached_policy_names": role_attached_policy_names,
+        "role_inline_policy_names": role_inline_policy_names,
+        "role_policy_escalation_signals": role_policy_escalation_signals,
         "bucket_to_objects": {key: sorted(set(value)) for key, value in bucket_to_objects.items()},
         "role_to_accessible_resources": {key: sorted(set(value)) for key, value in role_to_accessible_resources.items()},
         "resource_to_roles": {key: sorted(set(value)) for key, value in resource_to_roles.items()},
         "role_to_assumable_roles": {key: sorted(set(value)) for key, value in role_to_assumable_roles.items()},
         "public_root_roles": sorted(role_to_public_surfaces.keys()),
+        "public_surface_metadata": public_surface_metadata,
+        "listener_metadata": listener_metadata,
+        "target_group_metadata": target_group_metadata,
+        "api_integration_metadata": api_integration_metadata,
+        "load_balancer_to_listeners": {key: sorted(set(value)) for key, value in load_balancer_to_listeners.items()},
+        "listener_to_target_groups": {key: sorted(set(value)) for key, value in listener_to_target_groups.items()},
+        "api_gateway_to_integrations": {key: sorted(set(value)) for key, value in api_gateway_to_integrations.items()},
+        "integration_to_instances": {key: sorted(set(value)) for key, value in integration_to_instances.items()},
+        "integration_to_load_balancers": {key: sorted(set(value)) for key, value in integration_to_load_balancers.items()},
         "role_metadata": role_metadata,
+        "instance_network_maturity": instance_network_maturity,
         "caller_account": caller_account,
         "target_name": target_name,
     }
@@ -610,7 +738,39 @@ def _role_quality_score(role_arn: str, structural_index: dict) -> int:
         score -= 15
     if "bridge" in role_text:
         score -= 10
+    if structural_index.get("role_policy_escalation_signals", {}).get(role_arn):
+        score += 15
+    if "*" in structural_index.get("role_trust_principals", {}).get(role_arn, []):
+        score += 10
     return score
+
+
+def _policy_escalation_signals(metadata: dict) -> list[str]:
+    haystack = " ".join(
+        [
+            *metadata.get("attached_policy_names", []),
+            *metadata.get("attached_policy_arns", []),
+            *metadata.get("inline_policy_names", []),
+        ]
+    ).lower()
+    markers = [
+        "administratoraccess",
+        "createpolicyversion",
+        "setdefaultpolicyversion",
+        "attachrolepolicy",
+        "attachuserpolicy",
+        "putrolepolicy",
+        "putuserpolicy",
+        "updateassumerolepolicy",
+        "passrole",
+        "addusertogroup",
+        "createaccesskey",
+        "cloudformation",
+        "codebuild",
+        "sagemaker",
+        "iamfullaccess",
+    ]
+    return sorted({marker for marker in markers if marker in haystack})
 
 
 def _infer_execution_fixture_set(resource: dict, profile_name: str, structural_index: dict) -> str:
@@ -756,6 +916,123 @@ def _extract_account_id(resource_arn: str) -> str | None:
     return parts[4] or None
 
 
+def _as_ec2_resource_arn(account_id: str | None, resource_id: str, resource_type: str) -> str:
+    if resource_id.startswith("arn:aws:"):
+        return resource_id
+    if not account_id:
+        return resource_id
+    return f"arn:aws:ec2:us-east-1:{account_id}:{resource_type}/{resource_id}"
+
+
+def _infer_external_entry_reachability(public_path_roles: list[str], structural_index: dict) -> dict:
+    network_status = "not_observed"
+    backend_status = "not_observed"
+    instances: list[str] = []
+    public_surfaces: list[str] = []
+    for role_arn in public_path_roles:
+        role_surfaces = structural_index["role_to_public_surfaces"].get(role_arn, [])
+        for surface_arn in role_surfaces:
+            surface_status = _public_surface_reachability(surface_arn, structural_index)
+            if surface_status["network_reachable_from_internet"] == "proved":
+                network_status = "proved"
+            elif network_status == "not_observed" and surface_status["network_reachable_from_internet"] == "structural":
+                network_status = "structural"
+            if surface_status["backend_reachable"] == "proved":
+                backend_status = "proved"
+            elif backend_status == "not_observed" and surface_status["backend_reachable"] == "structural":
+                backend_status = "structural"
+            public_surfaces.append(surface_arn)
+        for instance_arn in structural_index["role_to_instances"].get(role_arn, []):
+            maturity = structural_index.get("instance_network_maturity", {}).get(instance_arn, {})
+            instance_network = maturity.get("network_reachable_from_internet")
+            instance_backend = maturity.get("backend_reachable")
+            if instance_network == "proved":
+                network_status = "proved"
+            elif network_status == "not_observed" and instance_network == "structural":
+                network_status = "structural"
+            if instance_backend == "proved":
+                backend_status = "proved"
+            elif backend_status == "not_observed" and instance_backend == "structural":
+                backend_status = "structural"
+            instances.append(instance_arn)
+            public_surfaces.extend(maturity.get("public_surfaces", []))
+        if structural_index["role_to_public_surfaces"].get(role_arn) and network_status == "not_observed":
+            network_status = "structural"
+            backend_status = "structural"
+            public_surfaces.extend(structural_index["role_to_public_surfaces"].get(role_arn, []))
+    return {
+        "network_reachable_from_internet": {
+            "status": network_status,
+            "evidence": sorted(set(public_surfaces)),
+        },
+        "backend_reachable": {
+            "status": backend_status,
+            "evidence": sorted(set(instances)),
+        },
+        "credential_acquisition_possible": {
+            "status": "structural" if public_path_roles else "not_observed",
+            "evidence": sorted(set(public_path_roles)),
+        },
+        "data_path_exploitable": {
+            "status": "not_observed",
+            "evidence": None,
+        },
+    }
+
+
+def _public_surface_reachability(surface_arn: str, structural_index: dict) -> dict[str, str]:
+    metadata = structural_index.get("public_surface_metadata", {}).get(surface_arn, {})
+    network_status = "not_observed"
+    backend_status = "not_observed"
+
+    if metadata.get("exposure") == "public":
+        network_status = "structural"
+        backend_status = "structural"
+
+    if metadata.get("network_reachable_from_internet") is True:
+        network_status = "proved"
+    elif metadata.get("exposure") == "public" and any(
+        metadata.get(field)
+        for field in ("dns_public", "public_stage", "internet_facing", "listener_public")
+    ):
+        network_status = "proved"
+
+    if metadata.get("backend_reachable") is True:
+        backend_status = "proved"
+    elif metadata.get("target_health") == "healthy":
+        backend_status = "proved"
+    elif metadata.get("integration_status") in {"active", "reachable"}:
+        backend_status = "proved"
+    elif metadata.get("listener_forwarding") is True and metadata.get("target_instance"):
+        backend_status = "proved"
+
+    if ":loadbalancer/" in surface_arn:
+        listeners = structural_index.get("load_balancer_to_listeners", {}).get(surface_arn, [])
+        if listeners:
+            network_status = "proved" if network_status != "not_observed" else "structural"
+        for listener_arn in listeners:
+            listener = structural_index.get("listener_metadata", {}).get(listener_arn, {})
+            if listener.get("listener_public"):
+                network_status = "proved"
+            if listener.get("listener_forwarding"):
+                backend_status = "proved" if structural_index.get("listener_to_target_groups", {}).get(listener_arn) else backend_status
+    if ":apigateway:" in surface_arn:
+        integrations = structural_index.get("api_gateway_to_integrations", {}).get(surface_arn, [])
+        if integrations and metadata.get("public_stage"):
+            network_status = "proved"
+        for integration_arn in integrations:
+            integration = structural_index.get("api_integration_metadata", {}).get(integration_arn, {})
+            if integration.get("integration_status") == "active":
+                backend_status = "proved"
+            if structural_index.get("integration_to_instances", {}).get(integration_arn) or structural_index.get("integration_to_load_balancers", {}).get(integration_arn):
+                backend_status = "proved"
+
+    return {
+        "network_reachable_from_internet": network_status,
+        "backend_reachable": backend_status,
+    }
+
+
 def _render_target_candidates_markdown(payload: dict) -> str:
     lines = [
         "# Target Candidates",
@@ -773,5 +1050,13 @@ def _render_target_candidates_markdown(payload: dict) -> str:
             f"- {candidate['profile_family']}: score={candidate['score']} confidence={candidate['confidence']} target={candidate['resource_arn']}"
         )
         lines.append(f"  reasons={candidate['selection_reason']}")
+        if candidate.get("external_entry_reachability"):
+            reachability = candidate["external_entry_reachability"]
+            lines.append(
+                "  external_entry_reachability="
+                f"network={reachability['network_reachable_from_internet']['status']}, "
+                f"backend={reachability['backend_reachable']['status']}, "
+                f"credentials={reachability['credential_acquisition_possible']['status']}"
+            )
     lines.append("")
     return "\n".join(lines)

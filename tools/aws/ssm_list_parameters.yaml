@@ -4,7 +4,7 @@ phase: discovery
 mitre_id: T1526
 platform: AWS
 preconditions:
-  - audit_role_assumed
+  - privileged_identity_active
 postconditions:
   - parameter_catalog_listed
 implementation: tools/aws/ssm_list_parameters.py

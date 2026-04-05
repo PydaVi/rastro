@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate KMS-mediated access to payroll data.",
+  "target": "arn:aws:kms:us-east-1:123456789012:key/payroll-runtime",
+  "success_criteria": {
+    "flag": "serverless_advanced_kms_data"
+  }
+}

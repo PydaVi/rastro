@@ -1,0 +1,300 @@
+{
+  "target": "mixed-generalization-h",
+  "bundle": "aws-enterprise",
+  "collected_at": "2026-04-01T00:00:00Z",
+  "services_scanned": [
+    "iam",
+    "sts",
+    "ec2",
+    "apigateway",
+    "lambda",
+    "kms",
+    "s3",
+    "secretsmanager",
+    "ssm"
+  ],
+  "regions_scanned": [
+    "us-east-1"
+  ],
+  "caller_identity": {
+    "Account": "123456789012",
+    "Arn": "arn:aws:iam::123456789012:user/analyst"
+  },
+  "resources": [
+    {
+      "service": "iam",
+      "region": "us-east-1",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/RA7",
+      "metadata": {
+        "workload": "ec2",
+        "tier": "prod"
+      }
+    },
+    {
+      "service": "iam",
+      "region": "us-east-1",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/RL2",
+      "metadata": {
+        "workload": "legacy",
+        "tier": "prod"
+      }
+    },
+    {
+      "service": "iam",
+      "region": "us-east-1",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "metadata": {
+        "service": "lambda"
+      }
+    },
+    {
+      "service": "iam",
+      "region": "us-east-1",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/AnalyticsBrokerRole",
+      "metadata": {
+        "workload": "broker",
+        "tier": "prod"
+      }
+    },
+    {
+      "service": "iam",
+      "region": "us-east-1",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::210987654321:role/RX3",
+      "metadata": {
+        "workload": "cross-account",
+        "tier": "prod"
+      }
+    },
+    {
+      "service": "iam",
+      "region": "us-east-1",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::210987654321:role/RY8",
+      "metadata": {
+        "workload": "cross-account",
+        "tier": "prod"
+      }
+    },
+    {
+      "service": "iam",
+      "region": "us-east-1",
+      "resource_type": "compute.instance_profile",
+      "identifier": "arn:aws:iam::123456789012:instance-profile/PF7",
+      "metadata": {
+        "role": "arn:aws:iam::123456789012:role/RA7"
+      }
+    },
+    {
+      "service": "iam",
+      "region": "us-east-1",
+      "resource_type": "compute.instance_profile",
+      "identifier": "arn:aws:iam::123456789012:instance-profile/PF2",
+      "metadata": {
+        "role": "arn:aws:iam::123456789012:role/RL2"
+      }
+    },
+    {
+      "service": "ec2",
+      "region": "us-east-1",
+      "resource_type": "compute.ec2_instance",
+      "identifier": "arn:aws:ec2:us-east-1:123456789012:instance/i-a731",
+      "metadata": {
+        "name": "node-a",
+        "instance_profile": "arn:aws:iam::123456789012:instance-profile/PF7",
+        "exposure": "public-api"
+      }
+    },
+    {
+      "service": "ec2",
+      "region": "us-east-1",
+      "resource_type": "compute.ec2_instance",
+      "identifier": "arn:aws:ec2:us-east-1:123456789012:instance/i-b244",
+      "metadata": {
+        "name": "node-b",
+        "instance_profile": "arn:aws:iam::123456789012:instance-profile/PF2",
+        "exposure": "public-api"
+      }
+    },
+    {
+      "service": "apigateway",
+      "region": "us-east-1",
+      "resource_type": "network.api_gateway",
+      "identifier": "arn:aws:apigateway:us-east-1::/restapis/rs-731-public",
+      "metadata": {
+        "exposure": "public",
+        "target_instance": "arn:aws:ec2:us-east-1:123456789012:instance/i-a731"
+      }
+    },
+    {
+      "service": "apigateway",
+      "region": "us-east-1",
+      "resource_type": "network.api_gateway",
+      "identifier": "arn:aws:apigateway:us-east-1::/restapis/rs-244-public",
+      "metadata": {
+        "exposure": "public",
+        "target_instance": "arn:aws:ec2:us-east-1:123456789012:instance/i-b244"
+      }
+    },
+    {
+      "service": "lambda",
+      "region": "us-east-1",
+      "resource_type": "compute.lambda_function",
+      "identifier": "arn:aws:lambda:us-east-1:123456789012:function:payroll-handler",
+      "metadata": {
+        "role": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+        "kms_key": "arn:aws:kms:us-east-1:123456789012:key/payroll-runtime",
+        "name": "payroll-handler"
+      }
+    },
+    {
+      "service": "kms",
+      "region": "us-east-1",
+      "resource_type": "crypto.kms_key",
+      "identifier": "arn:aws:kms:us-east-1:123456789012:key/payroll-runtime",
+      "metadata": {
+        "name": "payroll-runtime",
+        "classification": "restricted"
+      }
+    },
+    {
+      "service": "s3",
+      "region": "us-east-1",
+      "resource_type": "data_store.s3_object",
+      "identifier": "arn:aws:s3:::mixed-payroll-data-prod/payroll/2026-03/payroll.csv",
+      "metadata": {
+        "bucket": "mixed-payroll-data-prod",
+        "object_key": "payroll/2026-03/payroll.csv",
+        "classification": "restricted"
+      }
+    },
+    {
+      "service": "secretsmanager",
+      "region": "us-east-1",
+      "resource_type": "secret.secrets_manager",
+      "identifier": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key",
+      "metadata": {
+        "name": "prod/payroll-api-key",
+        "classification": "restricted"
+      }
+    },
+    {
+      "service": "secretsmanager",
+      "region": "us-east-1",
+      "resource_type": "secret.secrets_manager",
+      "identifier": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-backend-password",
+      "metadata": {
+        "name": "prod/payroll-backend-password",
+        "classification": "restricted"
+      }
+    },
+    {
+      "service": "secretsmanager",
+      "region": "us-east-1",
+      "resource_type": "secret.secrets_manager",
+      "identifier": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-webhook-password",
+      "metadata": {
+        "name": "prod/payroll-webhook-password",
+        "classification": "restricted"
+      }
+    },
+    {
+      "service": "ssm",
+      "region": "us-east-1",
+      "resource_type": "secret.ssm_parameter",
+      "identifier": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key",
+      "metadata": {
+        "name": "/prod/payroll/api_key",
+        "path_prefix": "/prod",
+        "classification": "restricted"
+      }
+    },
+    {
+      "service": "secretsmanager",
+      "region": "us-east-1",
+      "resource_type": "secret.secrets_manager",
+      "identifier": "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key",
+      "metadata": {
+        "name": "prod/finance/warehouse-api-key",
+        "classification": "restricted"
+      }
+    },
+    {
+      "service": "secretsmanager",
+      "region": "us-east-1",
+      "resource_type": "secret.secrets_manager",
+      "identifier": "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-master-api-key",
+      "metadata": {
+        "name": "prod/finance/warehouse-master-api-key",
+        "classification": "restricted"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "source": "arn:aws:iam::123456789012:role/RA7",
+      "target": "arn:aws:iam::123456789012:role/AnalyticsBrokerRole",
+      "type": "can_assume"
+    },
+    {
+      "source": "arn:aws:iam::123456789012:role/AnalyticsBrokerRole",
+      "target": "arn:aws:iam::210987654321:role/RX3",
+      "type": "can_assume"
+    },
+    {
+      "source": "arn:aws:iam::210987654321:role/RX3",
+      "target": "arn:aws:iam::210987654321:role/RY8",
+      "type": "can_assume"
+    },
+    {
+      "source": "arn:aws:iam::123456789012:role/RA7",
+      "target": "arn:aws:s3:::mixed-payroll-data-prod/payroll/2026-03/payroll.csv",
+      "type": "can_access"
+    },
+    {
+      "source": "arn:aws:iam::123456789012:role/RA7",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key",
+      "type": "can_access"
+    },
+    {
+      "source": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key",
+      "type": "can_access"
+    },
+    {
+      "source": "arn:aws:iam::123456789012:role/RA7",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-backend-password",
+      "type": "can_access"
+    },
+    {
+      "source": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-backend-password",
+      "type": "can_access"
+    },
+    {
+      "source": "arn:aws:iam::123456789012:role/RL2",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-webhook-password",
+      "type": "can_access"
+    },
+    {
+      "source": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key",
+      "type": "can_access"
+    },
+    {
+      "source": "arn:aws:iam::210987654321:role/RX3",
+      "target": "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key",
+      "type": "can_access"
+    },
+    {
+      "source": "arn:aws:iam::210987654321:role/RY8",
+      "target": "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-master-api-key",
+      "type": "can_access"
+    }
+  ],
+  "evidence": []
+}

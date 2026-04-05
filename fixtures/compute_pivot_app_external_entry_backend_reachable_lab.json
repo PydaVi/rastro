@@ -1,0 +1,66 @@
+{
+  "name": "compute-pivot-app-external-entry-backend-reachable-lab",
+  "description": "Synthetic external entry state with network and backend reachability but no credential acquisition.",
+  "version": "0.1",
+  "state": {
+    "flags": [],
+    "identities": {
+      "arn:aws:iam::123456789012:user/platform-analyst": {
+        "available_actions": [
+          {
+            "action_type": "enumerate",
+            "target": "arn:aws:iam::123456789012:root",
+            "parameters": {
+              "service": "iam",
+              "region": "us-east-1"
+            },
+            "tool": "iam_list_roles"
+          }
+        ]
+      }
+    }
+  },
+  "transitions": [
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:root",
+      "observation": {
+        "details": "Enumerated public compute surfaces and backend attachment.",
+        "discovered_roles": [
+          "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+        ]
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:user/platform-analyst": {
+          "available_actions": [
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/public-webhook-bridge",
+              "parameters": {
+                "service": "elasticloadbalancing",
+                "region": "us-east-1",
+                "resource_arn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/public-webhook-bridge"
+              },
+              "tool": "ec2_instance_profile_pivot"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/public-webhook-bridge",
+      "observation": {
+        "details": "Confirmed public path reaches backend workload but no credential material was exposed.",
+        "evidence": {
+          "entry_surface": "public-webhook-bridge",
+          "network_reachable_from_internet": true,
+          "backend_reachable": true,
+          "instance_profile_arn": "arn:aws:iam::123456789012:instance-profile/PayrollAppInstanceProfile"
+        }
+      }
+    }
+  ]
+}

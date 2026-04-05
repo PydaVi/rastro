@@ -278,6 +278,152 @@ foundation, advanced e enterprise coexistem no mesmo inventario.
   - `outputs_mixed_generalization_variant_d_assessment/`
 - descoberta complementar registrada em:
   - `docs/experiments/EXP-048-mixed-generalization-competing-entry-surfaces.md`
+- resolver misto agora usa `execution_fixture_set` inferido no selection
+- validado ponta a ponta nas variantes:
+  - A
+  - B
+  - C
+  - D
+- descoberta complementar registrada em:
+  - `docs/experiments/EXP-049-mixed-resolver-structural-routing.md`
+- Variante E implementada em `fixtures/mixed_generalization_variant_e.discovery.json`
+- mais profundidade de chain e mais de um alvo forte por entry surface
+- assessment discovery-driven validado em:
+  - `outputs_mixed_generalization_variant_e_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta complementar registrada em:
+  - `docs/experiments/EXP-050-mixed-generalization-deeper-chain-and-shared-entry.md`
+- Variante F implementada em `fixtures/mixed_generalization_variant_f.discovery.json`
+- `reachable_roles`, `pivot_chain` e `chain_depth` removidos do metadata dos
+  recursos sensiveis
+- estrutura ofensiva derivada de `relationships`
+- assessment discovery-driven validado em:
+  - `outputs_mixed_generalization_variant_f_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta complementar registrada em:
+  - `docs/experiments/EXP-051-mixed-generalization-relationship-derived-structure.md`
+- Variante G implementada em `fixtures/mixed_generalization_variant_g.discovery.json`
+- `semantic_tags` removido de todos os recursos do benchmark
+- assessment discovery-driven validado em:
+  - `outputs_mixed_generalization_variant_g_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta complementar registrada em:
+  - `docs/experiments/EXP-052-mixed-generalization-without-semantic-tags.md`
+- Variante H implementada em `fixtures/mixed_generalization_variant_h.discovery.json`
+- pivots compute e entry surfaces com naming obfuscado
+- correcao de benchmark aplicada para preservar targets diretos de fixtures
+  ARN-exatos
+- assessment discovery-driven validado em:
+  - `outputs_mixed_generalization_variant_h_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta complementar registrada em:
+  - `docs/experiments/EXP-053-mixed-generalization-obfuscated-target-harness-mismatch.md`
+- Variante I implementada em `fixtures/mixed_generalization_variant_i.discovery.json`
+- alvos enterprise profundos com naming de negocio reduzido
+- fixtures mistos expandidos para aceitar aliases desses alvos
+- assessment discovery-driven validado em:
+  - `outputs_mixed_generalization_variant_i_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta complementar registrada em:
+  - `docs/experiments/EXP-054-mixed-generalization-obfuscated-enterprise-targets.md`
+- Variante J implementada em `fixtures/mixed_generalization_variant_j.discovery.json`
+- apoio lexical restante (`api-key`, `master`) removido dos alvos enterprise
+  profundos
+- harness de `cross-account` expandido para suportar multiplos aliases do mesmo
+  alvo
+- assessment discovery-driven validado em:
+  - `outputs_mixed_generalization_variant_j_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta complementar registrada em:
+  - `docs/experiments/EXP-055-mixed-generalization-low-lexical-enterprise-failure.md`
+- Variante K implementada em `fixtures/mixed_generalization_variant_k.discovery.json`
+- alvos locais de S3 e SSM com naming menos evidente
+- harness sintetico expandido para aliases locais correspondentes
+- assessment discovery-driven validado em:
+  - `outputs_mixed_generalization_variant_k_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta complementar registrada em:
+  - `docs/experiments/EXP-056-mixed-generalization-obfuscated-local-targets.md`
+- Variante L implementada em `fixtures/mixed_generalization_variant_l.discovery.json`
+- secret local compartilhado com `external-entry` obfuscado:
+  - `prod/payroll-api-key` -> `prod/sys/kv_a`
+  - `prod/payroll-backend-password` -> `prod/sys/kv_b`
+  - `prod/payroll-webhook-password` -> `prod/sys/kv_c`
+- falha inicial isolada como mismatch localizado no fixture set
+  `compute-pivot-app` usado pelo roteamento estrutural de `aws-iam-secrets`
+- fixture e scope `compute-pivot-app` expandidos para suportar os aliases novos
+- assessment discovery-driven validado apos correcao em:
+  - `outputs_mixed_generalization_variant_l_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta complementar registrada em:
+  - `docs/experiments/EXP-057-mixed-generalization-local-secret-obfuscation-failure.md`
+- Variante M implementada em `fixtures/mixed_generalization_variant_m.discovery.json`
+- apoio lexical restante do secret local compartilhado reduzido para:
+  - `prod/app/s1`
+  - `prod/app/s2`
+  - `prod/app/s3`
+- fixture sets alternativos expandidos preventivamente para os aliases novos
+- assessment discovery-driven validado em:
+  - `outputs_mixed_generalization_variant_m_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta complementar registrada em:
+  - `docs/experiments/EXP-058-mixed-generalization-lower-lexical-local-secret.md`
+- Variante N implementada em `fixtures/mixed_generalization_variant_n.discovery.json`
+- deep targets enterprise reduzidos para aliases pouco expressivos:
+  - `prod/x/t1`
+  - `prod/x/t2`
+- fixture sets enterprise expandidos para suportar os aliases novos
+- assessment discovery-driven validado em:
+  - `outputs_mixed_generalization_variant_n_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta complementar registrada em:
+  - `docs/experiments/EXP-059-mixed-generalization-low-lexical-enterprise-aliases.md`
+- Variante O implementada em `fixtures/mixed_generalization_variant_o.discovery.json`
+- aliases de baixo valor semantico adicionados sem duplicar transicoes:
+  - local secret: `prod/r/a1`
+  - enterprise: `prod/r/e1`, `prod/r/e2`
+- `Fixture` ganhou suporte generico de aliases em:
+  - enumeracao
+  - matching de transicoes
+  - canonicalizacao de `secret_id`, `parameter` e `s3 bucket/object key`
+- assessment discovery-driven validado em:
+  - `outputs_mixed_generalization_variant_o_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta complementar registrada em:
+  - `docs/experiments/EXP-060-mixed-generalization-generic-fixture-aliases.md`
+- Variante P implementada em `fixtures/mixed_generalization_variant_p.discovery.json`
+- metadata curada reduzida a campos estruturais minimos do benchmark
+- `network.api_gateway` e `network.load_balancer` passaram a ser tratados como
+  publicos por default no selection, salvo `exposure=private`
+- assessment discovery-driven validado em:
+  - `outputs_mixed_generalization_variant_p_assessment/`
+  - `campaigns_total=9`
+  - `campaigns_passed=9`
+  - `assessment_ok=true`
+- descoberta complementar registrada em:
+  - `docs/experiments/EXP-061-mixed-generalization-reduced-curated-metadata.md`
 
 ## Estrategia de variacao
 

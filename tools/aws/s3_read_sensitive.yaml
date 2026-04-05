@@ -4,7 +4,7 @@ phase: collection
 mitre_id: T1530
 platform: S3
 preconditions:
-  - audit_role_assumed
+  - privileged_identity_active
 postconditions:
   - priv_esc
 implementation: tools/aws/s3_read_sensitive.py

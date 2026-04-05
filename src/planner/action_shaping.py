@@ -164,6 +164,9 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
 
     candidate_paths = _ranked_candidate_paths(snapshot)
     if candidate_paths:
+        preferred_success_actions = _prefer_access_on_success(snapshot, available_actions)
+        if preferred_success_actions != available_actions:
+            return preferred_success_actions
         scored_paths = [
             path for path in candidate_paths if getattr(path, "status", "untested") != "failed"
         ]
@@ -199,4 +202,5 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
     filtered = _filter_uncredentialed_actors(snapshot, available_actions)
     filtered = _filter_repeated_assume(snapshot, filtered)
     filtered = _filter_repeated_enumerate(snapshot, filtered)
-    return _filter_failed_assume(snapshot, filtered)
+    filtered = _filter_failed_assume(snapshot, filtered)
+    return _prefer_access_on_success(snapshot, filtered)

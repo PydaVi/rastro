@@ -25,6 +25,7 @@ def synthesize_foundation_campaigns(
     dedupe_resource_targets: bool = False,
     profile_resolver=None,
 ) -> tuple[Path, Path, dict]:
+    profile_resolver = profile_resolver or get_profile
     issues = validate_target(target)
     if issues:
         raise ValueError("; ".join(issues))
@@ -97,6 +98,7 @@ def synthesize_foundation_campaigns(
                     "score": candidate["score"],
                     "score_components": candidate.get("score_components", {}),
                     "execution_fixture_set": candidate.get("execution_fixture_set"),
+                    "external_entry_reachability": candidate.get("external_entry_reachability"),
                 }
             )
 
@@ -141,8 +143,6 @@ def _build_generated_success_criteria(candidate: dict) -> dict:
 
 
 def _resolve_profile(profile_resolver, profile_name: str, candidate: dict):
-    if profile_resolver is None:
-        raise ValueError(f"profile_resolver is required to resolve profile {profile_name}")
     try:
         return profile_resolver(profile_name, candidate)
     except TypeError:
@@ -215,6 +215,14 @@ def _render_campaign_plan_markdown(payload: dict) -> str:
         )
         lines.append(f"  objective={plan['generated_objective']}")
         lines.append(f"  scope={plan['generated_scope']}")
+        if plan.get("external_entry_reachability"):
+            reachability = plan["external_entry_reachability"]
+            lines.append(
+                "  external_entry_reachability="
+                f"network={reachability['network_reachable_from_internet']['status']}, "
+                f"backend={reachability['backend_reachable']['status']}, "
+                f"credentials={reachability['credential_acquisition_possible']['status']}"
+            )
     lines.append("")
     return "\n".join(lines)
 

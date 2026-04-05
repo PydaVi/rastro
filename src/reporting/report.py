@@ -22,6 +22,7 @@ class ReportGenerator:
         initial_state: Dict,
         objective_met: bool,
         preflight: Dict | None = None,
+        execution_context: Dict | None = None,
     ) -> Dict:
         objective = snapshot.objective
         steps_taken = snapshot.steps_taken
@@ -78,7 +79,7 @@ class ReportGenerator:
         choice_summary = _build_choice_summary(initial_state, steps)
         choice_summary["failed_assume_roles"] = getattr(snapshot, "failed_assume_roles", [])
         mermaid = _build_enriched_mermaid(graph, choice_summary)
-        executive_summary = _build_executive_summary(steps, objective_met)
+        executive_summary = _build_executive_summary(steps, objective_met, execution_context or {})
         execution_policy = _build_execution_policy(snapshot.scope)
 
         report_json = {
@@ -143,12 +144,24 @@ class ReportGenerator:
             "",
             "## Executive Summary",
             f"- Initial identity: {_short_resource(executive_summary['initial_identity'])}",
+            f"- Effective entry identity: {_short_resource(executive_summary.get('effective_entry_identity'))}",
+            f"- Actual caller identity: {_short_resource(executive_summary.get('actual_caller_identity'))}",
             f"- Assumed role: {_short_resource(executive_summary['assumed_role'])}",
             f"- Final resource: {_short_resource(executive_summary['final_resource'])}",
             f"- Execution mode: {executive_summary['execution_mode']}",
+            f"- Runtime mode: {executive_summary['runtime_mode']}",
             f"- Real API called: {executive_summary['real_api_called']}",
+            f"- Synthetic fixture used: {executive_summary['synthetic_fixture_used']}",
             f"- Proof: {executive_summary['proof']}",
             f"- Objective met: {executive_summary['objective_met']}",
+            "",
+            "## External Entry Maturity",
+            f"- Applicable: {executive_summary['external_entry_maturity']['applicable']}",
+            f"- Classification: {executive_summary['external_entry_maturity']['classification']}",
+            f"- Network reachable from internet: {executive_summary['external_entry_maturity']['network_reachable_from_internet']['status']}",
+            f"- Backend reachable: {executive_summary['external_entry_maturity']['backend_reachable']['status']}",
+            f"- Credential acquisition possible: {executive_summary['external_entry_maturity']['credential_acquisition_possible']['status']}",
+            f"- Data path exploitable: {executive_summary['external_entry_maturity']['data_path_exploitable']['status']}",
             "",
             "## Execution Policy",
             f"- Target: {execution_policy['target']}",
@@ -211,13 +224,17 @@ class ReportGenerator:
         return {"json": report_json, "markdown": "\n".join(markdown)}
 
 
-def _build_executive_summary(steps: list[Dict], objective_met: bool) -> Dict:
+def _build_executive_summary(steps: list[Dict], objective_met: bool, execution_context: Dict) -> Dict:
     summary = {
         "initial_identity": None,
+        "effective_entry_identity": None,
+        "actual_caller_identity": None,
         "assumed_role": None,
         "final_resource": None,
         "execution_mode": None,
+        "runtime_mode": execution_context.get("runtime_mode"),
         "real_api_called": None,
+        "synthetic_fixture_used": execution_context.get("synthetic_fixture_used"),
         "proof": None,
         "objective_met": objective_met,
     }
@@ -229,10 +246,10 @@ def _build_executive_summary(steps: list[Dict], objective_met: bool) -> Dict:
 
         if summary["initial_identity"] is None:
             aws_identity = details.get("aws_identity")
+            summary["initial_identity"] = action.get("actor")
+            summary["effective_entry_identity"] = details.get("effective_actor") or action.get("actor")
             if aws_identity:
-                summary["initial_identity"] = aws_identity.get("arn")
-            else:
-                summary["initial_identity"] = action.get("actor")
+                summary["actual_caller_identity"] = aws_identity.get("arn")
 
         if summary["assumed_role"] is None and details.get("granted_role"):
             summary["assumed_role"] = details.get("granted_role")
@@ -246,15 +263,119 @@ def _build_executive_summary(steps: list[Dict], objective_met: bool) -> Dict:
         if details.get("real_api_called") is not None:
             summary["real_api_called"] = details.get("real_api_called")
 
-        if details.get("evidence"):
+        if details.get("evidence") and not details.get("evidence", {}).get("simulated"):
             summary["proof"] = details.get("evidence")
-        elif summary["proof"] is None and details.get("simulated_policy_result"):
-            summary["proof"] = details.get("simulated_policy_result")
 
     if steps:
         summary["final_resource"] = steps[-1].get("action", {}).get("target")
 
+    summary["external_entry_maturity"] = _build_external_entry_maturity(steps, objective_met)
     return summary
+
+
+def _build_external_entry_maturity(steps: list[Dict], objective_met: bool) -> Dict:
+    maturity = {
+        "applicable": False,
+        "classification": "not_applicable",
+        "network_reachable_from_internet": {"status": "not_observed", "evidence": None},
+        "backend_reachable": {"status": "not_observed", "evidence": None},
+        "credential_acquisition_possible": {"status": "not_observed", "evidence": None},
+        "data_path_exploitable": {"status": "not_observed", "evidence": None},
+    }
+
+    successful_steps = [step for step in steps if (step.get("observation") or {}).get("success")]
+    entry_steps = []
+    for step in successful_steps:
+        action = step.get("action") or {}
+        details = ((step.get("observation") or {}).get("details") or {})
+        evidence = details.get("evidence") or {}
+        request_summary = details.get("request_summary") or {}
+        target = action.get("target") or ""
+        tool = action.get("tool")
+        if (
+            tool == "ec2_instance_profile_pivot"
+            or evidence.get("entry_surface")
+            or evidence.get("entry_surface_arn")
+            or request_summary.get("entry_surface_arn")
+            or target.startswith("arn:aws:apigateway:")
+            or ":loadbalancer/" in target
+            or ":instance/" in target
+        ):
+            entry_steps.append(step)
+
+    if not entry_steps:
+        return maturity
+
+    maturity["applicable"] = True
+    first_entry = entry_steps[0]
+    first_entry_index = successful_steps.index(first_entry)
+    post_entry_access_steps = [
+        step
+        for step in successful_steps[first_entry_index + 1 :]
+        if (step.get("action") or {}).get("action_type") == "access_resource"
+    ]
+    entry_details = ((first_entry.get("observation") or {}).get("details") or {})
+    entry_evidence = entry_details.get("evidence") or {}
+
+    network_status = "structural"
+    if entry_evidence.get("network_reachable_from_internet") or entry_details.get("network_reachable_from_internet"):
+        network_status = "proved"
+    maturity["network_reachable_from_internet"] = {
+        "status": network_status,
+        "evidence": {
+            "entry_surface": (
+                entry_evidence.get("entry_surface_arn")
+                or entry_evidence.get("entry_surface")
+                or (first_entry.get("action") or {}).get("target")
+            )
+        },
+    }
+
+    backend_status = "not_observed"
+    backend_evidence = {
+        "reached_role": entry_evidence.get("reached_role") or entry_details.get("reached_role"),
+        "instance_profile_arn": entry_evidence.get("instance_profile_arn"),
+    }
+    if backend_evidence.get("reached_role") or backend_evidence.get("instance_profile_arn"):
+        backend_status = "structural"
+    if entry_evidence.get("backend_reachable") or entry_details.get("backend_reachable"):
+        backend_status = "proved"
+    maturity["backend_reachable"] = {"status": backend_status, "evidence": backend_evidence}
+
+    credential_evidence = entry_evidence.get("credential_acquisition")
+    credential_status = "structural" if backend_evidence.get("reached_role") else "not_observed"
+    if credential_evidence:
+        credential_status = "proved"
+    maturity["credential_acquisition_possible"] = {
+        "status": credential_status,
+        "evidence": credential_evidence or backend_evidence.get("reached_role"),
+    }
+
+    data_status = "proved" if objective_met and post_entry_access_steps else "not_observed"
+    data_evidence = None
+    if post_entry_access_steps:
+        last_access = post_entry_access_steps[-1]
+        last_details = ((last_access.get("observation") or {}).get("details") or {})
+        data_evidence = {
+            "resource": (last_access.get("action") or {}).get("target"),
+            "proof": last_details.get("evidence"),
+        }
+    maturity["data_path_exploitable"] = {"status": data_status, "evidence": data_evidence}
+
+    if all(
+        maturity[state]["status"] == "proved"
+        for state in (
+            "network_reachable_from_internet",
+            "backend_reachable",
+            "credential_acquisition_possible",
+            "data_path_exploitable",
+        )
+    ):
+        maturity["classification"] = "public_exploit_path_proved_end_to_end"
+    else:
+        maturity["classification"] = "public_exposure_structurally_linked_to_privileged_path"
+
+    return maturity
 
 
 def _short_resource(value: str | None) -> str:

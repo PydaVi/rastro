@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate cross-account finance warehouse access after local compute pivot.",
+  "target": "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key",
+  "success_criteria": {
+    "flag": "cross_account_path_opened"
+  }
+}

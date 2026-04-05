@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate Lambda-mediated access to payroll data.",
+  "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key",
+  "success_criteria": {
+    "flag": "serverless_advanced_lambda_data"
+  }
+}

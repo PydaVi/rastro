@@ -1,0 +1,52 @@
+{
+  "name": "compute-pivot-app-iam-s3-lab",
+  "description": "Synthetic IAM to S3 environment for compute-pivot-app.",
+  "version": "0.1",
+  "state": {
+    "flags": [],
+    "identities": {
+      "arn:aws:iam::123456789012:user/platform-analyst": {
+        "available_actions": [
+          {"action_type": "enumerate", "target": "arn:aws:iam::123456789012:root", "parameters": {"service": "iam", "region": "us-east-1"}, "tool": "iam_list_roles"},
+          {"action_type": "assume_role", "target": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole", "parameters": {"service": "sts", "region": "us-east-1", "role_arn": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole", "session_name": "compute-payroll-s3"}, "tool": "iam_passrole"},
+          {"action_type": "assume_role", "target": "arn:aws:iam::123456789012:role/SupportBastionRole", "parameters": {"service": "sts", "region": "us-east-1", "role_arn": "arn:aws:iam::123456789012:role/SupportBastionRole", "session_name": "compute-bastion-s3"}, "tool": "iam_passrole"}
+        ]
+      }
+    }
+  },
+  "transitions": [
+    {"action_type": "enumerate", "actor": "arn:aws:iam::123456789012:user/platform-analyst", "target": "arn:aws:iam::123456789012:root", "observation": {"details": "Listed compute roles.", "discovered_roles": ["arn:aws:iam::123456789012:role/PayrollAppInstanceRole", "arn:aws:iam::123456789012:role/SupportBastionRole"]}},
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "observation": {"granted_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole", "details": "Assumed PayrollAppInstanceRole."},
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/PayrollAppInstanceRole": {
+          "available_actions": [
+            {"action_type": "enumerate", "target": "arn:aws:s3:::compute-payroll-dumps-prod", "parameters": {"service": "s3", "region": "us-east-1", "bucket": "compute-payroll-dumps-prod"}, "tool": "s3_list_bucket"},
+            {"action_type": "access_resource", "target": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv", "parameters": {"service": "s3", "region": "us-east-1", "bucket": "compute-payroll-dumps-prod", "object_key": "payroll/2026-03/payroll.csv"}, "tool": "s3_read_sensitive"}
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:role/SupportBastionRole",
+      "observation": {"granted_role": "arn:aws:iam::123456789012:role/SupportBastionRole", "details": "Assumed SupportBastionRole."},
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/SupportBastionRole": {
+          "available_actions": [
+            {"action_type": "enumerate", "target": "arn:aws:s3:::compute-app-logs-prod", "parameters": {"service": "s3", "region": "us-east-1", "bucket": "compute-app-logs-prod"}, "tool": "s3_list_bucket"},
+            {"action_type": "access_resource", "target": "arn:aws:s3:::compute-app-logs-prod/nginx/access.log", "parameters": {"service": "s3", "region": "us-east-1", "bucket": "compute-app-logs-prod", "object_key": "nginx/access.log"}, "tool": "s3_read_sensitive"}
+          ]
+        }
+      }
+    },
+    {"action_type": "enumerate", "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole", "target": "arn:aws:s3:::compute-payroll-dumps-prod", "observation": {"details": "Listed payroll dumps bucket.", "discovered_objects": ["payroll/2026-03/payroll.csv"]}},
+    {"action_type": "enumerate", "actor": "arn:aws:iam::123456789012:role/SupportBastionRole", "target": "arn:aws:s3:::compute-app-logs-prod", "observation": {"details": "Listed logs bucket.", "discovered_objects": ["nginx/access.log"]}},
+    {"action_type": "access_resource", "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole", "target": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv", "observation": {"details": "Read payroll dump.", "evidence": {"bucket": "compute-payroll-dumps-prod", "object_key": "payroll/2026-03/payroll.csv"}}},
+    {"action_type": "access_resource", "actor": "arn:aws:iam::123456789012:role/SupportBastionRole", "target": "arn:aws:s3:::compute-app-logs-prod/nginx/access.log", "observation": {"details": "Read access log.", "evidence": {"bucket": "compute-app-logs-prod", "object_key": "nginx/access.log"}}}
+  ]
+}

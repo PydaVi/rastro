@@ -7,5 +7,6 @@ preconditions:
   - iam_roles_listed
 postconditions:
   - audit_role_assumed
+  - privileged_identity_active
 implementation: tools/aws/iam_passrole.py
 safe_simulation: true

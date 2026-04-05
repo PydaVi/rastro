@@ -1,0 +1,201 @@
+{
+  "name": "mixed-generalization-cross-account-lab",
+  "description": "Synthetic cross-account path for mixed-generalization benchmark.",
+  "version": "0.1",
+  "aliases": {
+    "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/ops/core-a": [
+      "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/r/e1"
+    ]
+  },
+  "state": {
+    "flags": [],
+    "identities": {
+      "arn:aws:iam::123456789012:user/platform-analyst": {
+        "available_actions": [
+          {
+            "action_type": "enumerate",
+            "target": "arn:aws:iam::123456789012:root",
+            "parameters": {
+              "service": "iam",
+              "region": "us-east-1"
+            },
+            "tool": "iam_list_roles"
+          },
+          {
+            "action_type": "access_resource",
+            "target": "arn:aws:apigateway:us-east-1::/restapis/payroll-mix-public",
+            "parameters": {
+              "service": "apigateway",
+              "region": "us-east-1",
+              "resource_arn": "arn:aws:apigateway:us-east-1::/restapis/payroll-mix-public"
+            },
+            "tool": "ec2_instance_profile_pivot"
+          }
+        ]
+      }
+    }
+  },
+  "transitions": [
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:root",
+      "observation": {
+        "details": "Listed mixed cross-account roles.",
+        "discovered_roles": [
+          "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+          "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole",
+          "arn:aws:iam::210987654321:role/FinanceWarehouseRelayRole"
+        ]
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:apigateway:us-east-1::/restapis/payroll-mix-public",
+      "observation": {
+        "details": "Pivoted from public entry to payroll app instance role.",
+        "evidence": {
+          "entry_surface": "payroll-mix-public",
+          "reached_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+        }
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/PayrollAppInstanceRole": {
+          "available_actions": [
+            {
+              "action_type": "assume_role",
+              "target": "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole",
+              "parameters": {
+                "service": "sts",
+                "region": "us-east-1",
+                "role_arn": "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole",
+                "session_name": "mixed-cross-finance"
+              },
+              "tool": "iam_passrole"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole",
+      "observation": {
+        "granted_role": "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole",
+        "details": "Assumed mixed cross-account finance role."
+      },
+      "update_identities": {
+        "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole": {
+          "available_actions": [
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/finance/warehouse-api-key"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "assume_role",
+              "target": "arn:aws:iam::210987654321:role/FinanceWarehouseRelayRole",
+              "parameters": {
+                "service": "sts",
+                "region": "us-east-1",
+                "role_arn": "arn:aws:iam::210987654321:role/FinanceWarehouseRelayRole",
+                "session_name": "mixed-cross-relay"
+              },
+              "tool": "iam_passrole"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/ops/core-a",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/ops/core-a"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/x/t1",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/x/t1"
+              },
+              "tool": "secretsmanager_read_secret"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/ops/core-api-key",
+              "parameters": {
+                "service": "secretsmanager",
+                "region": "us-east-1",
+                "secret_id": "prod/ops/core-api-key"
+              },
+              "tool": "secretsmanager_read_secret"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole",
+      "target": "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key",
+      "observation": {
+        "details": "Read mixed cross-account warehouse api key.",
+        "evidence": {
+          "secret_id": "prod/finance/warehouse-api-key"
+        }
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole",
+      "target": "arn:aws:iam::210987654321:role/FinanceWarehouseRelayRole",
+      "observation": {
+        "granted_role": "arn:aws:iam::210987654321:role/FinanceWarehouseRelayRole",
+        "details": "Assumed relay role inside destination account."
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole",
+      "target": "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/ops/core-a",
+      "observation": {
+        "details": "Read mixed cross-account core api key.",
+        "evidence": {
+          "secret_id": "prod/ops/core-a"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole",
+      "target": "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/x/t1",
+      "observation": {
+        "details": "Read mixed cross-account alias target t1.",
+        "evidence": {
+          "secret_id": "prod/x/t1"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole",
+      "target": "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/ops/core-api-key",
+      "observation": {
+        "details": "Read mixed cross-account core api key.",
+        "evidence": {
+          "secret_id": "prod/ops/core-api-key"
+        }
+      }
+    }
+  ]
+}

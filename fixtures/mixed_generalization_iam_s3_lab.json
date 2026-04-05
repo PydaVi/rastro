@@ -10,7 +10,10 @@
           {
             "action_type": "enumerate",
             "target": "arn:aws:iam::123456789012:root",
-            "parameters": {"service": "iam", "region": "us-east-1"},
+            "parameters": {
+              "service": "iam",
+              "region": "us-east-1"
+            },
             "tool": "iam_list_roles"
           },
           {
@@ -66,7 +69,11 @@
             {
               "action_type": "enumerate",
               "target": "arn:aws:s3:::mixed-payroll-data-prod",
-              "parameters": {"service": "s3", "region": "us-east-1", "bucket": "mixed-payroll-data-prod"},
+              "parameters": {
+                "service": "s3",
+                "region": "us-east-1",
+                "bucket": "mixed-payroll-data-prod"
+              },
               "tool": "s3_list_bucket"
             },
             {
@@ -77,6 +84,17 @@
                 "region": "us-east-1",
                 "bucket": "mixed-payroll-data-prod",
                 "object_key": "payroll/2026-03/payroll.csv"
+              },
+              "tool": "s3_read_sensitive"
+            },
+            {
+              "action_type": "access_resource",
+              "target": "arn:aws:s3:::mixed-payroll-data-prod/data/2026-03/r1.bin",
+              "parameters": {
+                "service": "s3",
+                "region": "us-east-1",
+                "bucket": "mixed-payroll-data-prod",
+                "object_key": "data/2026-03/r1.bin"
               },
               "tool": "s3_read_sensitive"
             }
@@ -99,7 +117,9 @@
       "target": "arn:aws:s3:::mixed-payroll-data-prod",
       "observation": {
         "details": "Listed mixed payroll bucket.",
-        "discovered_objects": ["payroll/2026-03/payroll.csv"]
+        "discovered_objects": [
+          "payroll/2026-03/payroll.csv"
+        ]
       }
     },
     {
@@ -111,6 +131,18 @@
         "evidence": {
           "bucket": "mixed-payroll-data-prod",
           "object_key": "payroll/2026-03/payroll.csv"
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:s3:::mixed-payroll-data-prod/data/2026-03/r1.bin",
+      "observation": {
+        "details": "Read mixed obfuscated local object.",
+        "evidence": {
+          "bucket": "mixed-payroll-data-prod",
+          "object_key": "data/2026-03/r1.bin"
         }
       }
     }

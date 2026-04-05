@@ -4,7 +4,7 @@ phase: discovery
 mitre_id: T1619
 platform: S3
 preconditions:
-  - audit_role_assumed
+  - privileged_identity_active
 postconditions:
   - s3_objects_listed
 implementation: tools/aws/s3_list_bucket.py

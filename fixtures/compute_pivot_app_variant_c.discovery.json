@@ -1,0 +1,166 @@
+{
+  "target": "compute-pivot-app-variant-c",
+  "bundle": "aws-enterprise",
+  "collected_at": "2026-04-03T06:00:00+00:00",
+  "caller_identity": {
+    "Account": "123456789012",
+    "Arn": "arn:aws:iam::123456789012:user/platform-analyst"
+  },
+  "services_scanned": [
+    "iam",
+    "ec2",
+    "s3",
+    "secretsmanager",
+    "ssm",
+    "elasticloadbalancing",
+    "apigateway"
+  ],
+  "regions_scanned": [
+    "us-east-1"
+  ],
+  "resources": [
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "region": "us-east-1",
+      "metadata": {"workload": "ec2", "tier": "prod"},
+      "source": "synthetic"
+    },
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/AnalyticsBrokerRole",
+      "region": "us-east-1",
+      "metadata": {"workload": "broker", "tier": "prod"},
+      "source": "synthetic"
+    },
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::210987654321:role/PayrollReplicaAccessRole",
+      "region": "us-east-1",
+      "metadata": {"workload": "cross-account", "tier": "prod"},
+      "source": "synthetic"
+    },
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole",
+      "region": "us-east-1",
+      "metadata": {"workload": "cross-account", "tier": "prod"},
+      "source": "synthetic"
+    },
+    {
+      "service": "ec2",
+      "resource_type": "compute.instance_profile",
+      "identifier": "arn:aws:iam::123456789012:instance-profile/PayrollAppProfile",
+      "region": "us-east-1",
+      "metadata": {
+        "role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "ec2",
+      "resource_type": "compute.ec2_instance",
+      "identifier": "arn:aws:ec2:us-east-1:123456789012:instance/i-payrollapp03",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "payroll-edge-prod-03",
+        "instance_profile": "arn:aws:iam::123456789012:instance-profile/PayrollAppProfile",
+        "exposure": "public-api"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "apigateway",
+      "resource_type": "network.api_gateway",
+      "identifier": "arn:aws:apigateway:us-east-1::/restapis/payroll-edge-public",
+      "region": "us-east-1",
+      "metadata": {
+        "exposure": "public",
+        "target_instance": "arn:aws:ec2:us-east-1:123456789012:instance/i-payrollapp03"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "elasticloadbalancing",
+      "resource_type": "network.load_balancer",
+      "identifier": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/public-edge-bridge",
+      "region": "us-east-1",
+      "metadata": {
+        "exposure": "public",
+        "target_instance": "arn:aws:ec2:us-east-1:123456789012:instance/i-payrollapp03"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_object",
+      "identifier": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+      "region": "us-east-1",
+      "metadata": {
+        "bucket": "compute-payroll-dumps-prod",
+        "object_key": "payroll/2026-03/payroll.csv",
+        "classification": "restricted",
+        "reachable_roles": [
+          "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+        ]
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "secretsmanager",
+      "resource_type": "secret.secrets_manager",
+      "identifier": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll/backend-db-password",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "prod/payroll/backend-db-password",
+        "classification": "restricted",
+        "reachable_roles": [
+          "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+        ]
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_object",
+      "identifier": "arn:aws:s3:::customer-payroll-replica-prod/payroll/2026-03.csv",
+      "region": "us-east-1",
+      "metadata": {
+        "bucket": "customer-payroll-replica-prod",
+        "object_key": "payroll/2026-03.csv",
+        "classification": "restricted",
+        "reachable_roles": [
+          "arn:aws:iam::210987654321:role/PayrollReplicaAccessRole"
+        ],
+        "pivot_chain": [
+          "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+          "arn:aws:iam::210987654321:role/PayrollReplicaAccessRole"
+        ]
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "secretsmanager",
+      "resource_type": "secret.secrets_manager",
+      "identifier": "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "prod/finance/warehouse-api-key",
+        "classification": "restricted",
+        "reachable_roles": [
+          "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole"
+        ],
+        "pivot_chain": [
+          "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+          "arn:aws:iam::123456789012:role/AnalyticsBrokerRole",
+          "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole"
+        ]
+      },
+      "source": "synthetic"
+    }
+  ]
+}

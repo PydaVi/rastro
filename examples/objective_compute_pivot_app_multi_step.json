@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate deep multi-step chain to finance warehouse data.",
+  "target": "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key",
+  "success_criteria": {
+    "flag": "multi_step_chain_opened"
+  }
+}

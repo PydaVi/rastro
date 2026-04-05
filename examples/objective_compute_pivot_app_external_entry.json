@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate external entry to sensitive payroll data through a public compute surface.",
+  "target": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+  "success_criteria": {
+    "flag": "compute_identity_pivoted"
+  }
+}

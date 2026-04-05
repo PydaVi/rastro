@@ -1,0 +1,37 @@
+{
+  "target": "aws",
+  "allowed_actions": [
+    "enumerate",
+    "analyze",
+    "assume_role",
+    "access_resource"
+  ],
+  "allowed_resources": [
+    "arn:aws:iam::123456789012:root",
+    "arn:aws:iam::123456789012:role/PublicApiBridgeRole",
+    "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+    "arn:aws:lambda:us-east-1:123456789012:function:payroll-handler",
+    "arn:aws:lambda:us-east-1:123456789012:function:internal-admin-sync",
+    "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key"
+  ],
+  "max_steps": 8,
+  "planner": {
+    "backend": "mock"
+  },
+  "dry_run": true,
+  "aws_account_ids": [
+    "123456789012"
+  ],
+  "allowed_regions": [
+    "us-east-1"
+  ],
+  "allowed_services": [
+    "iam",
+    "sts",
+    "lambda",
+    "secretsmanager"
+  ],
+  "authorized_by": "Demo Operator",
+  "authorized_at": "2026-03-28",
+  "authorization_document": "docs/authorization-demo.md"
+}

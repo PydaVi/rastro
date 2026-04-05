@@ -1,0 +1,93 @@
+{
+  "name": "compute-pivot-app-multi-step-lab",
+  "description": "Synthetic multi-step path for compute-pivot-app.",
+  "version": "0.1",
+  "state": {
+    "flags": [],
+    "identities": {
+      "arn:aws:iam::123456789012:user/platform-analyst": {
+        "available_actions": [
+          {"action_type": "enumerate", "target": "arn:aws:iam::123456789012:root", "parameters": {"service": "iam", "region": "us-east-1"}, "tool": "iam_list_roles"},
+          {"action_type": "access_resource", "target": "arn:aws:apigateway:us-east-1::/restapis/payroll-edge-public", "parameters": {"service": "apigateway", "region": "us-east-1", "resource_arn": "arn:aws:apigateway:us-east-1::/restapis/payroll-edge-public"}, "tool": "ec2_instance_profile_pivot"}
+        ]
+      }
+    }
+  },
+  "transitions": [
+    {
+      "action_type": "enumerate",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:root",
+      "observation": {
+        "details": "Listed deep chain roles.",
+        "discovered_roles": [
+          "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+          "arn:aws:iam::123456789012:role/AnalyticsBrokerRole",
+          "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole"
+        ]
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:apigateway:us-east-1::/restapis/payroll-edge-public",
+      "observation": {
+        "details": "Pivoted from public edge to payroll app instance role.",
+        "evidence": {
+          "entry_surface": "payroll-edge-public",
+          "reached_role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+        }
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/PayrollAppInstanceRole": {
+          "available_actions": [
+            {"action_type": "assume_role", "target": "arn:aws:iam::123456789012:role/AnalyticsBrokerRole", "parameters": {"service": "sts", "region": "us-east-1", "role_arn": "arn:aws:iam::123456789012:role/AnalyticsBrokerRole", "session_name": "analytics-broker"}, "tool": "iam_passrole"}
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "target": "arn:aws:iam::123456789012:role/AnalyticsBrokerRole",
+      "observation": {
+        "granted_role": "arn:aws:iam::123456789012:role/AnalyticsBrokerRole",
+        "details": "Assumed analytics broker role."
+      },
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/AnalyticsBrokerRole": {
+          "available_actions": [
+            {"action_type": "assume_role", "target": "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole", "parameters": {"service": "sts", "region": "us-east-1", "role_arn": "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole", "session_name": "finance-deep"}, "tool": "iam_passrole"}
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:role/AnalyticsBrokerRole",
+      "target": "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole",
+      "observation": {
+        "granted_role": "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole",
+        "details": "Assumed deep finance warehouse role."
+      },
+      "update_identities": {
+        "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole": {
+          "available_actions": [
+            {"action_type": "access_resource", "target": "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key", "parameters": {"service": "secretsmanager", "region": "us-east-1", "secret_id": "prod/finance/warehouse-api-key"}, "tool": "secretsmanager_read_secret"}
+          ]
+        }
+      }
+    },
+    {
+      "action_type": "access_resource",
+      "actor": "arn:aws:iam::210987654321:role/FinanceWarehouseDeepRole",
+      "target": "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key",
+      "observation": {
+        "details": "Read deep finance warehouse api key.",
+        "evidence": {
+          "secret_id": "prod/finance/warehouse-api-key"
+        }
+      }
+    }
+  ]
+}

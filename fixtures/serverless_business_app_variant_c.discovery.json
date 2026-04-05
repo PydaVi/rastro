@@ -1,0 +1,278 @@
+{
+  "target": "serverless-business-app-variant-c",
+  "bundle": "aws-advanced",
+  "collected_at": "2026-04-03T04:00:00+00:00",
+  "caller_identity": {
+    "Account": "123456789012",
+    "Arn": "arn:aws:iam::123456789012:user/platform-analyst"
+  },
+  "services_scanned": [
+    "iam",
+    "lambda",
+    "apigateway",
+    "secretsmanager",
+    "ssm",
+    "kms",
+    "s3"
+  ],
+  "regions_scanned": [
+    "us-east-1"
+  ],
+  "resources": [
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+      "region": "us-east-1",
+      "metadata": {"service": "lambda"},
+      "source": "synthetic"
+    },
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/BillingWorkerRole",
+      "region": "us-east-1",
+      "metadata": {"service": "lambda"},
+      "source": "synthetic"
+    },
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/OrdersExportRole",
+      "region": "us-east-1",
+      "metadata": {"service": "lambda"},
+      "source": "synthetic"
+    },
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/InternalAdminSyncRole",
+      "region": "us-east-1",
+      "metadata": {"service": "lambda"},
+      "source": "synthetic"
+    },
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/PayrollDecryptRole",
+      "region": "us-east-1",
+      "metadata": {"service": "kms"},
+      "source": "synthetic"
+    },
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/PublicApiBridgeRole",
+      "region": "us-east-1",
+      "metadata": {"service": "apigateway"},
+      "source": "synthetic"
+    },
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/ServerlessAuditRole",
+      "region": "us-east-1",
+      "metadata": {"service": "audit"},
+      "source": "synthetic"
+    },
+    {
+      "service": "lambda",
+      "resource_type": "compute.lambda_function",
+      "identifier": "arn:aws:lambda:us-east-1:123456789012:function:payroll-handler",
+      "region": "us-east-1",
+      "metadata": {
+        "role": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+        "kms_key": "arn:aws:kms:us-east-1:123456789012:key/payroll-runtime"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "lambda",
+      "resource_type": "compute.lambda_function",
+      "identifier": "arn:aws:lambda:us-east-1:123456789012:function:billing-worker",
+      "region": "us-east-1",
+      "metadata": {
+        "role": "arn:aws:iam::123456789012:role/BillingWorkerRole"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "lambda",
+      "resource_type": "compute.lambda_function",
+      "identifier": "arn:aws:lambda:us-east-1:123456789012:function:orders-export",
+      "region": "us-east-1",
+      "metadata": {
+        "role": "arn:aws:iam::123456789012:role/OrdersExportRole"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "lambda",
+      "resource_type": "compute.lambda_function",
+      "identifier": "arn:aws:lambda:us-east-1:123456789012:function:internal-admin-sync",
+      "region": "us-east-1",
+      "metadata": {
+        "role": "arn:aws:iam::123456789012:role/InternalAdminSyncRole"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "apigateway",
+      "resource_type": "network.api_gateway",
+      "identifier": "arn:aws:apigateway:us-east-1::/restapis/payroll-public",
+      "region": "us-east-1",
+      "metadata": {"exposure": "public"},
+      "source": "synthetic"
+    },
+    {
+      "service": "apigateway",
+      "resource_type": "network.api_gateway",
+      "identifier": "arn:aws:apigateway:us-east-1::/restapis/admin-public-bridge",
+      "region": "us-east-1",
+      "metadata": {"exposure": "public"},
+      "source": "synthetic"
+    },
+    {
+      "service": "apigateway",
+      "resource_type": "network.api_gateway",
+      "identifier": "arn:aws:apigateway:us-east-1::/restapis/internal-admin",
+      "region": "us-east-1",
+      "metadata": {"exposure": "private"},
+      "source": "synthetic"
+    },
+    {
+      "service": "secretsmanager",
+      "resource_type": "secret.secrets_manager",
+      "identifier": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "prod/payroll-api-key",
+        "kms_key": "arn:aws:kms:us-east-1:123456789012:key/payroll-runtime"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "secretsmanager",
+      "resource_type": "secret.secrets_manager",
+      "identifier": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-admin-bridge-token",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "prod/payroll-admin-bridge-token"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "secretsmanager",
+      "resource_type": "secret.secrets_manager",
+      "identifier": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/billing-db-password",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "prod/billing-db-password",
+        "kms_key": "arn:aws:kms:us-east-1:123456789012:key/billing-runtime"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "secretsmanager",
+      "resource_type": "secret.secrets_manager",
+      "identifier": "arn:aws:secretsmanager:us-east-1:123456789012:secret:internal/admin-token",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "internal/admin-token"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "ssm",
+      "resource_type": "secret.ssm_parameter",
+      "identifier": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "/prod/payroll/api_key",
+        "path_prefix": "/prod"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "ssm",
+      "resource_type": "secret.ssm_parameter",
+      "identifier": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/admin_bridge_key",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "/prod/payroll/admin_bridge_key",
+        "path_prefix": "/prod"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "ssm",
+      "resource_type": "secret.ssm_parameter",
+      "identifier": "arn:aws:ssm:us-east-1:123456789012:parameter/shared/feature_flags/admin_sync",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "/shared/feature_flags/admin_sync",
+        "path_prefix": "/shared"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "kms",
+      "resource_type": "crypto.kms_key",
+      "identifier": "arn:aws:kms:us-east-1:123456789012:key/payroll-runtime",
+      "region": "us-east-1",
+      "metadata": {"alias": "alias/payroll-runtime"},
+      "source": "synthetic"
+    },
+    {
+      "service": "kms",
+      "resource_type": "crypto.kms_key",
+      "identifier": "arn:aws:kms:us-east-1:123456789012:key/billing-runtime",
+      "region": "us-east-1",
+      "metadata": {"alias": "alias/billing-runtime"},
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_bucket",
+      "identifier": "arn:aws:s3:::serverless-payroll-exports-prod",
+      "region": "us-east-1",
+      "metadata": {},
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_object",
+      "identifier": "arn:aws:s3:::serverless-payroll-exports-prod/exports/payroll-2026-03.csv",
+      "region": "us-east-1",
+      "metadata": {
+        "bucket": "serverless-payroll-exports-prod",
+        "object_key": "exports/payroll-2026-03.csv"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_bucket",
+      "identifier": "arn:aws:s3:::lambda-artifacts-prod",
+      "region": "us-east-1",
+      "metadata": {},
+      "source": "synthetic"
+    }
+  ],
+  "evidence": [
+    {"service": "iam", "api_calls": ["sts:GetCallerIdentity", "iam:ListRoles"]},
+    {"service": "lambda", "api_calls": ["lambda:ListFunctions"]},
+    {"service": "apigateway", "api_calls": ["apigateway:GET"]},
+    {"service": "secretsmanager", "api_calls": ["secretsmanager:ListSecrets"]},
+    {"service": "ssm", "api_calls": ["ssm:GetParametersByPath"]},
+    {"service": "kms", "api_calls": ["kms:ListKeys", "kms:ListAliases"]},
+    {"service": "s3", "api_calls": ["s3:ListBuckets", "s3:ListBucket"]}
+  ],
+  "summary": {
+    "roles": 7,
+    "buckets": 2,
+    "objects": 1,
+    "secrets": 4,
+    "parameters": 3
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate IAM access to a sensitive serverless export object.",
+  "target": "arn:aws:s3:::serverless-payroll-exports-prod/exports/payroll-2026-03.csv",
+  "success_criteria": {
+    "flag": "serverless_foundation_s3"
+  }
+}

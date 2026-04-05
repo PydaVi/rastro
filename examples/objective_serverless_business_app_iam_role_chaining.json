@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate serverless role chaining to the payroll handler role.",
+  "target": "arn:aws:iam::123456789012:role/PayrollHandlerRole",
+  "success_criteria": {
+    "flag": "serverless_foundation_role_chain"
+  }
+}

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from core.domain import Scope
+from core.blind_real_runtime import BlindRealRuntime
 from operations.catalog import BUNDLES, FOUNDATION_PROFILES, get_profile, resolve_bundle
 from operations.models import (
     AssessmentFinding,
@@ -149,6 +151,7 @@ def run_campaign(
     preflight = result.get("preflight", {})
     return CampaignResult(
         status="passed" if objective_met else "objective_not_met",
+        campaign_id=None,
         profile=profile_name,
         output_dir=output_dir,
         generated_scope=generated_scope_path,
@@ -170,20 +173,62 @@ def run_generated_campaign(
     max_steps: int | None = None,
     seed: int | None = None,
     profile_resolver=None,
+    discovery_snapshot: dict | None = None,
 ) -> CampaignResult:
     profile_resolver = profile_resolver or get_profile
     profile_name = plan["profile"]
     validate_profile_access(profile_name, authorization)
     generated_scope_path = Path(plan["generated_scope"])
     generated_objective_path = Path(plan["generated_objective"])
-    fixture_path = plan.get("fixture_path")
-    if fixture_path:
-        resolved_fixture_path = Path(fixture_path)
+    generated_scope_data = json.loads(generated_scope_path.read_text())
+    if (
+        discovery_snapshot is not None
+        and discovery_snapshot.get("caller_identity")
+        and os.getenv("RASTRO_ENABLE_AWS_REAL", "0") == "1"
+        and generated_scope_data.get("target") == "aws"
+    ):
+        generated_scope_data["dry_run"] = False
+        generated_scope_data["allowed_resources"] = _blind_real_allowed_resources(
+            plan=plan,
+            discovery_snapshot=discovery_snapshot,
+            target=target,
+        )
+        generated_scope_path.write_text(json.dumps(generated_scope_data, indent=2))
+    generated_scope = Scope.model_validate(generated_scope_data)
+    runtime_fixture = None
+    resolved_fixture_path = None
+    if (
+        discovery_snapshot is not None
+        and generated_scope.target.value == "aws"
+        and not generated_scope.dry_run
+    ):
+        entry_identities = plan.get("entry_identities") or target.entry_roles
+        runtime_fixture = BlindRealRuntime.build(
+            plan=plan,
+            discovery_snapshot=discovery_snapshot,
+            scope=generated_scope,
+            entry_identities=entry_identities,
+        )
+        # runtime-driven plans must not fall back to fixture path
+        plan["fixture_path"] = None
+        plan["scope_template_path"] = None
+        plan["execution_fixture_set"] = None
     else:
-        profile = _resolve_profile(profile_resolver, profile_name, plan)
-        resolved_fixture_path = profile.fixture_path
+        fixture_path = plan.get("fixture_path")
+        if fixture_path:
+            resolved_fixture_path = Path(fixture_path)
+        else:
+            profile = _resolve_profile(profile_resolver, profile_name, plan)
+            resolved_fixture_path = profile.fixture_path
+    if (
+        discovery_snapshot is not None
+        and generated_scope.target.value == "aws"
+        and not generated_scope.dry_run
+        and resolved_fixture_path is not None
+    ):
+        raise ValueError("blind real campaigns derived from discovery must not use fixture_path")
     try:
-        result = runner(
+        runner_kwargs = dict(
             fixture_path=resolved_fixture_path,
             objective_path=generated_objective_path,
             scope_path=generated_scope_path,
@@ -191,6 +236,9 @@ def run_generated_campaign(
             max_steps=max_steps,
             seed=seed,
         )
+        if runtime_fixture is not None:
+            runner_kwargs["runtime_fixture"] = runtime_fixture
+        result = runner(**runner_kwargs)
     except Exception as exc:
         message = str(exc)
         status = "preflight_failed" if "preflight failed" in message.lower() else "run_failed"
@@ -208,6 +256,7 @@ def run_generated_campaign(
     preflight = result.get("preflight", {})
     return CampaignResult(
         status="passed" if objective_met else "objective_not_met",
+        campaign_id=plan.get("id"),
         profile=profile_name,
         output_dir=output_dir,
         generated_scope=generated_scope_path,
@@ -302,20 +351,30 @@ def run_discovery_driven_assessment(
     )
 
     campaigns: list[CampaignResult] = []
+    entry_identities = _blind_real_entry_identities(discovery_snapshot=discovery_snapshot, target=target)
     for plan in campaign_plan_payload["plans"]:
-        campaign_output = output_dir / "campaigns" / plan["profile"]
-        campaigns.append(
-            run_generated_campaign(
-                plan=plan,
-                target=target,
-                authorization=authorization,
-                output_dir=campaign_output,
-                runner=runner,
-                max_steps=max_steps,
-                seed=seed,
-                profile_resolver=profile_resolver,
+        base_plan_id = plan.get("id") or f"{plan['profile']}:{_slugify(plan.get('resource_arn', plan.get('generated_objective', 'campaign')))}"
+        for entry_identity in entry_identities:
+            actor_slug = _slugify(entry_identity)
+            plan_id = f"{base_plan_id}:{actor_slug}"
+            campaign_output = output_dir / "campaigns" / plan["profile"] / _slugify(plan_id)
+            campaigns.append(
+                run_generated_campaign(
+                    plan={
+                        **plan,
+                        "id": plan_id,
+                        "entry_identities": [entry_identity],
+                    },
+                    target=target,
+                    authorization=authorization,
+                    output_dir=campaign_output,
+                    runner=runner,
+                    max_steps=max_steps,
+                    seed=seed,
+                    profile_resolver=profile_resolver,
+                    discovery_snapshot=discovery_snapshot,
+                )
             )
-        )
 
     return AssessmentResult(
         bundle=bundle_name,
@@ -340,6 +399,38 @@ def _resolve_profile(profile_resolver, profile_name: str, plan: dict):
         return profile_resolver(profile_name, plan)
     except TypeError:
         return profile_resolver(profile_name)
+
+
+def _extract_account_id(resource_arn: str) -> str | None:
+    if not resource_arn.startswith("arn:aws:"):
+        return None
+    parts = resource_arn.split(":")
+    if len(parts) < 5:
+        return None
+    return parts[4] or None
+
+
+def _blind_real_allowed_resources(*, plan: dict, discovery_snapshot: dict, target: TargetConfig) -> list[str]:
+    allowed_resources: set[str] = set()
+    resource_arn = plan.get("resource_arn")
+    if resource_arn:
+        allowed_resources.add(resource_arn)
+    for resource in discovery_snapshot.get("resources", []):
+        identifier = resource.get("identifier")
+        if not identifier:
+            continue
+        if resource.get("resource_type") == "identity.role":
+            allowed_resources.add(identifier)
+    return sorted(allowed_resources)
+
+
+def _blind_real_entry_identities(*, discovery_snapshot: dict, target: TargetConfig) -> list[str]:
+    users = [
+        resource.get("identifier")
+        for resource in discovery_snapshot.get("resources", [])
+        if resource.get("resource_type") == "identity.user" and resource.get("identifier")
+    ]
+    return sorted(set(users)) or list(target.entry_roles)
 
 
 def write_assessment_summary(result: AssessmentResult, output_dir: Path) -> tuple[Path, Path]:
@@ -395,7 +486,9 @@ def write_assessment_findings(result: AssessmentResult, output_dir: Path) -> tup
         "target": result.target,
         "summary": {
             "findings_total": len(findings),
-            "validated_findings": len(findings),
+            "validated_findings": sum(1 for finding in findings if finding.status == "validated"),
+            "observed_findings": sum(1 for finding in findings if finding.status == "observed"),
+            "finding_states": _count_states(findings),
             "by_profile": _count_findings_by_profile(findings),
         },
         "findings": [finding.model_dump(mode="json") for finding in findings],
@@ -407,6 +500,7 @@ def write_assessment_findings(result: AssessmentResult, output_dir: Path) -> tup
 
 def build_assessment_findings(result: AssessmentResult) -> list[AssessmentFinding]:
     findings: list[AssessmentFinding] = []
+    seen_fingerprints: set[tuple[str, str, str, str]] = set()
     for campaign in result.campaigns:
         if campaign.status != "passed" or not campaign.report_json or not campaign.report_json.exists():
             continue
@@ -415,18 +509,41 @@ def build_assessment_findings(result: AssessmentResult) -> list[AssessmentFindin
         objective = report.get("objective", {})
         target_resource = executive_summary.get("final_resource") or objective.get("target") or "-"
         path_summary = _build_path_summary(report)
+        finding_status, evidence_level = _classify_finding(report, campaign)
+        evidence_summary = _build_evidence_summary(report, finding_status)
+        finding_state = _determine_finding_state(report, campaign, target_resource)
+        fingerprint = (
+            campaign.profile,
+            target_resource,
+            (
+                executive_summary.get("effective_entry_identity")
+                or executive_summary.get("initial_identity")
+                or "-"
+            ),
+            finding_status,
+            _slugify(evidence_summary),
+        )
+        if fingerprint in seen_fingerprints:
+            continue
+        seen_fingerprints.add(fingerprint)
         findings.append(
             AssessmentFinding(
-                id=f"finding:{campaign.profile}:{_slugify(target_resource)}",
+                id=f"finding:{campaign.profile}:{_slugify(target_resource)}:{finding_status}",
                 title=_build_finding_title(campaign.profile, target_resource),
                 profile=campaign.profile,
                 severity=_severity_for_profile(campaign.profile),
                 confidence="high" if campaign.objective_met else "medium",
+                status=finding_status,
+                finding_state=finding_state,
                 target_resource=target_resource,
-                entry_point=executive_summary.get("initial_identity"),
+                entry_point=(
+                    executive_summary.get("effective_entry_identity")
+                    or executive_summary.get("initial_identity")
+                ),
                 path_summary=path_summary,
                 services_involved=report.get("execution_policy", {}).get("allowed_services", []),
-                evidence_summary=_build_evidence_summary(report),
+                evidence_summary=evidence_summary,
+                evidence_level=evidence_level,
                 mitre_techniques=[item.get("mitre_id") for item in report.get("mitre_techniques", []) if item.get("mitre_id")],
             )
         )
@@ -450,7 +567,7 @@ def _build_path_summary(report: dict) -> str:
     return " -> ".join(deduped)
 
 
-def _build_evidence_summary(report: dict) -> str:
+def _build_evidence_summary(report: dict, finding_status: str = "validated") -> str:
     executive_summary = report.get("executive_summary", {})
     external_entry_maturity = executive_summary.get("external_entry_maturity") or {}
     if external_entry_maturity.get("applicable"):
@@ -462,9 +579,47 @@ def _build_evidence_summary(report: dict) -> str:
     if proof:
         return f"Validated with proof: {proof}"
     final_resource = executive_summary.get("final_resource")
-    if final_resource:
+    if final_resource and finding_status == "validated":
         return f"Validated access to {final_resource}"
-    return "Validated path without exported proof payload."
+    return "Observed target or path without minimum proof for validated exploitation."
+
+
+def _classify_finding(report: dict, campaign: CampaignResult) -> tuple[str, str]:
+    executive_summary = report.get("executive_summary", {})
+    proof = executive_summary.get("proof")
+    if proof:
+        return "validated", "proved"
+    target = (report.get("objective") or {}).get("target")
+    successful_steps = [
+        step for step in report.get("steps", [])
+        if (step.get("observation") or {}).get("success")
+    ]
+    if campaign.profile in {"aws-iam-s3", "aws-iam-secrets", "aws-iam-ssm"}:
+        for step in successful_steps:
+            action = step.get("action") or {}
+            details = ((step.get("observation") or {}).get("details") or {})
+            evidence = details.get("evidence") or {}
+            if (
+                action.get("action_type") == "access_resource"
+                and action.get("target") == target
+                and not evidence.get("simulated")
+            ):
+                return "validated", "proved"
+        return "observed", "observed"
+    if campaign.profile == "aws-iam-role-chaining":
+        for step in successful_steps:
+            details = ((step.get("observation") or {}).get("details") or {})
+            request_summary = details.get("request_summary") or {}
+            if step.get("action", {}).get("action_type") == "assume_role" and (
+                details.get("granted_role") == target or step.get("action", {}).get("target") == target
+            ) and "sts:AssumeRole" in request_summary.get("api_calls", []):
+                return "validated", "proved"
+            if step.get("action", {}).get("action_type") == "assume_role" and (
+                details.get("granted_role") == target or step.get("action", {}).get("target") == target
+            ):
+                return "observed", "observed"
+        return "observed", "observed"
+    return ("validated", "proved") if campaign.objective_met else ("observed", "observed")
 
 
 def _build_finding_title(profile: str, target_resource: str) -> str:
@@ -494,6 +649,56 @@ def _count_findings_by_profile(findings: list[AssessmentFinding]) -> dict[str, i
     return counts
 
 
+def _count_states(findings: list[AssessmentFinding]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for finding in findings:
+        counts[finding.finding_state] = counts.get(finding.finding_state, 0) + 1
+    return counts
+
+
+def _determine_finding_state(report: dict, campaign: CampaignResult, target_resource: str) -> str:
+    steps = report.get("steps", [])
+    success_steps = [
+        step for step in steps if (step.get("observation") or {}).get("success")
+    ]
+    state = "observed"
+    if success_steps:
+        state = _state_rank("reachable")
+    has_assume = False
+    has_access = False
+    for step in success_steps:
+        action = step.get("action") or {}
+        observation = (step.get("observation") or {}).get("details") or {}
+        if action.get("action_type") == "assume_role":
+            granted = observation.get("granted_role") or action.get("target")
+            if granted:
+                has_assume = True
+        if action.get("action_type") == "access_resource" and action.get("target") == target_resource:
+            if not (observation.get("evidence") or {}).get("simulated"):
+                has_access = True
+    if has_assume:
+        state = _state_rank("credentialed", current=state)
+    if has_access:
+        state = _state_rank("exploited", current=state)
+    proof = report.get("executive_summary", {}).get("proof")
+    if proof and campaign.objective_met:
+        state = _state_rank("validated_impact", current=state)
+    return state
+
+
+def _state_rank(target_state: str, current: str | None = None) -> str:
+    order = {
+        "observed": 0,
+        "reachable": 1,
+        "credentialed": 2,
+        "exploited": 3,
+        "validated_impact": 4,
+    }
+    current_rank = order.get(current, 0) if current else 0
+    target_rank = order.get(target_state, 0)
+    return target_state if target_rank > current_rank else current or target_state
+
+
 def _render_assessment_findings_markdown(payload: dict) -> str:
     lines = [
         "# Assessment Findings",
@@ -501,6 +706,7 @@ def _render_assessment_findings_markdown(payload: dict) -> str:
         f"- Bundle: {payload['bundle']}",
         f"- Target: {payload['target']}",
         f"- Findings total: {payload['summary']['findings_total']}",
+        f"- Finding states: {payload['summary'].get('finding_states', {})}",
         "",
         "## Findings",
         "",
@@ -509,8 +715,10 @@ def _render_assessment_findings_markdown(payload: dict) -> str:
         lines.append(f"### {finding['title']}")
         lines.append("")
         lines.append(f"- Profile: {finding['profile']}")
+        lines.append(f"- Status: {finding['status']}")
         lines.append(f"- Severity: {finding['severity']}")
         lines.append(f"- Confidence: {finding['confidence']}")
+        lines.append(f"- Evidence level: {finding['evidence_level']}")
         lines.append(f"- Target resource: {finding['target_resource']}")
         lines.append(f"- Entry point: {finding.get('entry_point') or '-'}")
         lines.append(f"- Path: {finding['path_summary'] or '-'}")

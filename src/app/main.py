@@ -7,7 +7,7 @@ from typing import Optional
 
 import typer
 
-from core.domain import Objective, Scope, TargetType
+from core.domain import ActionType, Objective, Scope, TargetType
 from core.aws_dry_run_lab import AwsDryRunLab
 from core.state import StateManager
 from core.fixture import Fixture
@@ -87,18 +87,21 @@ def run(
 
 def execute_run(
     *,
-    fixture_path: Path,
+    fixture_path: Path | None,
     objective_path: Path,
     scope_path: Path,
     output_dir: Path,
     max_steps: int = 5,
     seed: Optional[int] = None,
+    runtime_fixture=None,
 ) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     objective = Objective.model_validate_json(objective_path.read_text())
     scope = Scope.model_validate_json(scope_path.read_text())
-    fixture = Fixture.load(fixture_path)
+    fixture = runtime_fixture or (Fixture.load(fixture_path) if fixture_path else None)
+    if fixture is None:
+        raise typer.BadParameter("execute_run requires fixture_path or runtime_fixture")
     _validate_run_inputs(fixture, objective, scope)
     environment = _build_environment(fixture, scope)
     preflight = run_preflight(scope)
@@ -161,8 +164,14 @@ def execute_run(
         snapshot = state.snapshot()
         available_actions = environment.enumerate_actions(snapshot)
         if tool_registry is not None:
-            available_actions = tool_registry.filter_actions(
+            filtered_actions = tool_registry.filter_actions(
                 available_actions, snapshot.fixture_state.get("flags", [])
+            )
+            available_actions = _restore_objective_target_access_actions(
+                snapshot,
+                available_actions,
+                filtered_actions,
+                scope,
             )
         available_actions = shape_available_actions(snapshot, available_actions)
         decision = planner.decide(snapshot, available_actions)
@@ -211,6 +220,11 @@ def execute_run(
         state.initial_state(),
         state.is_objective_met(),
         preflight={"ok": preflight.ok, "details": preflight.details},
+        execution_context={
+            "runtime_mode": "blind_real" if runtime_fixture is not None else "fixture",
+            "synthetic_fixture_used": runtime_fixture is None,
+            "fixture_metadata": environment.metadata(),
+        },
     )
     report_json_path = output_dir / "report.json"
     report_md_path = output_dir / "report.md"
@@ -447,7 +461,7 @@ def _build_execution_policy(scope: Scope) -> dict:
 
 
 
-def _validate_run_inputs(fixture: Fixture, objective: Objective, scope: Scope) -> None:
+def _validate_run_inputs(fixture, objective: Objective, scope: Scope) -> None:
     if scope.target == TargetType.AWS and not scope.dry_run and not _aws_real_execution_enabled():
         raise typer.BadParameter(
             "AWS real execution is disabled. Set RASTRO_ENABLE_AWS_REAL=1 to allow dry_run=false."
@@ -483,6 +497,36 @@ def _is_aws_identifier(value: str | None) -> bool:
 
 def _aws_real_execution_enabled() -> bool:
     return os.getenv("RASTRO_ENABLE_AWS_REAL", "0") == "1"
+
+
+def _restore_objective_target_access_actions(snapshot, original_actions, filtered_actions, scope: Scope):
+    if scope.target != TargetType.AWS or scope.dry_run:
+        return filtered_actions
+    objective_target = getattr(getattr(snapshot, "objective", None), "target", None)
+    if not objective_target:
+        return filtered_actions
+    restored = list(filtered_actions)
+    seen = {
+        (
+            action.action_type.value,
+            action.actor,
+            action.target,
+            tuple(sorted(action.parameters.items())),
+            action.tool,
+        )
+        for action in restored
+    }
+    for action in original_actions:
+        key = (
+            action.action_type.value,
+            action.actor,
+            action.target,
+            tuple(sorted(action.parameters.items())),
+            action.tool,
+        )
+        if action.action_type == ActionType.ACCESS_RESOURCE and action.target == objective_target and key not in seen:
+            restored.append(action)
+    return restored
 
 
 if __name__ == "__main__":

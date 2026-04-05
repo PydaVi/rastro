@@ -1,0 +1,35 @@
+{
+  "name": "serverless-business-app-iam-role-chaining-lab",
+  "description": "Synthetic role chaining environment for serverless-business-app.",
+  "version": "0.1",
+  "state": {
+    "flags": [],
+    "identities": {
+      "arn:aws:iam::123456789012:user/platform-analyst": {
+        "available_actions": [
+          {"action_type": "enumerate", "target": "arn:aws:iam::123456789012:root", "parameters": {"service": "iam", "region": "us-east-1"}, "tool": "iam_list_roles"},
+          {"action_type": "assume_role", "target": "arn:aws:iam::123456789012:role/BillingWorkerRole", "parameters": {"service": "sts", "region": "us-east-1", "role_arn": "arn:aws:iam::123456789012:role/BillingWorkerRole", "session_name": "sba-billing"}, "tool": "iam_passrole"},
+          {"action_type": "assume_role", "target": "arn:aws:iam::123456789012:role/InternalAdminSyncRole", "parameters": {"service": "sts", "region": "us-east-1", "role_arn": "arn:aws:iam::123456789012:role/InternalAdminSyncRole", "session_name": "sba-admin"}, "tool": "iam_passrole"}
+        ]
+      }
+    }
+  },
+  "transitions": [
+    {"action_type": "enumerate", "actor": "arn:aws:iam::123456789012:user/platform-analyst", "target": "arn:aws:iam::123456789012:root", "observation": {"details": "Listed roles.", "discovered_roles": ["arn:aws:iam::123456789012:role/BillingWorkerRole", "arn:aws:iam::123456789012:role/InternalAdminSyncRole", "arn:aws:iam::123456789012:role/PayrollHandlerRole"]}},
+    {
+      "action_type": "assume_role",
+      "actor": "arn:aws:iam::123456789012:user/platform-analyst",
+      "target": "arn:aws:iam::123456789012:role/BillingWorkerRole",
+      "observation": {"granted_role": "arn:aws:iam::123456789012:role/BillingWorkerRole", "details": "Assumed BillingWorkerRole."},
+      "update_identities": {
+        "arn:aws:iam::123456789012:role/BillingWorkerRole": {
+          "available_actions": [
+            {"action_type": "assume_role", "target": "arn:aws:iam::123456789012:role/PayrollHandlerRole", "parameters": {"service": "sts", "region": "us-east-1", "role_arn": "arn:aws:iam::123456789012:role/PayrollHandlerRole", "session_name": "sba-payroll-chain"}, "tool": "iam_passrole"}
+          ]
+        }
+      }
+    },
+    {"action_type": "assume_role", "actor": "arn:aws:iam::123456789012:user/platform-analyst", "target": "arn:aws:iam::123456789012:role/InternalAdminSyncRole", "observation": {"granted_role": "arn:aws:iam::123456789012:role/InternalAdminSyncRole", "details": "Assumed InternalAdminSyncRole."}},
+    {"action_type": "assume_role", "actor": "arn:aws:iam::123456789012:role/BillingWorkerRole", "target": "arn:aws:iam::123456789012:role/PayrollHandlerRole", "observation": {"granted_role": "arn:aws:iam::123456789012:role/PayrollHandlerRole", "details": "Assumed PayrollHandlerRole."}}
+  ]
+}

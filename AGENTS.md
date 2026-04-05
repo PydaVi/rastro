@@ -47,6 +47,207 @@ Não iniciar Produto 02 antes de Produto 01 estar estável.
 
 ---
 
+## Régua permanente de direção do produto
+
+Toda implementação, experimento, correção e bloco de roadmap deve ser avaliado
+contra dois polos explícitos:
+
+### Polo 1 — `campaign validator`
+
+O Rastro se comporta mais como `campaign validator` quando depende
+principalmente de:
+- profiles fixos como verdade anterior ao raciocínio
+- heurísticas lexicais simples
+- alvos pré-modelados
+- scopes já quase prontos para o caminho correto
+- harness sintético excessivamente curado
+- expansão de bundles sem contrapartida de inferência
+- correções específicas para um fixture sem ganho arquitetural reutilizável
+
+### Polo 2 — `generalista ofensivo`
+
+O Rastro se aproxima do polo `generalista ofensivo` quando aumenta:
+- inferência estrutural
+- selection por expressividade ofensiva
+- competição entre paths concorrentes
+- reachability real
+- modelagem explícita de credential acquisition
+- robustez em mixed environments
+- robustez com naming desfavorável ou obfuscado
+- separação entre `identity reached` e `credentials acquired`
+- capacidade de escolher e provar caminhos fora de campanhas IAM-first puras
+
+### Critérios obrigatórios de avaliação
+
+Toda mudança relevante deve ser julgada por quanto:
+- reduz dependência de profiles fixos
+- reduz dependência de heurísticas lexicais simples
+- reduz dependência de alvos pré-modelados
+- reduz dependência de harness sintético excessivamente curado
+- aumenta inferência estrutural
+- aumenta selection por expressividade ofensiva
+- aumenta competição entre paths concorrentes
+- aumenta reachability real
+- aumenta modelagem explícita de credential acquisition
+- aumenta robustez em mixed environments
+- aumenta robustez com naming desfavorável ou obfuscado
+
+### Regra operacional obrigatória
+
+Melhorias operacionais são válidas e necessárias, mas não podem substituir por
+muitos blocos consecutivos o avanço em generalização ofensiva.
+
+Se os blocos recentes aumentaram principalmente:
+- CLI
+- runner
+- reporting
+- orchestration
+- bundles
+- execução de campaigns conhecidas
+
+então o próximo bloco deve preferencialmente recuperar avanço em:
+- mixed benchmarks
+- inferência estrutural
+- reachability
+- compute / external entry / cross-account / multi-step
+- credential acquisition
+
+Quando o projeto já tiver alta robustez em:
+- benchmarks estruturados
+- fixture sets
+- mixed environments sintéticos
+- campaigns reais previamente modeladas
+
+o próximo passo preferencial deve ser um experimento `blind` que maximize
+revelação arquitetural nova, mesmo que tenha maior chance de falha.
+
+O agente não deve escolher automaticamente o próximo bloco mais seguro,
+incremental ou operacional se existir um experimento `blind` com maior valor
+epistemológico para medir generalização ofensiva real.
+
+Benchmark sintético, fixture set e harness são meios de maturação.
+Não podem virar substitutos permanentes da prova `blind real`.
+
+### Regra permanente para `blind real`
+
+Em modo `blind real`, o agente deve presumir que qualquer dependência residual
+de:
+- `fixture_path`
+- `execution_fixture_set`
+- `scope_template_path`
+- resolver sintético por archetype
+
+é uma suspeita arquitetural séria, e não uma conveniência aceitável.
+
+Se um assessment discovery-driven em AWS real recair nesses mecanismos, isso
+deve ser tratado como bloqueio estrutural do produto.
+
+Em `blind real`, dependencia residual de:
+- `fixture_path`
+- `execution_fixture_set`
+- `scope_template_path`
+- resolver sintetico por archetype
+
+nao e conveniencia aceitavel. E evidencia de que o produto ainda esta
+funcionando como `campaign validator`.
+
+### Regra permanente para estados de prova
+
+O agente deve tratar como falha estrutural, e não ajuste pontual, quando:
+- um achado `validated` depende apenas de `target_observed`
+- o runtime real não consegue representar ações intermediárias da classe ofensiva
+- o produto mede `sucesso` por campaigns passadas sem medir:
+  - unicidade
+  - prova mínima
+  - coverage por classe
+
+Nesses casos, a correção deve priorizar:
+- modelo explícito de estados de prova
+- evidência mínima por classe ofensiva
+- separação entre descoberta, reachability, credencial obtida e impacto validado
+
+Estados minimos a perseguir quando o dominio exigir prova progressiva:
+- `observed`
+- `reachable`
+- `credentialed`
+- `exploited`
+- `validated_impact`
+
+### Regra permanente para ambientes IAM-heavy
+
+Em ambientes IAM-heavy, o agente não deve interpretar subcobertura como
+simples falta de benchmark.
+
+Ele deve investigar explicitamente:
+- desalinhamento de portfolio
+- pobreza de discovery IAM
+- ranking de exploitability
+- ausência de action space real
+- overclaim no reporting
+- contaminação residual do harness sintético
+
+Se esses fatores aparecerem, o próximo bloco deve ser de reestruturação do
+núcleo, não apenas de expansão incremental de profiles.
+
+Em ambiente IAM-heavy, subcobertura nao deve ser explicada automaticamente por
+`faltou benchmark` ou `faltou mais um profile`.
+
+O agente deve primeiro testar a hipotese mais dura:
+- portfolio ofensivo desalinhado
+- discovery IAM estrutural pobre
+- ranking de exploitability fraco
+- absence de action space real intermediario
+- overclaim no reporting
+- contaminacao residual do modo blind por harness sintetico
+
+### Pergunta interna obrigatória antes do próximo passo
+
+Antes de propor o próximo passo, o agente deve responder internamente:
+
+- `isso aumenta generalização ofensiva real ou só melhora execução de campaigns conhecidas?`
+- `existe um experimento blind com maior poder de revelação arquitetural do que o bloco incremental atual?`
+
+Se a resposta for principalmente a segunda, o agente deve procurar o próximo
+bloco com maior leverage para deslocar o produto na direção do polo
+`generalista ofensivo`, sem violar a ordem estratégica macro.
+
+### Regra permanente para `external entry`
+
+Sempre que um path for classificado como `external entry`, o agente deve
+distinguir explicitamente:
+
+- se ha apenas superficie publica declarada
+- se ha reachability de rede comprovada ate o workload
+- se ha aquisicao de credenciais comprovada
+- se ha exploracao completa ate o dado final
+
+Esses niveis nao podem ser colapsados em um unico estado conceitual.
+
+### Regra permanente de linguagem para `external entry`
+
+O agente nao deve descrever um path `external entry` como:
+
+- `explorável da internet`
+- `internet to data proved`
+- ou formula equivalente
+
+quando o sistema so tiver provado:
+
+- exposicao estrutural
+- pivô credenciado controlado
+- path ao dado
+
+Nesses casos, a formulacao correta deve separar:
+
+- `public exposure structurally linked to privileged path`
+de
+- `public exploit path proved end-to-end`
+
+Se a prova de reachability real de rede ate o workload nao existir, isso deve
+ser dito explicitamente.
+
+---
+
 ## Prioridades atuais
 
 O agente deve priorizar nesta ordem:
@@ -116,6 +317,11 @@ então ele deve ser classificado como `mais operacionalização de campaigns con
 O agente deve preferir os próximos blocos que empurrem o produto na direção
 de um `autonomous attacker-thinker` mais generalista, sem perder a disciplina
 operacional do Produto 01.
+
+Ao fechar cada bloco, o agente deve registrar explicitamente no `PLAN.md`:
+- o que aproximou o projeto do polo `generalista ofensivo`
+- o que permaneceu dependente de `campaign validator`
+- qual é o próximo experimento com maior leverage para mover a régua
 
 ---
 

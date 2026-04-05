@@ -143,6 +143,44 @@ Ao fechar cada bloco, registrar explicitamente:
 Essa regra é obrigatória mesmo quando o bloco for principalmente operacional.
 O objetivo é tornar o drift visível cedo.
 
+### Direção prioritária atual
+
+Os experimentos acumulados até aqui provaram robustez relevante em:
+- cenários estruturados
+- fixtures e harness sintéticos
+- bundles e profiles conhecidos
+- campaigns reais controladas e previamente modeladas
+- mixed benchmarks com competição crescente
+
+Isso foi necessário e valioso, mas cria um risco explícito de drift:
+- continuar melhorando benchmark
+- continuar refinando fixture set
+- continuar refinando harness
+- continuar ampliando profiles conhecidos
+
+sem provar operação `blind real`.
+
+O principal gap atual entre:
+- `produto de validação`
+e
+- `attacker-thinker generalista`
+
+não é mais convergência em cenário estruturado.
+É o engine operando em modo realmente adversarial sobre ambiente AWS real pouco
+lembrado, parcialmente esquecido e não pré-modelado especificamente para o run.
+
+Regra prioritária deste momento:
+- `credential acquisition` e `external entry reachability maturity` continuam importantes
+- mas não são, agora, o bloco de maior leverage para medir a régua generalista
+- o maior leverage agora é um `blind real assessment`
+
+Próximo experimento de maior leverage:
+- assessment real em conta AWS autorizada previamente montada
+- sem fixture/profile específico para aquele ambiente
+- com discovery real
+- target selection real
+- e registro explícito de onde o pipeline trava quando a pré-estruturação some
+
 ---
 
 ## Estado atual
@@ -1392,10 +1430,397 @@ Leitura arquitetural:
 - o produto já se afastou de `campaign validator puro`
 - mas ainda não pode ser tratado como `generalista ofensivo forte`
 - os gaps reais agora estão em:
+  - operation `blind real` ainda não provada
   - reachability de rede em `external entry`
   - prova real fora de `IAM-first`
   - `cross-account` real
   - scorer estrutural ainda excessivamente hand-written
+
+#### Bloco prioritário — Blind Real Assessment
+
+Objetivo:
+- medir o comportamento do Produto 01 em modo realmente `blind`
+- testar discovery real, target selection real e convergência do engine sobre um
+  ambiente AWS não modelado especificamente para aquele run
+
+Hipótese central:
+- o engine já converge bem quando o path está estruturado em fixtures, profiles
+  e benchmarks
+- o principal gap atual é provar se ele continua útil quando:
+  - a conta é real
+  - o ambiente não foi fixture-izado para o run
+  - o operador não lembra em detalhe a topologia
+  - o target não foi pré-escolhido por profile específico
+
+Desenho experimental:
+- usar uma conta AWS real autorizada
+- preferencialmente previamente montada e parcialmente esquecida pelo operador
+- evitar fixture/profile pré-estruturado específico para aquele ambiente
+- rodar o pipeline discovery-driven real
+- permitir que discovery e selection escolham os candidatos
+- registrar explicitamente, se houver falha, em qual camada o pipeline travou:
+  - discovery insuficiente
+  - target selection errado
+  - inferência estrutural insuficiente
+  - dependência residual de metadata curada
+  - necessidade de conhecimento pré-modelado
+  - falha de executor, policy ou representação de estado
+
+Critérios de sucesso:
+- assessment real executado sem fixture específico do ambiente
+- ao menos um candidato relevante selecionado por discovery real
+- convergência para um path útil, mesmo que o objetivo final não seja atingido
+- documentação explícita do ponto de travamento se houver falha
+- evidência suficiente para dizer se o principal gargalo atual está em:
+  - discovery
+  - selection
+  - representação
+  - executor
+  - dependência residual de campanha conhecida
+
+O que o bloco prova:
+- se o pipeline discovery-driven sustenta um primeiro modo `blind real`
+- se o engine consegue operar sem target previamente modelado para aquele ambiente
+- qual é o gargalo arquitetural dominante quando a pré-estruturação desaparece
+
+O que ainda NÃO prova:
+- generalização total para qualquer conta AWS
+- autonomia ofensiva madura
+- cobertura real completa de `cross-account`
+- independência completa de profiles conhecidos
+
+Por que este bloco tem mais leverage agora do que benchmark sintético adicional:
+- benchmark sintético adicional continua útil para maturação local
+- mas já não responde a pergunta mais importante do projeto
+- a pergunta mais importante agora é:
+  - `o engine continua útil quando o ambiente real deixa de estar estruturado para ele?`
+- esse experimento maximiza revelação arquitetural nova, mesmo com maior risco
+  de falha
+
+Leitura de prioridade:
+- `credential acquisition` e `external entry reachability maturity` continuam na
+  trilha de maturidade
+- mas o `blind real assessment` é o bloco de maior leverage para a régua
+  generalista neste momento
+
+Direção do avanço: mais generalização ofensiva
+
+Status atual:
+- primeiro corte executado em AWS real
+- documentado em:
+  - `docs/experiments/EXP-083-blind-real-assessment-fixture-coupling.md`
+  - `docs/experiments/EXP-084-blind-real-runtime-action-space-pollution.md`
+
+Resultado do primeiro corte:
+- discovery real funcionou
+- target selection real funcionou em primeiro corte
+- o principal travamento apareceu na execucao discovery-driven
+- os candidatos e planos gerados ainda carregaram:
+  - `execution_fixture_set`
+  - `fixture_path`
+  - `scope_template_path`
+- a execucao caiu de volta em harness sintetico por familia de campanha
+
+O que esse corte aproximou do polo generalista:
+- provou que o gargalo dominante ja nao esta em preflight nem em discovery real
+- isolou o principal bloqueio arquitetural atual:
+  - a execucao ainda depende de campanha pre-modelada em fixture sintetico
+
+O que permaneceu dependente de campaigns conhecidas:
+- `run_generated_campaign()` ainda exige `fixture_path`
+- `execute_run()` ainda exige `Fixture.load(...)`
+- o assessment real continua discovery-driven ate o plano, mas nao ate a
+  execucao
+
+Proximo experimento com maior leverage para mover a regua:
+- implementar um contrato de execucao discovery-driven real sem `fixture_path`
+- rerodar o mesmo `Blind Real Assessment`
+- registrar se o novo gargalo passa a ser:
+  - action-space real insuficiente
+  - target selection errado
+  - inferencia estrutural insuficiente
+  - executor/policy
+
+Status apos iteracoes:
+- o contrato de execucao discovery-driven real sem `fixture_path` foi implementado
+- o scope deixou de herdar recursos sinteticos indevidos
+- o primeiro `Blind Real Assessment` do `aws-foundation` agora converge em AWS real
+  sem fixture especifico do ambiente
+- resultado atual:
+  - `campaigns_total = 2`
+  - `campaigns_passed = 2`
+  - `campaigns_preflight_failed = 0`
+
+O que esse fechamento aproximou do polo generalista:
+- removeu o principal bloqueio arquitetural entre discovery real e execucao real
+- provou um primeiro caso de `blind real` fim a fim fora do quadrante de harness
+- mostrou que `policy layer` continua sendo a alavanca correta para filtrar
+  ruido real do ambiente
+
+O que permaneceu dependente de campaigns conhecidas:
+- o bundle validado foi apenas `aws-foundation`
+- o ambiente blind real ainda tinha baixa heterogeneidade de superfícies
+- ainda nao houve `blind real` em:
+  - `external entry`
+  - `compute pivot`
+  - `advanced`
+  - `enterprise`
+
+Novo proximo experimento com maior leverage para mover a regua:
+- executar um `Blind Real Assessment` em conta/autorizacao AWS com maior
+  heterogeneidade de recursos e pivots
+- preferencialmente contendo:
+  - compute publico ou privado com role relevante
+  - secrets/ssm reais
+  - mais de um alvo plausivel concorrente
+- objetivo: medir se a convergencia blind continua quando o ambiente deixa de
+  ser quase exclusivamente `foundation`
+
+Reteste IAM-privesc-heavy:
+- executado em ambiente real fortemente dominado por IAM privilege escalation
+- documentado em:
+  - `docs/experiments/EXP-085-iam-heavy-blind-real-subcoverage-diagnosis.md`
+
+Resultado observado:
+- o discovery viu o lab novo:
+  - `65` resources
+  - `46` roles IAM
+- o output final, porem, ficou concentrado essencialmente em:
+  - `IAM -> S3 exposure`
+  - `IAM role chaining exposure`
+- findings vieram repetidos muitas vezes
+- a evidencia de `role chaining` ficou fraca e mais proxima de descoberta do
+  que de exploracao provada
+
+Leitura arquitetural:
+- esse reteste revelou subcobertura relevante
+- o gap nao e so `faltou mais profile`
+- ele combina:
+  - bundle inadequado para ambiente IAM-heavy
+  - discovery IAM estrutural insuficiente
+  - ranking IAM fraco
+  - action space real limitado a `AssumeRole` + data access
+  - reporting/findings sem higiene de deduplicacao e de classe de evidencia
+
+Antes de novo reteste, precisa fechar:
+
+#### Bloco de correção — IAM-Heavy Blind Real Coverage And Evidence Hygiene
+
+Objetivo:
+- corrigir o principal gargalo revelado pelo reteste IAM-privesc-heavy:
+  - o engine ja roda em `blind real`, mas ainda cobre mal ambientes dominados
+    por privilege escalation IAM e gera findings com evidencia/classificacao
+    inadequadas
+
+O que o bloco prova:
+- findings deixam de colidir e repetir o mesmo artefato
+- descoberta deixa de ser promovida automaticamente a exploracao validada
+- o portfolio/runtime passa a cobrir classes IAM-privesc mais alinhadas ao tipo
+  de ambiente testado
+- ranking/selection passam a diferenciar melhor exploitability IAM
+
+O que ainda NÃO prova:
+- cobertura total de labs IAM-privesc conhecidos
+- autonomia ofensiva madura em qualquer ambiente IAM-heavy
+- `cross-account` real ou `enterprise` completo
+
+Passos:
+1. deduplicar campaigns/findings por `plan.id`, `report_json`,
+   `target_resource` e fingerprint de evidencia
+2. separar estados de evidencia:
+   - `discovered`
+   - `reachable`
+   - `exploited`
+   - `validated`
+3. definir evidencia minima por classe antes de emitir finding validado
+4. ampliar discovery IAM estrutural:
+   - trust edges
+   - policy attachments
+   - sinais de permissao alteradora
+5. ampliar portfolio/runtime para IAM privilege escalation real, alem de
+   `AssumeRole`
+6. ajustar target selection/ranking para ambientes dominados por IAM
+7. definir metricas de sucesso do proximo reteste:
+   - diversidade de classes
+   - findings unicos
+   - proporcao de findings realmente provados
+   - cobertura acima de `foundation`
+8. impedir contaminacao do `Blind Real Assessment` por `fixture_path`
+   sintetico quando o ambiente for AWS real e o campaign tiver sido derivado de
+   discovery real
+
+Critério de saída:
+- findings IAM-heavy sem colisao grosseira
+- role chaining nao vira `validated` so por `target_observed`
+- campaigns de `blind real` nao recaem em `execution_mode = dry_run` por
+  roteamento de fixture sintetico
+- ao menos uma nova classe IAM-privesc real aberta alem de `AssumeRole`
+- proximo reteste consegue medir:
+  - coverage real
+  - qualidade de evidencia
+  - diversidade de achados
+
+Direção do avanço: mais generalização ofensiva
+
+O que esse bloco aproxima do polo generalista:
+- desloca o produto de `foundation exposure validator` para ofensiva IAM mais
+  alinhada a ambiente real hostil
+- reduz dependencia de campanhas conhecidas e de sucesso por observacao fraca
+- melhora a honestidade epistemica do report final
+
+O que permanece dependente de campaigns conhecidas:
+- o portfolio IAM-heavy ainda precisa ser aberto
+- o runtime real ainda nao cobre varias classes de abuse IAM
+- o bundle `aws-foundation` continua insuficiente como medida de qualidade para
+  esse tipo de lab
+
+Status atual do bloco:
+- concluido parcialmente:
+  - higiene de findings inicial
+  - classificacao minima de evidencia
+  - binding explicito da entry role no report/findings
+  - discovery IAM estrutural inicial
+  - ranking IAM inicial com sinais de privilege escalation
+- novo bloqueio revelado em:
+  - `docs/experiments/EXP-086-iam-heavy-blind-real-fixture-routing-contamination.md`
+
+Novo resultado observado no rerun IAM-heavy:
+- `campaigns_total = 19`
+- `campaigns_passed = 0`
+- `campaigns_objective_not_met = 19`
+- o assessment gerou planos IAM mais alinhados ao lab, mas parte relevante da
+  execucao recaiu em:
+  - `fixture_path = fixtures/serverless_business_app_unified_lab.json`
+  - `execution_mode = dry_run`
+
+Leitura arquitetural atualizada:
+- o bloco de correcao revelou dois subproblemas independentes:
+  1. hygiene/evidence/ranking IAM
+  2. pureza do modo `blind real`
+- antes de abrir novas classes IAM-privesc, precisa fechar o segundo:
+  - impedir que campaigns discovery-driven em AWS real voltem a fixture
+    sintetico por roteamento de archetype
+
+Novo sub-bloco prioritario dentro desta correcao:
+- `Blind Real Execution Purity For IAM-Heavy Assessment`
+
+Objetivo:
+- garantir que campaigns geradas por discovery em AWS real usem runtime blind
+  real, e nao fixture sintetico herdado de archetype/family
+
+O que esse sub-bloco prova:
+- o proximo reteste IAM-heavy passa a medir coverage real do produto, nao
+  contaminacao do harness
+
+O que ainda nao prova:
+- coverage suficiente de privilege escalation IAM
+- sucesso de exploracao alem de `AssumeRole`
+
+Novo proximo experimento com maior leverage para mover a regua:
+- fechar primeiro a pureza de execucao do `blind real` para campaigns IAM-heavy
+- depois rerodar o mesmo ambiente IAM-privesc-heavy com metricas explicitas de:
+  - cobertura de classes
+  - diversidade de findings
+  - evidencia realmente provada
+
+#### Bloco prioritario — Reestruturação do núcleo para blind real IAM-heavy
+
+Objetivo:
+- deslocar o produto de validacao de campaigns conhecidas para execucao
+  ofensiva mais aberta em ambiente IAM-heavy real
+
+Premissa explicita:
+- o problema revelado pelo laboratorio IAM-heavy nao e cosmetico
+- nao e apenas `abrir mais profiles`
+- o nucleo do produto ainda foi desenhado demais como `campaign validator`
+- antes de novo reteste, e necessario fechar um bloco de reestruturacao
+
+O que o laboratorio revelou:
+- discovery real ja nao e o gargalo principal
+- selection real ja nao e o gargalo principal
+- o gargalo migrou para:
+  - contrato de execucao
+  - action space real
+  - portfolio ofensivo IAM
+  - classificacao de evidencia
+  - pureza do modo blind
+
+Mudancas estruturais obrigatorias:
+1. desacoplamento definitivo de `profile -> runtime`
+2. modo blind real sem:
+   - `fixture_path`
+   - `scope_template_path`
+   - `execution_fixture_set`
+   - resolver sintetico implicito por archetype
+3. modelo explicito de estados de prova por finding:
+   - `observed`
+   - `reachable`
+   - `credentialed`
+   - `exploited`
+   - `validated_impact`
+4. definicao de evidencia minima por classe ofensiva
+5. portfolio IAM-privesc dedicado, separado do `aws-foundation`
+6. ranking IAM por capacidade ofensiva estrutural, nao por naming/heuristica
+   lexical como espinha principal
+7. expansao do `BlindRealRuntime` para action space intermediario real, nao so
+   access ao target final
+8. metricas de coverage e deduplicacao proprias para reteste IAM-heavy
+
+O que esse bloco prova:
+- que o produto esta ficando epistemicamente mais honesto
+- que o modo blind fica realmente blind
+- que o proximo reteste vai medir coverage ofensiva real, nao contaminacao do
+  harness
+
+O que ele ainda nao prova:
+- nao prova ainda generalizacao forte
+- nao prova ainda cobertura total de IAM privesc
+- nao substitui o reteste
+- ele prepara o reteste para medir a coisa certa
+
+Critério de saída:
+- campaigns discovery-driven em AWS real nao recaem em fixture routing
+  sintetico por familia/archetype
+- findings nao colapsam `passed -> validated`
+- existe criterio minimo de evidencia por classe IAM aberta
+- existe portfolio IAM-privesc inicial separado do `aws-foundation`
+- existe action space real intermediario alem de `AssumeRole`
+- o proximo reteste IAM-heavy consegue medir:
+  - coverage por classe
+  - findings unicos
+  - prova minima
+  - contaminacao de harness
+
+Direção do avanço: mais generalização ofensiva
+
+O que esse bloco aproxima do polo generalista:
+- reduz o acoplamento central de `campaign validator`
+- faz o modo blind medir comportamento ofensivo real, nao sucesso de harness
+- desloca a qualidade do produto para coverage, prova e impacto por classe
+
+O que permanece dependente de campaigns conhecidas:
+- o portfolio ainda parte de classes ofensivas conhecidas
+- o runtime real continua estreito ate abrir novas classes IAM
+- o reteste IAM-heavy ainda nao foi refeito sob esse novo contrato
+
+Regra de priorizacao explicita:
+- um novo reteste IAM-heavy agora tem MENOS leverage do que fechar este bloco
+  estrutural
+- rerodar o lab antes dessas correcoes aumentaria ruido, nao conhecimento
+
+Ao fechar este bloco, registrar obrigatoriamente:
+- o que aproximou o produto do polo generalista
+- o que permaneceu dependente de campaigns conhecidas
+- qual e o proximo reteste de maior leverage
+
+Novo proximo experimento com maior leverage para mover a regua:
+- fechar primeiro a `Reestruturacao do nucleo para blind real IAM-heavy`
+- so depois rerodar o mesmo laboratorio IAM-privesc-heavy
+- medindo:
+  - coverage ofensiva real
+  - evidencia minima por classe
+  - unicidade de findings
+  - ausencia de contaminacao do harness
 
 #### Bloco 1 — External Entry Reachability Real
 
@@ -1436,6 +1861,116 @@ Passos:
    - cadeia completa
 4. refletir isso em selection / synthesis / reporting
 
+Status atual:
+- `EXP-071` confirmou o primeiro corte do bloco:
+  - discovery AWS agora coleta:
+    - instance profiles
+    - instâncias EC2
+    - Internet Gateways
+    - route tables
+    - subnets
+    - security groups
+  - o inventory agora registra relações explícitas de rede e vínculo até o
+    workload:
+    - `deployed_in_subnet`
+    - `associated_with_route_table`
+    - `routes_to_internet_gateway`
+    - `protected_by_security_group`
+    - `uses_instance_profile`
+- Concluídos no primeiro corte:
+  - passo 1
+  - passo 2
+- `EXP-072` isolou uma falha de benchmark:
+  - o objetivo herdado de `aws-external-entry-data` colapsava estados
+    intermediarios por `success_criteria.flag`
+- `EXP-073` validou o benchmark sintético de maturidade com objetivo proprio:
+  - superfície pública sem backend reachável
+  - backend reachável sem cred acquisition
+  - cred acquisition possível sem path ao dado
+  - cadeia completa
+- Concluído depois da correção de benchmark:
+  - passo 3
+- `EXP-074` integrou a nova semântica em:
+  - `target selection`
+  - `campaign synthesis`
+  - reporting intermediario do plano
+- Concluído:
+  - passo 4
+- `EXP-075` refinou o trecho estrutural:
+  - `API Gateway / ALB -> backend`
+  com sinais separados de:
+  - `network_reachable_from_internet`
+  - `backend_reachable`
+- O bloco agora ja distingue melhor:
+  - superficie publica declarada
+  - superficie publica com sinais fortes de reachability ate backend
+- `EXP-076` levou parte dessa semântica para o discovery AWS:
+  - inventory de `network.load_balancer`
+  - inventory de `network.api_gateway`
+  - metadados minimos de exposição pública
+- `EXP-077` adicionou o primeiro grafo estrutural de:
+  - `load balancer -> listener -> target group`
+  - `api gateway -> integration -> backend`
+- `EXP-078` integrou esse grafo ao `target selection` de `aws-external-entry-data`
+  para elevar:
+  - `network_reachable_from_internet`
+  - `backend_reachable`
+  a partir de relationships observadas
+- `EXP-042` foi rerodado com evidência explícita de rede no pivô real:
+  - `ec2:DescribeRouteTables`
+  - `ec2:DescribeSubnets`
+  - `ec2:DescribeSecurityGroups`
+  - `ec2:DescribeInternetGateways`
+  - o report real agora exporta `network_path` com:
+    - `internet_gateway_ids`
+    - `route_table_ids`
+    - `route_to_internet_gateway`
+    - `security_group_public_ingress`
+    - `public_ip`
+  - para o lab de EC2 pública direta, isso elevou o caso para:
+    - `public_exploit_path_proved_end_to_end`
+- `EXP-079` promoveu `external entry` real via ALB:
+  - `ALB publico -> listener -> target group -> backend EC2 -> role -> data`
+  - a primeira execução revelou um gap de agregação:
+    - o produto ainda exigia backend diretamente publico
+  - a correção geral moveu a prova para:
+    - `load balancer internet-facing`
+    - `listener publico`
+    - `forwarding`
+    - `target health = healthy`
+  - o rerun final elevou o caso para:
+    - `public_exploit_path_proved_end_to_end`
+- `EXP-080` promoveu `external entry` real via API Gateway:
+  - `API Gateway publico -> integration -> ALB -> backend EC2 -> role -> data`
+  - evidência real agora inclui:
+    - `apigateway:GetStages`
+    - `apigateway:GetIntegration`
+    - mais o trecho `ALB -> target group -> backend healthy`
+  - o run final também sustentou:
+    - `public_exploit_path_proved_end_to_end`
+- `EXP-081` promoveu `external entry` real via NLB:
+  - `NLB publico -> listener TCP -> target group -> backend EC2 privado -> role -> data`
+  - evidência real agora inclui:
+    - `elasticloadbalancing:DescribeLoadBalancers`
+    - `elasticloadbalancing:DescribeListeners`
+    - `elasticloadbalancing:DescribeTargetGroups`
+    - `elasticloadbalancing:DescribeTargetHealth`
+  - o run final também sustentou:
+    - `public_exploit_path_proved_end_to_end`
+- `EXP-082` aprofundou `external entry` real via ALB com roteamento rico:
+  - `ALB publico -> listener rule -> multiplos target groups -> backend correto -> role -> data`
+  - evidência real agora inclui:
+    - `elasticloadbalancing:DescribeRules`
+    - `matched_listener_rule_arns`
+    - `matched_listener_rule_priorities`
+    - `matched_target_groups`
+    - `multiple_target_groups_observed`
+  - o run final também sustentou:
+    - `public_exploit_path_proved_end_to_end`
+- Pendentes:
+  - observação real mais rica de host-based routing / regras concorrentes
+  - API Gateway com integracoes e roteamento mais ricos
+
 Critério de saída:
 - discovery e reporting distinguem explicitamente:
   - `network_reachable_from_internet`
@@ -1443,7 +1978,23 @@ Critério de saída:
   - `credential_acquisition_possible`
   - `data_path_exploitable`
 - benchmark sintético novo validado
+- pelo menos um lab real exporta evidência de rede suficiente para sustentar
+  `public_exploit_path_proved_end_to_end` sem overclaim
+- pelo menos duas famílias reais de `external entry` sustentam essa prova:
+  - EC2 pública direta
+  - ALB público com backend privado
+- cobertura real adicional:
+  - API Gateway publico com integration ate backend
+  - NLB publico com backend privado
+  - ALB publico com listener rules e multiplos target groups
 Direção do avanço: mais generalização ofensiva
+
+Leitura de leverage atual:
+- este bloco continua importante para maturidade de `external entry`
+- mas, neste momento, nao e o bloco de maior leverage para medir o polo
+  generalista
+- o maior leverage agora e o `Blind Real Assessment`, porque ele mede o
+  comportamento do engine quando a pre-estruturacao do ambiente cai
 
 #### Bloco 2 — Credential Acquisition Real Em Compute/External
 
@@ -1582,11 +2133,36 @@ Critério de saída:
 - mais peso em estrutura observada
 Direção do avanço: mais generalização ofensiva
 
+### Decisão futura de organização documental
+
+Para evitar que o `PLAN.md` continue crescendo até perder função operacional,
+fica registrada a seguinte divisão futura:
+
+- `PLAN.md`
+  - direção atual
+  - próximo bloco
+  - decisões abertas
+  - documento curto e ativo
+- `HISTORY.md`
+  - histórico experimental completo
+  - tabela consolidada
+  - descobertas arquiteturais
+- `REGUA.md`
+  - critério permanente de generalização ofensiva vs operacionalização
+
+Critério para executar essa divisão:
+- quando o `PLAN.md` começar a dificultar leitura operacional do próximo bloco
+- sem apagar histórico
+- preservando rastreabilidade experimental
+
 Decisão de início:
-- iniciar agora pelo `Bloco 1 — External Entry Reachability Real`
+- o próximo bloco prioritário de maior leverage passa a ser:
+  - `Blind Real Assessment`
+- `External Entry Reachability Real` permanece como trilha de maturidade
 - motivo:
-  - maior leverage real
-  - fecha o principal gap epistemológico de `external entry`
+  - mede o principal gap epistemológico atual:
+    - operação blind real em conta AWS pouco lembrada e não pré-modelada
+  - evita drift para benchmarkismo e melhoria infinita de harness
   - mantém AWS primeiro e Produto 01 primeiro
 Direção do avanço: mais generalização ofensiva
 

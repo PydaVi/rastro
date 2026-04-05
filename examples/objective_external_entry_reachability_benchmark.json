@@ -1,0 +1,5 @@
+{
+  "description": "Measure external entry maturity without treating compute pivot alone as success.",
+  "target": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+  "success_criteria": {}
+}

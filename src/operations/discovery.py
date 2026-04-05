@@ -32,6 +32,10 @@ def _ssm_parameter_arn(region: str, account_id: str, name: str) -> str:
     return f"arn:aws:ssm:{region}:{account_id}:parameter{normalized}"
 
 
+def _ec2_arn(region: str, account_id: str, resource_type: str, resource_id: str) -> str:
+    return f"arn:aws:ec2:{region}:{account_id}:{resource_type}/{resource_id}"
+
+
 def run_foundation_discovery(
     *,
     bundle_name: str,
@@ -55,25 +59,69 @@ def run_foundation_discovery(
     caller_identity = aws_client.get_caller_identity(region=region)
 
     resources: list[dict] = []
+    relationships: list[dict] = []
     evidence: list[dict] = []
     services_scanned: list[str] = []
+    account_id = target.accounts[0]
+
+    users = aws_client.list_users(region=region)
+    services_scanned.append("iam")
+    evidence.append({"service": "iam", "api_calls": ["iam:ListUsers"]})
+    for user_arn in users:
+        resources.append(
+            {
+                "service": "iam",
+                "resource_type": "identity.user",
+                "identifier": user_arn,
+                "region": region,
+                "metadata": {
+                    "user_name": user_arn.rsplit("/", 1)[-1],
+                },
+                "source": "aws_api",
+            }
+        )
 
     roles = aws_client.list_roles(region=region)[: effective_limits.max_roles]
     services_scanned.append("iam")
-    evidence.append({"service": "iam", "api_calls": ["sts:GetCallerIdentity", "iam:ListRoles"]})
+    evidence.append({"service": "iam", "api_calls": ["sts:GetCallerIdentity", "iam:ListRoles", "iam:GetRole", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies"]})
     for role_arn in roles:
         if _is_service_linked_role(role_arn):
             continue
+        role_name = role_arn.rsplit("/", 1)[-1]
+        role_details = aws_client.get_role_details(region=region, role_name=role_name)
+        trust_principals = _extract_trust_principals(role_details.get("AssumeRolePolicyDocument"))
+        attached_policies = role_details.get("AttachedPolicies", [])
+        inline_policy_names = role_details.get("InlinePolicyNames", [])
         resources.append(
             {
                 "service": "iam",
                 "resource_type": "identity.role",
                 "identifier": role_arn,
                 "region": region,
-                "metadata": {"is_service_linked": False},
+                "metadata": {
+                    "is_service_linked": False,
+                    "role_name": role_name,
+                    "trust_principals": trust_principals,
+                    "trust_is_broad": any(principal == "*" for principal in trust_principals),
+                    "attached_policy_arns": [policy.get("PolicyArn") for policy in attached_policies if policy.get("PolicyArn")],
+                    "attached_policy_names": [policy.get("PolicyName") for policy in attached_policies if policy.get("PolicyName")],
+                    "inline_policy_names": inline_policy_names,
+                    "permissions_boundary_arn": (role_details.get("PermissionsBoundary") or {}).get("PermissionsBoundaryArn"),
+                    "managed_policy_count": len(attached_policies),
+                    "inline_policy_count": len(inline_policy_names),
+                },
                 "source": "aws_api",
             }
         )
+        for principal in trust_principals:
+            if principal.startswith("arn:aws:iam::") and (":role/" in principal or ":user/" in principal):
+                relationships.append(
+                    {
+                        "source": principal,
+                        "target": role_arn,
+                        "type": "can_assume",
+                    }
+                )
 
     buckets = aws_client.list_buckets(region=region)[: effective_limits.max_buckets]
     services_scanned.append("s3")
@@ -113,7 +161,7 @@ def run_foundation_discovery(
             {
                 "service": "secretsmanager",
                 "resource_type": "secret.secrets_manager",
-                "identifier": f"arn:aws:secretsmanager:{region}:{target.accounts[0]}:secret:{secret_name}",
+                "identifier": f"arn:aws:secretsmanager:{region}:{account_id}:secret:{secret_name}",
                 "region": region,
                 "metadata": {"name": secret_name},
                 "source": "aws_api",
@@ -128,7 +176,7 @@ def run_foundation_discovery(
             : effective_limits.max_parameters_per_prefix
         ]
         for name in parameter_names:
-            parameter_arn = _ssm_parameter_arn(region, target.accounts[0], name)
+            parameter_arn = _ssm_parameter_arn(region, account_id, name)
             resources.append(
                 {
                     "service": "ssm",
@@ -140,6 +188,437 @@ def run_foundation_discovery(
                 }
             )
 
+    instance_profiles = aws_client.list_instance_profiles(region=region)
+    instances = aws_client.list_instances(region=region)
+    internet_gateways = aws_client.list_internet_gateways(region=region)
+    route_tables = aws_client.list_route_tables(region=region)
+    subnets = aws_client.list_subnets(region=region)
+    security_groups = aws_client.list_security_groups(region=region)
+    load_balancers = aws_client.list_load_balancers(region=region)
+    rest_apis = aws_client.list_rest_apis(region=region)
+    target_groups = aws_client.list_target_groups(region=region)
+    services_scanned.append("ec2")
+    evidence.append(
+        {
+            "service": "ec2",
+            "api_calls": [
+                "iam:ListInstanceProfiles",
+                "ec2:DescribeInstances",
+                "ec2:DescribeInternetGateways",
+                "ec2:DescribeRouteTables",
+                "ec2:DescribeSubnets",
+                "ec2:DescribeSecurityGroups",
+            ],
+        }
+    )
+    services_scanned.append("elasticloadbalancing")
+    evidence.append(
+        {
+            "service": "elasticloadbalancing",
+            "api_calls": [
+                "elasticloadbalancing:DescribeLoadBalancers",
+                "elasticloadbalancing:DescribeTargetGroups",
+                "elasticloadbalancing:DescribeListeners",
+            ],
+        }
+    )
+    services_scanned.append("apigateway")
+    evidence.append(
+        {
+            "service": "apigateway",
+            "api_calls": ["apigateway:GET /restapis", "apigateway:GET /restapis/*/resources"],
+        }
+    )
+
+    subnet_arns: dict[str, str] = {}
+    route_table_arns: dict[str, str] = {}
+    security_group_arns: dict[str, str] = {}
+    internet_gateway_arns: dict[str, str] = {}
+
+    for profile in instance_profiles:
+        profile_arn = profile.get("Arn")
+        if not profile_arn:
+            continue
+        resources.append(
+            {
+                "service": "iam",
+                "resource_type": "compute.instance_profile",
+                "identifier": profile_arn,
+                "region": region,
+                "metadata": {
+                    "role": next(iter(profile.get("Roles", [])), None),
+                    "roles": profile.get("Roles", []),
+                    "name": profile.get("InstanceProfileName"),
+                },
+                "source": "aws_api",
+            }
+        )
+        for role_arn in profile.get("Roles", []):
+            relationships.append(
+                {
+                    "source": role_arn,
+                    "target": profile_arn,
+                    "type": "attached_to_instance_profile",
+                }
+            )
+
+    for gateway in internet_gateways:
+        gateway_id = gateway.get("InternetGatewayId")
+        if not gateway_id:
+            continue
+        gateway_arn = _ec2_arn(region, account_id, "internet-gateway", gateway_id)
+        internet_gateway_arns[gateway_id] = gateway_arn
+        resources.append(
+            {
+                "service": "ec2",
+                "resource_type": "network.internet_gateway",
+                "identifier": gateway_arn,
+                "region": region,
+                "metadata": {
+                    "vpc_ids": [
+                        attachment.get("VpcId")
+                        for attachment in gateway.get("Attachments", [])
+                        if attachment.get("VpcId")
+                    ]
+                },
+                "source": "aws_api",
+            }
+        )
+
+    for subnet in subnets:
+        subnet_id = subnet.get("SubnetId")
+        if not subnet_id:
+            continue
+        subnet_arn = _ec2_arn(region, account_id, "subnet", subnet_id)
+        subnet_arns[subnet_id] = subnet_arn
+        resources.append(
+            {
+                "service": "ec2",
+                "resource_type": "network.subnet",
+                "identifier": subnet_arn,
+                "region": region,
+                "metadata": {
+                    "vpc_id": subnet.get("VpcId"),
+                    "availability_zone": subnet.get("AvailabilityZone"),
+                    "map_public_ip_on_launch": subnet.get("MapPublicIpOnLaunch", False),
+                },
+                "source": "aws_api",
+            }
+        )
+
+    for security_group in security_groups:
+        group_id = security_group.get("GroupId")
+        if not group_id:
+            continue
+        group_arn = _ec2_arn(region, account_id, "security-group", group_id)
+        security_group_arns[group_id] = group_arn
+        public_ingress = sorted(
+            {
+                permission.get("FromPort")
+                for permission in security_group.get("IpPermissions", [])
+                for ip_range in permission.get("IpRanges", [])
+                if ip_range.get("CidrIp") == "0.0.0.0/0" and permission.get("FromPort") is not None
+            }
+        )
+        resources.append(
+            {
+                "service": "ec2",
+                "resource_type": "network.security_group",
+                "identifier": group_arn,
+                "region": region,
+                "metadata": {
+                    "vpc_id": security_group.get("VpcId"),
+                    "group_name": security_group.get("GroupName"),
+                    "public_ingress_ports": public_ingress,
+                },
+                "source": "aws_api",
+            }
+        )
+
+    for route_table in route_tables:
+        route_table_id = route_table.get("RouteTableId")
+        if not route_table_id:
+            continue
+        route_table_arn = _ec2_arn(region, account_id, "route-table", route_table_id)
+        route_table_arns[route_table_id] = route_table_arn
+        internet_route_targets = sorted(
+            {
+                route.get("GatewayId")
+                for route in route_table.get("Routes", [])
+                if route.get("GatewayId", "").startswith("igw-")
+                and route.get("DestinationCidrBlock") == "0.0.0.0/0"
+            }
+        )
+        associated_subnets = [
+            association.get("SubnetId")
+            for association in route_table.get("Associations", [])
+            if association.get("SubnetId")
+        ]
+        resources.append(
+            {
+                "service": "ec2",
+                "resource_type": "network.route_table",
+                "identifier": route_table_arn,
+                "region": region,
+                "metadata": {
+                    "vpc_id": route_table.get("VpcId"),
+                    "subnet_ids": associated_subnets,
+                    "internet_gateway_ids": internet_route_targets,
+                    "routes_to_internet": bool(internet_route_targets),
+                },
+                "source": "aws_api",
+            }
+        )
+        for subnet_id in associated_subnets:
+            subnet_arn = subnet_arns.get(subnet_id)
+            if subnet_arn:
+                relationships.append(
+                    {
+                        "source": subnet_arn,
+                        "target": route_table_arn,
+                        "type": "associated_with_route_table",
+                    }
+                )
+        for gateway_id in internet_route_targets:
+            gateway_arn = internet_gateway_arns.get(gateway_id)
+            if gateway_arn:
+                relationships.append(
+                    {
+                        "source": route_table_arn,
+                        "target": gateway_arn,
+                        "type": "routes_to_internet_gateway",
+                    }
+                )
+
+    for instance in instances:
+        instance_id = instance.get("InstanceId")
+        if not instance_id:
+            continue
+        instance_arn = instance.get("Arn") or _ec2_arn(region, account_id, "instance", instance_id)
+        resources.append(
+            {
+                "service": "ec2",
+                "resource_type": "compute.ec2_instance",
+                "identifier": instance_arn,
+                "region": region,
+                "metadata": {
+                    "instance_id": instance_id,
+                    "state": instance.get("State"),
+                    "public_ip": instance.get("PublicIpAddress"),
+                    "private_ip": instance.get("PrivateIpAddress"),
+                    "instance_profile": instance.get("IamInstanceProfileArn"),
+                    "subnet_id": instance.get("SubnetId"),
+                    "vpc_id": instance.get("VpcId"),
+                    "security_group_ids": instance.get("SecurityGroupIds", []),
+                    "network_reachable_from_internet": bool(instance.get("PublicIpAddress")),
+                },
+                "source": "aws_api",
+            }
+        )
+        profile_arn = instance.get("IamInstanceProfileArn")
+        if profile_arn:
+            relationships.append(
+                {
+                    "source": instance_arn,
+                    "target": profile_arn,
+                    "type": "uses_instance_profile",
+                }
+            )
+        subnet_id = instance.get("SubnetId")
+        subnet_arn = subnet_arns.get(subnet_id)
+        if subnet_arn:
+            relationships.append(
+                {
+                    "source": instance_arn,
+                    "target": subnet_arn,
+                    "type": "deployed_in_subnet",
+                }
+            )
+        for group_id in instance.get("SecurityGroupIds", []):
+            group_arn = security_group_arns.get(group_id)
+            if group_arn:
+                relationships.append(
+                    {
+                        "source": instance_arn,
+                        "target": group_arn,
+                        "type": "protected_by_security_group",
+                    }
+                )
+
+    for load_balancer in load_balancers:
+        load_balancer_arn = load_balancer.get("LoadBalancerArn")
+        if not load_balancer_arn:
+            continue
+        scheme = load_balancer.get("Scheme")
+        listeners = aws_client.list_listeners(region=region, load_balancer_arn=load_balancer_arn)
+        resources.append(
+            {
+                "service": "elasticloadbalancing",
+                "resource_type": "network.load_balancer",
+                "identifier": load_balancer_arn,
+                "region": region,
+                "metadata": {
+                    "exposure": "public" if scheme == "internet-facing" else "private",
+                    "internet_facing": scheme == "internet-facing",
+                    "dns_public": bool(load_balancer.get("DNSName")) and scheme == "internet-facing",
+                    "dns_name": load_balancer.get("DNSName"),
+                    "vpc_id": load_balancer.get("VpcId"),
+                    "state": load_balancer.get("State"),
+                    "listener_public": any(listener.get("Port") in {80, 443} for listener in listeners),
+                },
+                "source": "aws_api",
+            }
+        )
+        for listener in listeners:
+            listener_arn = listener.get("ListenerArn")
+            if not listener_arn:
+                continue
+            resources.append(
+                {
+                    "service": "elasticloadbalancing",
+                    "resource_type": "network.lb_listener",
+                    "identifier": listener_arn,
+                    "region": region,
+                    "metadata": {
+                        "load_balancer_arn": load_balancer_arn,
+                        "port": listener.get("Port"),
+                        "protocol": listener.get("Protocol"),
+                        "listener_public": listener.get("Port") in {80, 443},
+                        "target_group_arns": listener.get("TargetGroupArns", []),
+                        "listener_forwarding": bool(listener.get("TargetGroupArns")),
+                    },
+                    "source": "aws_api",
+                }
+            )
+            relationships.append(
+                {
+                    "source": load_balancer_arn,
+                    "target": listener_arn,
+                    "type": "exposes_listener",
+                }
+            )
+            for target_group_arn in listener.get("TargetGroupArns", []):
+                relationships.append(
+                    {
+                        "source": listener_arn,
+                        "target": target_group_arn,
+                        "type": "forwards_to_target_group",
+                    }
+                )
+
+    for target_group in target_groups:
+        target_group_arn = target_group.get("TargetGroupArn")
+        if not target_group_arn:
+            continue
+        resources.append(
+            {
+                "service": "elasticloadbalancing",
+                "resource_type": "network.target_group",
+                "identifier": target_group_arn,
+                "region": region,
+                "metadata": {
+                    "target_type": target_group.get("TargetType"),
+                    "protocol": target_group.get("Protocol"),
+                    "port": target_group.get("Port"),
+                    "vpc_id": target_group.get("VpcId"),
+                    "health_check_protocol": target_group.get("HealthCheckProtocol"),
+                    "load_balancer_arns": target_group.get("LoadBalancerArns", []),
+                },
+                "source": "aws_api",
+            }
+        )
+        for load_balancer_arn in target_group.get("LoadBalancerArns", []):
+            relationships.append(
+                {
+                    "source": load_balancer_arn,
+                    "target": target_group_arn,
+                    "type": "uses_target_group",
+                }
+            )
+
+    for rest_api in rest_apis:
+        api_arn = rest_api.get("Arn")
+        if not api_arn:
+            continue
+        endpoint_types = (rest_api.get("EndpointConfiguration") or {}).get("types", [])
+        public_stage = "PRIVATE" not in endpoint_types
+        integrations = aws_client.list_api_integrations(region=region, rest_api_id=rest_api.get("RestApiId"))
+        resources.append(
+            {
+                "service": "apigateway",
+                "resource_type": "network.api_gateway",
+                "identifier": api_arn,
+                "region": region,
+                "metadata": {
+                    "name": rest_api.get("Name"),
+                    "exposure": "public" if public_stage else "private",
+                    "public_stage": public_stage,
+                    "endpoint_types": endpoint_types,
+                    "integration_status": "active" if integrations else "not_configured",
+                },
+                "source": "aws_api",
+            }
+        )
+        for integration in integrations:
+            integration_id = f"{api_arn}/integration/{integration.get('HttpMethod', 'ANY')}{integration.get('ResourcePath', '/')}"
+            target_uri = integration.get("Uri")
+            target_instance = None
+            target_load_balancer = None
+            if target_uri:
+                for instance in instances:
+                    private_ip = instance.get("PrivateIpAddress")
+                    if private_ip and private_ip in target_uri:
+                        target_instance = instance.get("Arn")
+                        break
+                for load_balancer in load_balancers:
+                    dns_name = load_balancer.get("DNSName")
+                    if dns_name and dns_name in target_uri:
+                        target_load_balancer = load_balancer.get("LoadBalancerArn")
+                        break
+            resources.append(
+                {
+                    "service": "apigateway",
+                    "resource_type": "network.api_integration",
+                    "identifier": integration_id,
+                    "region": region,
+                    "metadata": {
+                        "rest_api_arn": api_arn,
+                        "resource_path": integration.get("ResourcePath"),
+                        "http_method": integration.get("HttpMethod"),
+                        "integration_type": integration.get("Type"),
+                        "connection_type": integration.get("ConnectionType"),
+                        "uri": target_uri,
+                        "target_instance": target_instance,
+                        "target_load_balancer": target_load_balancer,
+                        "integration_status": "active" if target_uri else "not_configured",
+                    },
+                    "source": "aws_api",
+                }
+            )
+            relationships.append(
+                {
+                    "source": api_arn,
+                    "target": integration_id,
+                    "type": "uses_integration",
+                }
+            )
+            if target_load_balancer:
+                relationships.append(
+                    {
+                        "source": integration_id,
+                        "target": target_load_balancer,
+                        "type": "integrates_with_load_balancer",
+                    }
+                )
+            if target_instance:
+                relationships.append(
+                    {
+                        "source": integration_id,
+                        "target": target_instance,
+                        "type": "integrates_with_instance",
+                    }
+                )
+
     summary = {
         "roles": sum(1 for resource in resources if resource["resource_type"] == "identity.role"),
         "buckets": sum(1 for resource in resources if resource["resource_type"] == "data_store.s3_bucket"),
@@ -150,6 +629,34 @@ def run_foundation_discovery(
         "parameters": sum(
             1 for resource in resources if resource["resource_type"] == "secret.ssm_parameter"
         ),
+        "instance_profiles": sum(
+            1 for resource in resources if resource["resource_type"] == "compute.instance_profile"
+        ),
+        "instances": sum(1 for resource in resources if resource["resource_type"] == "compute.ec2_instance"),
+        "internet_gateways": sum(
+            1 for resource in resources if resource["resource_type"] == "network.internet_gateway"
+        ),
+        "route_tables": sum(1 for resource in resources if resource["resource_type"] == "network.route_table"),
+        "subnets": sum(1 for resource in resources if resource["resource_type"] == "network.subnet"),
+        "security_groups": sum(
+            1 for resource in resources if resource["resource_type"] == "network.security_group"
+        ),
+        "load_balancers": sum(
+            1 for resource in resources if resource["resource_type"] == "network.load_balancer"
+        ),
+        "api_gateways": sum(
+            1 for resource in resources if resource["resource_type"] == "network.api_gateway"
+        ),
+        "target_groups": sum(
+            1 for resource in resources if resource["resource_type"] == "network.target_group"
+        ),
+        "lb_listeners": sum(
+            1 for resource in resources if resource["resource_type"] == "network.lb_listener"
+        ),
+        "api_integrations": sum(
+            1 for resource in resources if resource["resource_type"] == "network.api_integration"
+        ),
+        "relationships": len(relationships),
     }
 
     snapshot = {
@@ -160,6 +667,7 @@ def run_foundation_discovery(
         "services_scanned": services_scanned,
         "regions_scanned": target.allowed_regions,
         "resources": resources,
+        "relationships": relationships,
         "evidence": evidence,
         "summary": summary,
         "discovery_config": {
@@ -193,6 +701,18 @@ def _render_discovery_markdown(snapshot: dict) -> str:
         f"- Objects: {summary['objects']}",
         f"- Secrets: {summary['secrets']}",
         f"- Parameters: {summary['parameters']}",
+        f"- Instance profiles: {summary.get('instance_profiles', 0)}",
+        f"- Instances: {summary.get('instances', 0)}",
+        f"- Internet gateways: {summary.get('internet_gateways', 0)}",
+        f"- Route tables: {summary.get('route_tables', 0)}",
+        f"- Subnets: {summary.get('subnets', 0)}",
+        f"- Security groups: {summary.get('security_groups', 0)}",
+        f"- Load balancers: {summary.get('load_balancers', 0)}",
+        f"- API Gateways: {summary.get('api_gateways', 0)}",
+        f"- Target groups: {summary.get('target_groups', 0)}",
+        f"- LB listeners: {summary.get('lb_listeners', 0)}",
+        f"- API integrations: {summary.get('api_integrations', 0)}",
+        f"- Relationships: {summary.get('relationships', 0)}",
         "",
         "## Sample Resources",
     ]
@@ -200,6 +720,17 @@ def _render_discovery_markdown(snapshot: dict) -> str:
         lines.append(
             f"- {resource['resource_type']}: {resource['identifier']}"
         )
+    if snapshot.get("relationships"):
+        lines.extend(
+            [
+                "",
+                "## Sample Relationships",
+            ]
+        )
+        for relationship in snapshot["relationships"][:10]:
+            lines.append(
+                f"- {relationship['type']}: {relationship['source']} -> {relationship['target']}"
+            )
     lines.append("")
     return "\n".join(lines)
 
@@ -215,3 +746,28 @@ def _resolve_ssm_discovery_prefixes(*, target: TargetConfig, profiles: list) -> 
     if profile_prefixes:
         return sorted(profile_prefixes)
     return list(DEFAULT_SSM_DISCOVERY_PREFIXES)
+
+
+def _extract_trust_principals(policy_document) -> list[str]:
+    if not policy_document:
+        return []
+    statements = policy_document.get("Statement", [])
+    if isinstance(statements, dict):
+        statements = [statements]
+    principals: set[str] = set()
+    for statement in statements:
+        principal = statement.get("Principal")
+        if principal == "*":
+            principals.add("*")
+            continue
+        if not isinstance(principal, dict):
+            continue
+        aws_principal = principal.get("AWS")
+        if aws_principal == "*":
+            principals.add("*")
+            continue
+        if isinstance(aws_principal, str):
+            principals.add(aws_principal)
+        elif isinstance(aws_principal, list):
+            principals.update(item for item in aws_principal if isinstance(item, str))
+    return sorted(principals)

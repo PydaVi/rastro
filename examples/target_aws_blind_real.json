@@ -1,0 +1,13 @@
+{
+  "name": "aws-blind-real-assessment",
+  "platform": "aws",
+  "accounts": [
+    "550192603632"
+  ],
+  "allowed_regions": [
+    "us-east-1"
+  ],
+  "entry_roles": [
+    "arn:aws:iam::550192603632:role/privesc-AssumeRole-starting-role"
+  ]
+}

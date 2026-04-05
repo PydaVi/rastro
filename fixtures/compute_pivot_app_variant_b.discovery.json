@@ -1,0 +1,224 @@
+{
+  "target": "compute-pivot-app-variant-b",
+  "bundle": "aws-advanced",
+  "collected_at": "2026-04-03T05:00:00+00:00",
+  "caller_identity": {
+    "Account": "123456789012",
+    "Arn": "arn:aws:iam::123456789012:user/platform-analyst"
+  },
+  "services_scanned": [
+    "iam",
+    "ec2",
+    "s3",
+    "secretsmanager",
+    "ssm",
+    "elasticloadbalancing",
+    "apigateway"
+  ],
+  "regions_scanned": [
+    "us-east-1"
+  ],
+  "resources": [
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+      "region": "us-east-1",
+      "metadata": {
+        "workload": "ec2",
+        "tier": "prod"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/LegacyReportInstanceRole",
+      "region": "us-east-1",
+      "metadata": {
+        "workload": "ec2",
+        "tier": "legacy"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/PublicWebhookBridgeRole",
+      "region": "us-east-1",
+      "metadata": {
+        "workload": "bridge",
+        "tier": "public"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "iam",
+      "resource_type": "identity.role",
+      "identifier": "arn:aws:iam::123456789012:role/ComputeAuditRole",
+      "region": "us-east-1",
+      "metadata": {
+        "workload": "audit"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "ec2",
+      "resource_type": "compute.instance_profile",
+      "identifier": "arn:aws:iam::123456789012:instance-profile/PayrollAppProfile",
+      "region": "us-east-1",
+      "metadata": {
+        "role": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "ec2",
+      "resource_type": "compute.instance_profile",
+      "identifier": "arn:aws:iam::123456789012:instance-profile/LegacyReportProfile",
+      "region": "us-east-1",
+      "metadata": {
+        "role": "arn:aws:iam::123456789012:role/LegacyReportInstanceRole"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "ec2",
+      "resource_type": "compute.ec2_instance",
+      "identifier": "arn:aws:ec2:us-east-1:123456789012:instance/i-payrollapp02",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "payroll-web-prod-02",
+        "instance_profile": "arn:aws:iam::123456789012:instance-profile/PayrollAppProfile",
+        "exposure": "public-api"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "ec2",
+      "resource_type": "compute.ec2_instance",
+      "identifier": "arn:aws:ec2:us-east-1:123456789012:instance/i-legacyreport02",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "legacy-reporting-02",
+        "instance_profile": "arn:aws:iam::123456789012:instance-profile/LegacyReportProfile",
+        "exposure": "private"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "apigateway",
+      "resource_type": "network.api_gateway",
+      "identifier": "arn:aws:apigateway:us-east-1::/restapis/payroll-webhook-public",
+      "region": "us-east-1",
+      "metadata": {
+        "exposure": "public",
+        "target_instance": "arn:aws:ec2:us-east-1:123456789012:instance/i-payrollapp02"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "elasticloadbalancing",
+      "resource_type": "network.load_balancer",
+      "identifier": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/public-webhook-bridge",
+      "region": "us-east-1",
+      "metadata": {
+        "exposure": "public",
+        "target_instance": "arn:aws:ec2:us-east-1:123456789012:instance/i-payrollapp02"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "elasticloadbalancing",
+      "resource_type": "network.load_balancer",
+      "identifier": "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/reporting-internal-v2",
+      "region": "us-east-1",
+      "metadata": {
+        "exposure": "private",
+        "target_instance": "arn:aws:ec2:us-east-1:123456789012:instance/i-legacyreport02"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "secretsmanager",
+      "resource_type": "secret.secrets_manager",
+      "identifier": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll/backend-db-password",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "prod/payroll/backend-db-password",
+        "classification": "restricted",
+        "reachable_roles": [
+          "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+        ]
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "secretsmanager",
+      "resource_type": "secret.secrets_manager",
+      "identifier": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/reporting/export-token",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "prod/reporting/export-token",
+        "classification": "internal",
+        "reachable_roles": [
+          "arn:aws:iam::123456789012:role/LegacyReportInstanceRole"
+        ]
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "ssm",
+      "resource_type": "secret.ssm_parameter",
+      "identifier": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key",
+      "region": "us-east-1",
+      "metadata": {
+        "name": "/prod/payroll/api_key",
+        "path_prefix": "/prod",
+        "reachable_roles": [
+          "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+        ]
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_bucket",
+      "identifier": "arn:aws:s3:::compute-payroll-dumps-prod",
+      "region": "us-east-1",
+      "metadata": {
+        "classification": "restricted"
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_object",
+      "identifier": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+      "region": "us-east-1",
+      "metadata": {
+        "bucket": "compute-payroll-dumps-prod",
+        "object_key": "payroll/2026-03/payroll.csv",
+        "classification": "restricted",
+        "reachable_roles": [
+          "arn:aws:iam::123456789012:role/PayrollAppInstanceRole"
+        ]
+      },
+      "source": "synthetic"
+    },
+    {
+      "service": "s3",
+      "resource_type": "data_store.s3_object",
+      "identifier": "arn:aws:s3:::compute-payroll-dumps-prod/reports/legacy.csv",
+      "region": "us-east-1",
+      "metadata": {
+        "bucket": "compute-payroll-dumps-prod",
+        "object_key": "reports/legacy.csv",
+        "reachable_roles": [
+          "arn:aws:iam::123456789012:role/LegacyReportInstanceRole"
+        ]
+      },
+      "source": "synthetic"
+    }
+  ]
+}

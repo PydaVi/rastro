@@ -1,0 +1,40 @@
+{
+  "target": "aws",
+  "allowed_actions": [
+    "enumerate",
+    "analyze",
+    "assume_role",
+    "access_resource"
+  ],
+  "allowed_resources": [
+    "arn:aws:iam::123456789012:root",
+    "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+    "arn:aws:iam::123456789012:role/LegacyReportInstanceRole",
+    "arn:aws:iam::123456789012:role/SupportBastionRole",
+    "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/payroll-web",
+    "arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/app/reporting-internal",
+    "arn:aws:s3:::compute-payroll-dumps-prod",
+    "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+    "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/reporting/export-token"
+  ],
+  "max_steps": 7,
+  "planner": {
+    "backend": "mock"
+  },
+  "dry_run": true,
+  "aws_account_ids": [
+    "123456789012"
+  ],
+  "allowed_regions": [
+    "us-east-1"
+  ],
+  "allowed_services": [
+    "iam",
+    "elasticloadbalancing",
+    "s3",
+    "secretsmanager"
+  ],
+  "authorized_by": "Demo Operator",
+  "authorized_at": "2026-03-28",
+  "authorization_document": "docs/authorization-demo.md"
+}

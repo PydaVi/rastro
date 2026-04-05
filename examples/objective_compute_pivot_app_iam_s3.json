@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate compute-pivot IAM access to a sensitive payroll dump object.",
+  "target": "arn:aws:s3:::compute-payroll-dumps-prod/payroll/2026-03/payroll.csv",
+  "success_criteria": {
+    "flag": "compute_pivot_foundation_s3"
+  }
+}

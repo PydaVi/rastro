@@ -4,7 +4,7 @@ phase: credential-access
 mitre_id: T1552
 platform: AWS
 preconditions:
-  - audit_role_assumed
+  - privileged_identity_active
 postconditions:
   - parameter_compromised
 implementation: tools/aws/ssm_read_parameter.py

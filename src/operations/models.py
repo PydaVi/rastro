@@ -35,6 +35,7 @@ class ProfileDefinition(BaseModel):
 
 class CampaignResult(BaseModel):
     status: Literal["passed", "objective_not_met", "preflight_failed", "run_failed"]
+    campaign_id: str | None = None
     profile: str
     output_dir: Path
     generated_scope: Path
@@ -52,12 +53,14 @@ class AssessmentFinding(BaseModel):
     profile: str
     severity: str
     confidence: str
-    status: Literal["validated"] = "validated"
+    status: Literal["validated", "observed"] = "validated"
+    finding_state: Literal["observed", "reachable", "credentialed", "exploited", "validated_impact"] = "observed"
     target_resource: str
     entry_point: str | None = None
     path_summary: str = ""
     services_involved: list[str] = Field(default_factory=list)
     evidence_summary: str = ""
+    evidence_level: Literal["proved", "observed"] = "proved"
     mitre_techniques: list[str] = Field(default_factory=list)
 
 

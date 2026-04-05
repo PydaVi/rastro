@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate pivot from compute surface into the payroll application IAM role.",
+  "target": "arn:aws:iam::123456789012:role/PayrollAppInstanceRole",
+  "success_criteria": {
+    "flag": "compute_identity_pivoted"
+  }
+}

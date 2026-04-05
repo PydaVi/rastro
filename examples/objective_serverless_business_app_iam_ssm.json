@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate IAM access to a sensitive serverless parameter.",
+  "target": "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key",
+  "success_criteria": {
+    "flag": "serverless_foundation_ssm"
+  }
+}
