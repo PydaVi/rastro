@@ -31,6 +31,9 @@ PROFILE_RULES = {
     "aws-iam-secrets": {"resource_types": {"secret.secrets_manager"}},
     "aws-iam-ssm": {"resource_types": {"secret.ssm_parameter"}},
     "aws-iam-role-chaining": {"resource_types": {"identity.role"}},
+    "aws-iam-create-policy-version-privesc": {"resource_types": {"identity.role"}},
+    "aws-iam-attach-role-policy-privesc": {"resource_types": {"identity.role"}},
+    "aws-iam-pass-role-privesc": {"resource_types": {"identity.role"}},
     "aws-iam-compute-iam": {"resource_types": {"identity.role"}},
     "aws-external-entry-data": {"resource_types": {"data_store.s3_object", "secret.secrets_manager", "secret.ssm_parameter"}},
     "aws-cross-account-data": {"resource_types": {"data_store.s3_object", "secret.secrets_manager", "secret.ssm_parameter"}},
@@ -45,6 +48,21 @@ BUNDLE_RULES = {
         "aws-iam-secrets",
         "aws-iam-ssm",
         "aws-iam-role-chaining",
+    ],
+    "aws-iam-role-chaining-only": [
+        "aws-iam-role-chaining",
+    ],
+    "aws-iam-attach-role-policy-only": [
+        "aws-iam-attach-role-policy-privesc",
+    ],
+    "aws-iam-heavy": [
+        "aws-iam-role-chaining",
+        "aws-iam-create-policy-version-privesc",
+        "aws-iam-attach-role-policy-privesc",
+        "aws-iam-pass-role-privesc",
+        "aws-iam-s3",
+        "aws-iam-secrets",
+        "aws-iam-ssm",
     ],
     "aws-advanced": [
         "aws-iam-s3",
@@ -276,6 +294,33 @@ def _build_candidate(profile_name: str, resource: dict, structural_index: dict) 
             structural_score += 10
             reasons.append("lambda_runtime_link")
             signals["lambda_functions"] = lambda_functions
+    if profile_name in {
+        "aws-iam-create-policy-version-privesc",
+        "aws-iam-attach-role-policy-privesc",
+        "aws-iam-pass-role-privesc",
+    }:
+        escalation_signals = structural_index["role_policy_escalation_signals"].get(identifier, [])
+        matching_signals = _matching_policy_probe_signals(profile_name, escalation_signals)
+        if not matching_signals:
+            return None
+        score += 35
+        structural_score += 35
+        reasons.append("policy_probe_match")
+        signals["policy_escalation_signals"] = matching_signals
+        trust_principals = structural_index["role_trust_principals"].get(identifier, [])
+        if "*" in trust_principals:
+            score += 15
+            structural_score += 15
+            reasons.append("broad_trust_signal")
+            signals["trust_principals"] = trust_principals
+        if structural_index["role_to_lambda_functions"].get(identifier):
+            score += 10
+            structural_score += 10
+            reasons.append("lambda_runtime_link")
+        if structural_index["role_to_instance_profiles"].get(identifier) or structural_index["role_to_instances"].get(identifier):
+            score += 10
+            structural_score += 10
+            reasons.append("compute_runtime_link")
     if profile_name == "aws-iam-compute-iam" and metadata.get("tier") == "prod":
         score += 10
         structural_score += 10
@@ -695,6 +740,13 @@ def _infer_candidate_profiles(resource: dict, structural_index: dict) -> list[st
         inferred.append("aws-iam-kms-data")
     elif resource_type == "identity.role":
         inferred.append("aws-iam-role-chaining")
+        escalation_signals = structural_index["role_policy_escalation_signals"].get(identifier, [])
+        if _matching_policy_probe_signals("aws-iam-create-policy-version-privesc", escalation_signals):
+            inferred.append("aws-iam-create-policy-version-privesc")
+        if _matching_policy_probe_signals("aws-iam-attach-role-policy-privesc", escalation_signals):
+            inferred.append("aws-iam-attach-role-policy-privesc")
+        if _matching_policy_probe_signals("aws-iam-pass-role-privesc", escalation_signals):
+            inferred.append("aws-iam-pass-role-privesc")
         if structural_index["role_to_instance_profiles"].get(identifier) or structural_index["role_to_instances"].get(identifier):
             inferred.append("aws-iam-compute-iam")
 
@@ -771,6 +823,22 @@ def _policy_escalation_signals(metadata: dict) -> list[str]:
         "iamfullaccess",
     ]
     return sorted({marker for marker in markers if marker in haystack})
+
+
+def _matching_policy_probe_signals(profile_name: str, escalation_signals: list[str]) -> list[str]:
+    matchers = {
+        "aws-iam-create-policy-version-privesc": {"createpolicyversion", "setdefaultpolicyversion"},
+        "aws-iam-attach-role-policy-privesc": {
+            "attachrolepolicy",
+            "attachuserpolicy",
+            "putrolepolicy",
+            "putuserpolicy",
+            "addusertogroup",
+        },
+        "aws-iam-pass-role-privesc": {"passrole", "cloudformation", "codebuild", "sagemaker"},
+    }
+    wanted = matchers.get(profile_name, set())
+    return [signal for signal in escalation_signals if signal in wanted]
 
 
 def _infer_execution_fixture_set(resource: dict, profile_name: str, structural_index: dict) -> str:

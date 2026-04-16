@@ -481,15 +481,31 @@ def write_assessment_findings(result: AssessmentResult, output_dir: Path) -> tup
     result.findings = findings
     json_path = output_dir / "assessment_findings.json"
     md_path = output_dir / "assessment_findings.md"
+    source_campaign_findings_total = sum(
+        1
+        for campaign in result.campaigns
+        if campaign.status == "passed" and campaign.report_json and campaign.report_json.exists()
+    )
     payload = {
         "bundle": result.bundle,
         "target": result.target,
         "summary": {
             "findings_total": len(findings),
+            "source_campaign_findings_total": source_campaign_findings_total,
+            "distinct_paths_total": len(findings),
+            "principal_multiplicity_total": sum(finding.principal_multiplicity for finding in findings),
+            "additional_principal_observations": sum(
+                max(0, finding.principal_multiplicity - 1) for finding in findings
+            ),
+            "paths_with_multiple_principals": sum(
+                1 for finding in findings if finding.principal_multiplicity > 1
+            ),
             "validated_findings": sum(1 for finding in findings if finding.status == "validated"),
             "observed_findings": sum(1 for finding in findings if finding.status == "observed"),
             "finding_states": _count_states(findings),
             "by_profile": _count_findings_by_profile(findings),
+            "principal_multiplicity_by_profile": _count_principal_multiplicity_by_profile(findings),
+            "proof_modes": _count_proof_modes(findings),
         },
         "findings": [finding.model_dump(mode="json") for finding in findings],
     }
@@ -499,10 +515,9 @@ def write_assessment_findings(result: AssessmentResult, output_dir: Path) -> tup
 
 
 def build_assessment_findings(result: AssessmentResult) -> list[AssessmentFinding]:
-    findings: list[AssessmentFinding] = []
-    seen_fingerprints: set[tuple[str, str, str, str]] = set()
+    aggregated: dict[tuple[str, str, str, str, str], dict] = {}
     for campaign in result.campaigns:
-        if campaign.status != "passed" or not campaign.report_json or not campaign.report_json.exists():
+        if campaign.status not in {"passed", "objective_not_met"} or not campaign.report_json or not campaign.report_json.exists():
             continue
         report = json.loads(campaign.report_json.read_text())
         executive_summary = report.get("executive_summary", {})
@@ -510,43 +525,58 @@ def build_assessment_findings(result: AssessmentResult) -> list[AssessmentFindin
         target_resource = executive_summary.get("final_resource") or objective.get("target") or "-"
         path_summary = _build_path_summary(report)
         finding_status, evidence_level = _classify_finding(report, campaign)
-        evidence_summary = _build_evidence_summary(report, finding_status)
+        if not _should_emit_finding(report, campaign, finding_status):
+            continue
         finding_state = _determine_finding_state(report, campaign, target_resource)
+        proof_mode = _determine_proof_mode(report, campaign, target_resource)
+        evidence_summary = _build_evidence_summary(report, finding_status)
+        distinct_path_key = _build_distinct_path_key(report, target_resource)
+        entry_point = (
+            executive_summary.get("effective_entry_identity")
+            or executive_summary.get("initial_identity")
+        )
         fingerprint = (
             campaign.profile,
             target_resource,
-            (
-                executive_summary.get("effective_entry_identity")
-                or executive_summary.get("initial_identity")
-                or "-"
-            ),
             finding_status,
-            _slugify(evidence_summary),
+            finding_state,
+            distinct_path_key,
         )
-        if fingerprint in seen_fingerprints:
+        if fingerprint in aggregated:
+            bucket = aggregated[fingerprint]
+            if entry_point:
+                bucket["entry_points"].add(entry_point)
+            finding = bucket["finding"]
+            finding.entry_points = sorted(bucket["entry_points"])
+            finding.principal_multiplicity = len(finding.entry_points) or 1
+            if finding.entry_points:
+                finding.entry_point = finding.entry_points[0]
             continue
-        seen_fingerprints.add(fingerprint)
-        findings.append(
-            AssessmentFinding(
-                id=f"finding:{campaign.profile}:{_slugify(target_resource)}:{finding_status}",
-                title=_build_finding_title(campaign.profile, target_resource),
-                profile=campaign.profile,
+        aggregated[fingerprint] = {
+            "entry_points": set([entry_point] if entry_point else []),
+            "finding": AssessmentFinding(
+                id=f"finding:{_finding_profile(campaign.profile, proof_mode)}:{_slugify(target_resource)}:{finding_status}",
+                title=_build_finding_title(campaign.profile, target_resource, proof_mode),
+                profile=_finding_profile(campaign.profile, proof_mode),
                 severity=_severity_for_profile(campaign.profile),
                 confidence="high" if campaign.objective_met else "medium",
                 status=finding_status,
                 finding_state=finding_state,
                 target_resource=target_resource,
-                entry_point=(
-                    executive_summary.get("effective_entry_identity")
-                    or executive_summary.get("initial_identity")
-                ),
+                entry_point=entry_point,
+                entry_points=[entry_point] if entry_point else [],
+                principal_multiplicity=1,
+                distinct_path_key=distinct_path_key,
                 path_summary=path_summary,
                 services_involved=report.get("execution_policy", {}).get("allowed_services", []),
                 evidence_summary=evidence_summary,
                 evidence_level=evidence_level,
+                proof_mode=proof_mode,
                 mitre_techniques=[item.get("mitre_id") for item in report.get("mitre_techniques", []) if item.get("mitre_id")],
-            )
-        )
+            ),
+        }
+    findings = [bucket["finding"] for bucket in aggregated.values()]
+    findings.sort(key=lambda item: (item.profile, item.target_resource, item.distinct_path_key))
     return findings
 
 
@@ -578,10 +608,32 @@ def _build_evidence_summary(report: dict, finding_status: str = "validated") -> 
     proof = executive_summary.get("proof")
     if proof:
         return f"Validated with proof: {proof}"
+    if executive_summary.get("simulated_policy_result"):
+        simulated = executive_summary["simulated_policy_result"]
+        decision = (simulated.get("decision") or "").lower()
+        if decision == "allowed":
+            return (
+                "Observed privilege-escalation opportunity via policy simulation: "
+                f"action={simulated.get('action')} decision={simulated.get('decision')}"
+            )
+        return (
+            "Policy simulation did not prove privilege-escalation opportunity: "
+            f"action={simulated.get('action')} decision={simulated.get('decision')}"
+        )
     final_resource = executive_summary.get("final_resource")
     if final_resource and finding_status == "validated":
         return f"Validated access to {final_resource}"
     return "Observed target or path without minimum proof for validated exploitation."
+
+
+def _should_emit_finding(report: dict, campaign: CampaignResult, finding_status: str) -> bool:
+    if campaign.profile not in {"aws-iam-s3", "aws-iam-secrets", "aws-iam-ssm"}:
+        return True
+    if finding_status == "validated":
+        return True
+    simulated = (report.get("executive_summary", {}) or {}).get("simulated_policy_result") or {}
+    decision = (simulated.get("decision") or "").lower()
+    return decision == "allowed"
 
 
 def _classify_finding(report: dict, campaign: CampaignResult) -> tuple[str, str]:
@@ -602,6 +654,7 @@ def _classify_finding(report: dict, campaign: CampaignResult) -> tuple[str, str]
             if (
                 action.get("action_type") == "access_resource"
                 and action.get("target") == target
+                and evidence
                 and not evidence.get("simulated")
             ):
                 return "validated", "proved"
@@ -619,16 +672,61 @@ def _classify_finding(report: dict, campaign: CampaignResult) -> tuple[str, str]
             ):
                 return "observed", "observed"
         return "observed", "observed"
+    if campaign.profile in {
+        "aws-iam-create-policy-version-privesc",
+        "aws-iam-attach-role-policy-privesc",
+        "aws-iam-pass-role-privesc",
+    }:
+        for step in successful_steps:
+            action = step.get("action") or {}
+            details = ((step.get("observation") or {}).get("details") or {})
+            request_summary = details.get("request_summary") or {}
+            if action.get("target") == target and "iam:SimulatePrincipalPolicy" in request_summary.get("api_calls", []):
+                return "observed", "observed"
+        return "observed", "observed"
     return ("validated", "proved") if campaign.objective_met else ("observed", "observed")
 
 
-def _build_finding_title(profile: str, target_resource: str) -> str:
+def _determine_proof_mode(report: dict, campaign: CampaignResult, target_resource: str) -> str:
+    executive_summary = report.get("executive_summary", {})
+    if executive_summary.get("proof"):
+        return "real"
+    for step in report.get("steps", []):
+        action = step.get("action") or {}
+        details = ((step.get("observation") or {}).get("details") or {})
+        if action.get("action_type") == "assume_role" and (
+            details.get("granted_role") == target_resource or action.get("target") == target_resource
+        ):
+            return "simulation" if action.get("tool") == "iam_simulate_assume_role" else "real"
+    if executive_summary.get("simulated_policy_result"):
+        return "simulation"
+    return "structural"
+
+
+def _finding_profile(profile: str, proof_mode: str) -> str:
+    if profile == "aws-iam-role-chaining":
+        if proof_mode == "real":
+            return "aws-iam-role-assumption-proved"
+        if proof_mode == "simulation":
+            return "aws-iam-role-chaining-simulated"
+    return profile
+
+
+def _build_finding_title(profile: str, target_resource: str, proof_mode: str = "structural") -> str:
     labels = {
         "aws-iam-s3": "IAM -> S3 exposure",
         "aws-iam-secrets": "IAM -> Secrets exposure",
         "aws-iam-ssm": "IAM -> SSM exposure",
         "aws-iam-role-chaining": "IAM role chaining exposure",
+        "aws-iam-create-policy-version-privesc": "IAM CreatePolicyVersion privilege-escalation opportunity",
+        "aws-iam-attach-role-policy-privesc": "IAM policy attachment privilege-escalation opportunity",
+        "aws-iam-pass-role-privesc": "IAM PassRole privilege-escalation opportunity",
     }
+    if profile == "aws-iam-role-chaining":
+        if proof_mode == "real":
+            return f"IAM role assumption proved for {target_resource}"
+        if proof_mode == "simulation":
+            return f"IAM role-chaining simulation opportunity to {target_resource}"
     return f"{labels.get(profile, profile)} to {target_resource}"
 
 
@@ -638,6 +736,11 @@ def _severity_for_profile(profile: str) -> str:
         "aws-iam-secrets": "critical",
         "aws-iam-ssm": "high",
         "aws-iam-role-chaining": "high",
+        "aws-iam-role-chaining-simulated": "high",
+        "aws-iam-role-assumption-proved": "high",
+        "aws-iam-create-policy-version-privesc": "high",
+        "aws-iam-attach-role-policy-privesc": "high",
+        "aws-iam-pass-role-privesc": "high",
     }
     return severities.get(profile, "medium")
 
@@ -646,6 +749,20 @@ def _count_findings_by_profile(findings: list[AssessmentFinding]) -> dict[str, i
     counts: dict[str, int] = {}
     for finding in findings:
         counts[finding.profile] = counts.get(finding.profile, 0) + 1
+    return counts
+
+
+def _count_principal_multiplicity_by_profile(findings: list[AssessmentFinding]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for finding in findings:
+        counts[finding.profile] = counts.get(finding.profile, 0) + finding.principal_multiplicity
+    return counts
+
+
+def _count_proof_modes(findings: list[AssessmentFinding]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for finding in findings:
+        counts[finding.proof_mode] = counts.get(finding.proof_mode, 0) + 1
     return counts
 
 
@@ -662,8 +779,8 @@ def _determine_finding_state(report: dict, campaign: CampaignResult, target_reso
         step for step in steps if (step.get("observation") or {}).get("success")
     ]
     state = "observed"
-    if success_steps:
-        state = _state_rank("reachable")
+    role_chaining_simulated_allow = False
+    policy_probe_simulated_allow = False
     has_assume = False
     has_access = False
     for step in success_steps:
@@ -671,11 +788,36 @@ def _determine_finding_state(report: dict, campaign: CampaignResult, target_reso
         observation = (step.get("observation") or {}).get("details") or {}
         if action.get("action_type") == "assume_role":
             granted = observation.get("granted_role") or action.get("target")
-            if granted:
+            simulated = observation.get("simulated_policy_result") or {}
+            if action.get("tool") == "iam_simulate_assume_role":
+                if action.get("target") == target_resource and (simulated.get("decision") or "").lower() == "allowed":
+                    role_chaining_simulated_allow = True
+            elif granted:
                 has_assume = True
-        if action.get("action_type") == "access_resource" and action.get("target") == target_resource:
+        if action.get("tool") in {"iam_create_policy_version", "iam_attach_role_policy", "iam_pass_role_service_create"}:
+            simulated = observation.get("simulated_policy_result") or {}
+            if action.get("target") == target_resource and (simulated.get("decision") or "").lower() == "allowed":
+                policy_probe_simulated_allow = True
+        if (
+            action.get("action_type") == "access_resource"
+            and action.get("target") == target_resource
+            and action.get("tool")
+            not in {"iam_create_policy_version", "iam_attach_role_policy", "iam_pass_role_service_create"}
+        ):
             if not (observation.get("evidence") or {}).get("simulated"):
                 has_access = True
+    if campaign.profile == "aws-iam-role-chaining":
+        if role_chaining_simulated_allow:
+            state = _state_rank("reachable", current=state)
+    elif campaign.profile in {
+        "aws-iam-create-policy-version-privesc",
+        "aws-iam-attach-role-policy-privesc",
+        "aws-iam-pass-role-privesc",
+    }:
+        if policy_probe_simulated_allow:
+            state = _state_rank("reachable", current=state)
+    elif success_steps:
+        state = _state_rank("reachable")
     if has_assume:
         state = _state_rank("credentialed", current=state)
     if has_access:
@@ -706,7 +848,13 @@ def _render_assessment_findings_markdown(payload: dict) -> str:
         f"- Bundle: {payload['bundle']}",
         f"- Target: {payload['target']}",
         f"- Findings total: {payload['summary']['findings_total']}",
+        f"- Source campaign findings total: {payload['summary'].get('source_campaign_findings_total', payload['summary']['findings_total'])}",
+        f"- Distinct paths total: {payload['summary'].get('distinct_paths_total', payload['summary']['findings_total'])}",
+        f"- Principal multiplicity total: {payload['summary'].get('principal_multiplicity_total', payload['summary']['findings_total'])}",
+        f"- Additional principal observations: {payload['summary'].get('additional_principal_observations', 0)}",
+        f"- Paths with multiple principals: {payload['summary'].get('paths_with_multiple_principals', 0)}",
         f"- Finding states: {payload['summary'].get('finding_states', {})}",
+        f"- Proof modes: {payload['summary'].get('proof_modes', {})}",
         "",
         "## Findings",
         "",
@@ -716,11 +864,16 @@ def _render_assessment_findings_markdown(payload: dict) -> str:
         lines.append("")
         lines.append(f"- Profile: {finding['profile']}")
         lines.append(f"- Status: {finding['status']}")
+        lines.append(f"- Finding state: {finding['finding_state']}")
         lines.append(f"- Severity: {finding['severity']}")
         lines.append(f"- Confidence: {finding['confidence']}")
         lines.append(f"- Evidence level: {finding['evidence_level']}")
+        lines.append(f"- Proof mode: {finding.get('proof_mode', 'structural')}")
         lines.append(f"- Target resource: {finding['target_resource']}")
         lines.append(f"- Entry point: {finding.get('entry_point') or '-'}")
+        lines.append(f"- Principal multiplicity: {finding.get('principal_multiplicity', 1)}")
+        lines.append(f"- Entry points: {', '.join(finding.get('entry_points') or []) if finding.get('entry_points') else '-'}")
+        lines.append(f"- Distinct path key: {finding.get('distinct_path_key') or '-'}")
         lines.append(f"- Path: {finding['path_summary'] or '-'}")
         lines.append(f"- Evidence: {finding['evidence_summary']}")
         lines.append(f"- MITRE: {', '.join(finding['mitre_techniques']) if finding['mitre_techniques'] else '-'}")
@@ -744,3 +897,25 @@ def _short_ref(value: str) -> str:
 
 def _slugify(value: str) -> str:
     return "".join(ch.lower() if ch.isalnum() else "-" for ch in value).strip("-")
+
+
+def _build_distinct_path_key(report: dict, target_resource: str) -> str:
+    parts: list[str] = []
+    for step in report.get("steps", []):
+        action = step.get("action", {})
+        details = ((step.get("observation") or {}).get("details") or {})
+        target = action.get("target")
+        normalized_target = "objective_target" if target == target_resource else _short_ref(target or "-")
+        token_parts = [
+            action.get("action_type") or "-",
+            action.get("tool") or "-",
+            normalized_target,
+        ]
+        simulated = details.get("simulated_policy_result") or {}
+        decision = simulated.get("decision")
+        if decision:
+            token_parts.append(str(decision).lower())
+        token = ":".join(token_parts)
+        if not parts or parts[-1] != token:
+            parts.append(token)
+    return " | ".join(parts)

@@ -1,0 +1,11 @@
+name: iam_simulate_assume_role
+description: Simulate whether the current principal can assume a target IAM role
+phase: privilege-escalation
+mitre_id: T1548
+platform: AWS IAM
+preconditions:
+  - iam_roles_listed
+postconditions:
+  - iam_assume_role_reachable
+implementation: tools/aws/iam_simulate_assume_role.py
+safe_simulation: true

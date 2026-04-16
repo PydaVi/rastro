@@ -131,6 +131,8 @@ class BlindRealRuntime:
 
     def _target_access_actions(self, actor: str, region: str) -> list[Action]:
         target = self.target_arn
+        if self.profile_name == "aws-iam-role-chaining":
+            return []
         if ":user/" in actor:
             return [
                 Action(
@@ -205,39 +207,28 @@ class BlindRealRuntime:
         if "iam" not in self.scope.allowed_services:
             return []
         abuse_actions: list[Action] = []
+        profile_tools = {
+            "aws-iam-create-policy-version-privesc": ["iam_create_policy_version"],
+            "aws-iam-attach-role-policy-privesc": ["iam_attach_role_policy"],
+            "aws-iam-pass-role-privesc": ["iam_pass_role_service_create"],
+        }.get(
+            self.profile_name,
+            ["iam_create_policy_version", "iam_attach_role_policy", "iam_pass_role_service_create"],
+        )
         for role_arn in roles:
             if role_arn == actor or _is_noise_role(role_arn):
                 continue
-            abuse_actions.append(
-                Action(
-                    action_type=ActionType.ACCESS_RESOURCE,
-                    actor=actor,
-                    target=role_arn,
-                    parameters={"service": "iam", "region": region, "role_arn": role_arn},
-                    tool="iam_create_policy_version",
-                    technique=_technique("T1484.001", "Domain Policy Modification"),
+            for tool in profile_tools:
+                abuse_actions.append(
+                    Action(
+                        action_type=ActionType.ACCESS_RESOURCE,
+                        actor=actor,
+                        target=role_arn,
+                        parameters={"service": "iam", "region": region, "role_arn": role_arn},
+                        tool=tool,
+                        technique=_policy_probe_technique(tool),
+                    )
                 )
-            )
-            abuse_actions.append(
-                Action(
-                    action_type=ActionType.ACCESS_RESOURCE,
-                    actor=actor,
-                    target=role_arn,
-                    parameters={"service": "iam", "region": region, "role_arn": role_arn},
-                    tool="iam_attach_role_policy",
-                    technique=_technique("T1552", "Unsecured Credentials"),
-                )
-            )
-            abuse_actions.append(
-                Action(
-                    action_type=ActionType.ACCESS_RESOURCE,
-                    actor=actor,
-                    target=role_arn,
-                    parameters={"service": "iam", "region": region, "role_arn": role_arn},
-                    tool="iam_pass_role_service_create",
-                    technique=_technique("T1098", "Account Manipulation"),
-                )
-            )
         return abuse_actions
 
     def _account_id(self) -> str:
@@ -269,6 +260,15 @@ def _resource_region(resource_arn: str) -> str | None:
     if len(parts) < 4:
         return None
     return parts[3] or None
+
+
+def _policy_probe_technique(tool: str) -> Technique:
+    mapping = {
+        "iam_create_policy_version": _technique("T1484.001", "Domain Policy Modification"),
+        "iam_attach_role_policy": _technique("T1098", "Account Manipulation"),
+        "iam_pass_role_service_create": _technique("T1098", "Account Manipulation"),
+    }
+    return mapping[tool]
 
 
 def _policy_action_for_target(resource_arn: str) -> str:

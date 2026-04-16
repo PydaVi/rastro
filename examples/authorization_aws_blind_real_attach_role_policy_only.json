@@ -1,0 +1,9 @@
+{
+  "authorized_by": "brainctl",
+  "authorized_at": "2026-04-09",
+  "authorization_document": "blind-real-attach-role-policy-only",
+  "permitted_profiles": [
+    "aws-iam-attach-role-policy-privesc"
+  ],
+  "excluded_profiles": []
+}

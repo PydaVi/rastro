@@ -57,10 +57,14 @@ class AssessmentFinding(BaseModel):
     finding_state: Literal["observed", "reachable", "credentialed", "exploited", "validated_impact"] = "observed"
     target_resource: str
     entry_point: str | None = None
+    entry_points: list[str] = Field(default_factory=list)
+    principal_multiplicity: int = 1
+    distinct_path_key: str = ""
     path_summary: str = ""
     services_involved: list[str] = Field(default_factory=list)
     evidence_summary: str = ""
     evidence_level: Literal["proved", "observed"] = "proved"
+    proof_mode: Literal["real", "simulation", "structural"] = "structural"
     mitre_techniques: list[str] = Field(default_factory=list)
 
 

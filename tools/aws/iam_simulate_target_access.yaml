@@ -1,0 +1,10 @@
+name: iam_simulate_target_access
+description: Simulate whether the current principal can access the target AWS resource
+phase: discovery
+mitre_id: T1526
+platform: AWS IAM
+preconditions: []
+postconditions:
+  - iam_target_access_simulated
+implementation: tools/aws/iam_simulate_target_access.py
+safe_simulation: true

@@ -52,10 +52,7 @@ class AwsRealExecutor:
 
         if action.action_type == ActionType.ANALYZE:
             details = {
-                "details": details.get(
-                    "details",
-                    "Executed analysis step without AWS API call.",
-                ),
+                "details": "Executed analysis step without AWS API call.",
                 "execution_mode": "real",
                 "real_api_called": False,
             }

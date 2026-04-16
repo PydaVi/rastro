@@ -1,0 +1,11 @@
+name: iam_create_policy_version
+description: Simulate whether the current principal can create a new policy version for privilege escalation
+phase: privilege-escalation
+mitre_id: T1098
+platform: AWS IAM
+preconditions:
+  - iam_roles_listed
+postconditions:
+  - iam_policy_abuse_reachable
+implementation: tools/aws/iam_create_policy_version.py
+safe_simulation: true

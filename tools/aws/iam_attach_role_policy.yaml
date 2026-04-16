@@ -1,0 +1,11 @@
+name: iam_attach_role_policy
+description: Simulate whether the current principal can attach a policy to a target role
+phase: privilege-escalation
+mitre_id: T1098
+platform: AWS IAM
+preconditions:
+  - iam_roles_listed
+postconditions:
+  - iam_policy_abuse_reachable
+implementation: tools/aws/iam_attach_role_policy.py
+safe_simulation: true

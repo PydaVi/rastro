@@ -236,6 +236,7 @@ def _build_executive_summary(steps: list[Dict], objective_met: bool, execution_c
         "real_api_called": None,
         "synthetic_fixture_used": execution_context.get("synthetic_fixture_used"),
         "proof": None,
+        "simulated_policy_result": None,
         "objective_met": objective_met,
     }
 
@@ -265,6 +266,8 @@ def _build_executive_summary(steps: list[Dict], objective_met: bool, execution_c
 
         if details.get("evidence") and not details.get("evidence", {}).get("simulated"):
             summary["proof"] = details.get("evidence")
+        if details.get("simulated_policy_result"):
+            summary["simulated_policy_result"] = details.get("simulated_policy_result")
 
     if steps:
         summary["final_resource"] = steps[-1].get("action", {}).get("target")

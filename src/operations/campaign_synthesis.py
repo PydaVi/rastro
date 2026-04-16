@@ -136,10 +136,32 @@ def _build_generated_objective_description(profile_name: str, candidate: dict) -
 
 
 def _build_generated_success_criteria(candidate: dict) -> dict:
-    return {
+    profile_family = candidate.get("profile_family")
+    if profile_family in {"aws-iam-s3", "aws-iam-secrets", "aws-iam-ssm"}:
+        mode = "access_proved"
+    elif profile_family == "aws-iam-role-chaining":
+        mode = "assume_role_proved"
+    elif profile_family in {
+        "aws-iam-create-policy-version-privesc",
+        "aws-iam-attach-role-policy-privesc",
+        "aws-iam-pass-role-privesc",
+    }:
+        mode = "policy_probe_proved"
+    else:
+        mode = "target_observed"
+    criteria = {
         "target_candidate_id": candidate["id"],
-        "mode": "target_observed",
+        "mode": mode,
     }
+    required_tool_by_profile = {
+        "aws-iam-create-policy-version-privesc": "iam_create_policy_version",
+        "aws-iam-attach-role-policy-privesc": "iam_attach_role_policy",
+        "aws-iam-pass-role-privesc": "iam_pass_role_service_create",
+    }
+    required_tool = required_tool_by_profile.get(profile_family)
+    if required_tool:
+        criteria["required_tool"] = required_tool
+    return criteria
 
 
 def _resolve_profile(profile_resolver, profile_name: str, candidate: dict):

@@ -33,16 +33,16 @@ def _filter_repeated_access(snapshot, actions: List[Action]) -> List[Action]:
 
 def _filter_repeated_enumerate(snapshot, actions: List[Action]) -> List[Action]:
     attempted = {
-        (item.get("actor"), item.get("target"))
+        (item.get("actor"), item.get("target") or "*")
         for item in getattr(snapshot, "attempted_enumerations", [])
-        if item.get("actor") and item.get("target")
+        if item.get("actor")
     }
     if not attempted:
         return actions
     filtered: List[Action] = []
     for action in actions:
         if action.action_type == ActionType.ENUMERATE:
-            key = (action.actor, action.target)
+            key = (action.actor, action.target or "*")
             if key in attempted:
                 continue
         filtered.append(action)
@@ -121,6 +121,9 @@ def _prefer_analyze(snapshot, actions: List[Action]) -> List[Action]:
 def _prefer_access_on_success(snapshot, actions: List[Action]) -> List[Action]:
     if not snapshot or not actions:
         return actions
+    success_mode = getattr(getattr(snapshot, "objective", None), "success_criteria", {}).get("mode")
+    if success_mode not in {"access_proved", "target_observed"}:
+        return actions
     objective_target = getattr(getattr(snapshot, "objective", None), "target", None)
     if not objective_target:
         return actions
@@ -134,6 +137,25 @@ def _prefer_access_on_success(snapshot, actions: List[Action]) -> List[Action]:
     return actions
 
 
+def _prefer_assume_role_on_success(snapshot, actions: List[Action]) -> List[Action]:
+    if not snapshot or not actions:
+        return actions
+    success_mode = getattr(getattr(snapshot, "objective", None), "success_criteria", {}).get("mode")
+    if success_mode != "assume_role_proved":
+        return actions
+    objective_target = getattr(getattr(snapshot, "objective", None), "target", None)
+    if not objective_target:
+        return actions
+    assume_actions = [
+        action
+        for action in actions
+        if action.action_type == ActionType.ASSUME_ROLE and action.target == objective_target
+    ]
+    if assume_actions:
+        return assume_actions
+    return actions
+
+
 def shape_available_actions(snapshot, available_actions: List[Action]) -> List[Action]:
     if not snapshot or not available_actions:
         return available_actions
@@ -141,12 +163,15 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
     active_identities = set(getattr(snapshot, "active_branch_identities", [])) or set(
         getattr(snapshot, "active_assumed_roles", [])
     )
+    success_mode = getattr(getattr(snapshot, "objective", None), "success_criteria", {}).get("mode")
     if active_identities:
         progress_types = {
             ActionType.ENUMERATE,
             ActionType.ACCESS_RESOURCE,
             ActionType.ANALYZE,
         }
+        if success_mode == "assume_role_proved":
+            progress_types.add(ActionType.ASSUME_ROLE)
         progress_actions = [
             action
             for action in available_actions
@@ -159,11 +184,23 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
             filtered = _filter_mismatched_bucket(snapshot, filtered)
             filtered = _filter_failed_assume(snapshot, filtered)
             if filtered:
+                preferred_assume = _prefer_assume_role_on_success(snapshot, filtered)
+                if preferred_assume != filtered:
+                    return preferred_assume
+                if success_mode == "assume_role_proved" and any(
+                    action.action_type == ActionType.ASSUME_ROLE for action in filtered
+                ):
+                    filtered = [
+                        action for action in filtered if action.action_type != ActionType.ANALYZE
+                    ]
                 preferred = _prefer_analyze(snapshot, filtered)
                 return _prefer_access_on_success(snapshot, preferred)
 
     candidate_paths = _ranked_candidate_paths(snapshot)
     if candidate_paths:
+        preferred_assume_actions = _prefer_assume_role_on_success(snapshot, available_actions)
+        if preferred_assume_actions != available_actions:
+            return preferred_assume_actions
         preferred_success_actions = _prefer_access_on_success(snapshot, available_actions)
         if preferred_success_actions != available_actions:
             return preferred_success_actions
@@ -203,4 +240,7 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
     filtered = _filter_repeated_assume(snapshot, filtered)
     filtered = _filter_repeated_enumerate(snapshot, filtered)
     filtered = _filter_failed_assume(snapshot, filtered)
+    preferred_assume = _prefer_assume_role_on_success(snapshot, filtered)
+    if preferred_assume != filtered:
+        return preferred_assume
     return _prefer_access_on_success(snapshot, filtered)

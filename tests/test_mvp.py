@@ -4,11 +4,12 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from app.main import _build_execution_surface, _restore_objective_target_access_actions, app, execute_run, run
+from app.main import _build_execution_surface, _restore_objective_target_access_actions, _stabilize_decision, app, execute_run, run
 from core.attack_graph import AttackGraph
 from core.audit import AuditLogger
 from core.domain import Action, ActionType, Decision, Objective, Observation, Scope
 from core.aws_dry_run_lab import AwsDryRunLab
+from core.blind_real_runtime import BlindRealRuntime
 from execution.aws_executor import AwsRealExecutor, AwsRealExecutorStub
 from core.state import StateManager
 from reporting.report import ReportGenerator
@@ -677,6 +678,43 @@ def test_aws_real_executor_supports_s3_object_discovery_path() -> None:
     assert list_bucket_observation.details["request_summary"]["api_calls"] == ["s3:ListBucket"]
     assert "payroll.csv" in list_bucket_observation.details["discovered_objects"]
     assert access_observation.success is True
+
+
+def test_aws_real_executor_handles_analyze_without_unbound_details() -> None:
+    fixture = Fixture.load(Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_iam_s3_lab.json")
+    scope = Scope.model_construct(
+        target="aws",
+        allowed_actions=[
+            ActionType.ENUMERATE,
+            ActionType.ASSUME_ROLE,
+            ActionType.ACCESS_RESOURCE,
+            ActionType.ANALYZE,
+        ],
+        allowed_resources=["arn:aws:s3:::bucket-a/payroll.csv"],
+        max_steps=6,
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam", "s3"],
+        authorized_by="Demo Operator",
+        authorized_at="2026-03-28",
+        authorization_document="docs/authorization-demo.md",
+        planner=None,
+    )
+    executor = AwsRealExecutor(fixture=fixture, scope=scope, client=FakeAwsClient())
+    action = Action(
+        action_type=ActionType.ANALYZE,
+        actor="arn:aws:iam::123456789012:user/analyst",
+        target=None,
+        parameters={},
+    )
+
+    observation = executor.execute(action)
+
+    assert observation.success is False
+    assert observation.details["reason"] == "no_transition"
+    assert observation.details["execution_mode"] == "real"
+    assert observation.details["real_api_called"] is False
 
 
 def test_aws_real_executor_supports_secretsmanager_path() -> None:
@@ -1936,6 +1974,56 @@ def test_target_selection_prioritizes_iam_privesc_role_signals(tmp_path: Path) -
     assert "policy_escalation_signal" in role_candidates[0]["selection_reason"]
 
 
+def test_target_selection_emits_dedicated_iam_heavy_privesc_profiles(tmp_path: Path) -> None:
+    discovery_snapshot = {
+        "target": "aws-iam-heavy",
+        "bundle": "aws-iam-heavy",
+        "caller_identity": {"Account": "123456789012"},
+        "resources": [
+            {
+                "service": "iam",
+                "resource_type": "identity.role",
+                "identifier": "arn:aws:iam::123456789012:role/privesc-CreatePolicyVersion-role",
+                "metadata": {
+                    "trust_principals": ["*"],
+                    "attached_policy_names": ["CreatePolicyVersionRole"],
+                    "attached_policy_arns": ["arn:aws:iam::aws:policy/CreatePolicyVersionRole"],
+                    "inline_policy_names": [],
+                },
+            },
+            {
+                "service": "iam",
+                "resource_type": "identity.role",
+                "identifier": "arn:aws:iam::123456789012:role/privesc-PassRole-role",
+                "metadata": {
+                    "trust_principals": ["arn:aws:iam::123456789012:user/analyst"],
+                    "attached_policy_names": ["CodeBuildProjectRole"],
+                    "attached_policy_arns": ["arn:aws:iam::aws:policy/CodeBuildProjectRole"],
+                    "inline_policy_names": ["PassRoleInline"],
+                },
+            },
+        ],
+        "relationships": [],
+    }
+
+    _, _, payload = select_foundation_targets(
+        discovery_snapshot=discovery_snapshot,
+        output_dir=tmp_path,
+        max_candidates_per_profile=5,
+        bundle_name="aws-iam-heavy",
+    )
+
+    families = {(candidate["profile_family"], candidate["resource_arn"]) for candidate in payload["candidates"]}
+    assert (
+        "aws-iam-create-policy-version-privesc",
+        "arn:aws:iam::123456789012:role/privesc-CreatePolicyVersion-role",
+    ) in families
+    assert (
+        "aws-iam-pass-role-privesc",
+        "arn:aws:iam::123456789012:role/privesc-PassRole-role",
+    ) in families
+
+
 def test_run_foundation_discovery_collects_public_compute_network_relationships(tmp_path: Path) -> None:
     target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
     authorization_path = (
@@ -2360,7 +2448,7 @@ def test_campaign_synthesis_does_not_depend_on_profile_base_objective_file(tmp_p
     objective_payload = json.loads(generated_objective.read_text())
 
     assert objective_payload["target"] == candidates_payload["candidates"][0]["resource_arn"]
-    assert objective_payload["success_criteria"]["mode"] == "target_observed"
+    assert objective_payload["success_criteria"]["mode"] == "access_proved"
     assert payload["plans"][0]["fixture_path"] == "/tmp/fixture-does-not-matter.json"
 
 
@@ -2388,6 +2476,134 @@ def test_state_marks_objective_met_when_observation_reaches_aliased_target() -> 
     )
     observation = fixture.execute(pivot_action)
     state.apply_observation(pivot_action, observation, "reached obfuscated compute role")
+
+    assert state.is_objective_met() is True
+
+
+def test_state_requires_real_access_for_access_proved() -> None:
+    fixture = Fixture.load(Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_iam_s3_lab.json")
+    scope = Scope.model_validate_json(
+        (Path(__file__).resolve().parents[1] / "examples" / "scope_internal_data_platform_iam_s3.json").read_text()
+    )
+    objective = Objective(
+        description="Read target object with real proof",
+        target="arn:aws:s3:::sensitive-finance-data/payroll.csv",
+        success_criteria={"mode": "access_proved"},
+    )
+    state = StateManager(
+        objective=objective,
+        scope=scope,
+        fixture=AwsDryRunLab.from_fixture(fixture, scope),
+        tool_registry=ToolRegistry.load(Path(__file__).resolve().parents[1] / "tools"),
+    )
+    action = Action(
+        action_type=ActionType.ACCESS_RESOURCE,
+        actor="arn:aws:iam::123456789012:user/analyst",
+        target="arn:aws:s3:::sensitive-finance-data/payroll.csv",
+        parameters={"service": "s3"},
+        tool="iam_simulate_target_access",
+    )
+    observation = Observation(
+        success=True,
+        details={"evidence": {"simulated": True}},
+    )
+    state.apply_observation(action, observation, "simulated access")
+
+    assert state.is_objective_met() is False
+
+
+def test_state_requires_evidence_for_access_proved() -> None:
+    fixture = Fixture.load(Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_iam_s3_lab.json")
+    scope = Scope.model_validate_json(
+        (Path(__file__).resolve().parents[1] / "examples" / "scope_internal_data_platform_iam_s3.json").read_text()
+    )
+    objective = Objective(
+        description="Read target object with real proof",
+        target="arn:aws:s3:::sensitive-finance-data/payroll.csv",
+        success_criteria={"mode": "access_proved"},
+    )
+    state = StateManager(
+        objective=objective,
+        scope=scope,
+        fixture=AwsDryRunLab.from_fixture(fixture, scope),
+        tool_registry=ToolRegistry.load(Path(__file__).resolve().parents[1] / "tools"),
+    )
+    action = Action(
+        action_type=ActionType.ACCESS_RESOURCE,
+        actor="arn:aws:iam::123456789012:user/analyst",
+        target="arn:aws:s3:::sensitive-finance-data/payroll.csv",
+        parameters={"service": "s3"},
+        tool="iam_simulate_target_access",
+    )
+    observation = Observation(
+        success=True,
+        details={"simulated_policy_result": {"decision": "implicitDeny"}},
+    )
+    state.apply_observation(action, observation, "simulated access without evidence")
+
+    assert state.is_objective_met() is False
+
+
+def test_state_requires_real_assume_role_for_assume_role_proved() -> None:
+    fixture = Fixture.load(Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_iam_s3_lab.json")
+    scope = Scope.model_validate_json(
+        (Path(__file__).resolve().parents[1] / "examples" / "scope_internal_data_platform_iam_s3.json").read_text()
+    )
+    objective = Objective(
+        description="Assume role with real proof",
+        target="arn:aws:iam::123456789012:role/AppRole",
+        success_criteria={"mode": "assume_role_proved"},
+    )
+    state = StateManager(
+        objective=objective,
+        scope=scope,
+        fixture=AwsDryRunLab.from_fixture(fixture, scope),
+        tool_registry=ToolRegistry.load(Path(__file__).resolve().parents[1] / "tools"),
+    )
+    action = Action(
+        action_type=ActionType.ASSUME_ROLE,
+        actor="arn:aws:iam::123456789012:user/analyst",
+        target="arn:aws:iam::123456789012:role/AppRole",
+        parameters={"service": "iam"},
+        tool="iam_simulate_assume_role",
+    )
+    observation = Observation(
+        success=True,
+        details={"granted_role": "arn:aws:iam::123456789012:role/AppRole"},
+    )
+    state.apply_observation(action, observation, "simulated assume role")
+
+    assert state.is_objective_met() is False
+
+
+def test_state_marks_objective_met_for_policy_probe_proved() -> None:
+    fixture = Fixture.load(Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_iam_s3_lab.json")
+    scope = Scope.model_validate_json(
+        (Path(__file__).resolve().parents[1] / "examples" / "scope_internal_data_platform_iam_s3.json").read_text()
+    )
+    objective = Objective(
+        description="Observe policy abuse opportunity",
+        target="arn:aws:iam::123456789012:role/AppRole",
+        success_criteria={"mode": "policy_probe_proved", "required_tool": "iam_create_policy_version"},
+    )
+    state = StateManager(
+        objective=objective,
+        scope=scope,
+        fixture=AwsDryRunLab.from_fixture(fixture, scope),
+        tool_registry=ToolRegistry.load(Path(__file__).resolve().parents[1] / "tools"),
+    )
+    action = Action(
+        action_type=ActionType.ACCESS_RESOURCE,
+        actor="arn:aws:iam::123456789012:user/analyst",
+        target="arn:aws:iam::123456789012:role/AppRole",
+        parameters={"service": "iam"},
+        tool="iam_create_policy_version",
+    )
+    observation = Observation(
+        success=True,
+        details={"request_summary": {"api_calls": ["iam:SimulatePrincipalPolicy"]}},
+    )
+    state.apply_observation(action, observation, "policy abuse probe")
 
     assert state.is_objective_met() is True
 
@@ -2517,6 +2733,98 @@ def test_run_generated_campaign_builds_blind_real_runtime_without_fixture_path(
     assert rewritten_scope["dry_run"] is False
     assert "arn:aws:iam::123456789012:role/SyntheticRole" not in rewritten_scope["allowed_resources"]
     assert "arn:aws:iam::550192603632:role/brain-teste-4-dev-cw-role" in rewritten_scope["allowed_resources"]
+
+
+def test_run_generated_campaign_blind_real_privesc_profile_limits_policy_probe_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RASTRO_ENABLE_AWS_REAL", "1")
+    target = load_target(Path("examples/target_aws_blind_real.json"))
+    authorization = load_authorization(Path("examples/authorization_aws_blind_real.json")).model_copy(
+        update={
+            "permitted_profiles": [
+                "aws-iam-create-policy-version-privesc",
+            ]
+        }
+    )
+    scope_path = tmp_path / "scope.json"
+    objective_path = tmp_path / "objective.json"
+    scope_path.write_text(
+        json.dumps(
+            {
+                "target": "aws",
+                "allowed_actions": ["enumerate", "assume_role", "access_resource"],
+                "allowed_resources": ["arn:aws:iam::550192603632:role/privesc-CreatePolicyVersion-role"],
+                "max_steps": 6,
+                "dry_run": True,
+                "aws_account_ids": ["550192603632"],
+                "allowed_regions": ["us-east-1"],
+                "allowed_services": ["iam"],
+                "authorized_by": "PydaVi",
+                "authorized_at": "2026-04-04",
+                "authorization_document": "docs/authorization-blind-real.md",
+            }
+        )
+    )
+    objective_path.write_text(
+        json.dumps(
+            {
+                "description": "blind real policy abuse probe",
+                "target": "arn:aws:iam::550192603632:role/privesc-CreatePolicyVersion-role",
+                "success_criteria": {
+                    "mode": "policy_probe_proved",
+                    "required_tool": "iam_create_policy_version",
+                },
+            }
+        )
+    )
+    calls: dict = {}
+
+    def fake_runner(**kwargs):
+        calls.update(kwargs)
+        report_json = tmp_path / "report.json"
+        report_md = tmp_path / "report.md"
+        report_json.write_text("{}")
+        report_md.write_text("# report\n")
+        return {
+            "objective_met": True,
+            "preflight": {"ok": True, "details": {}},
+            "report_json": report_json,
+            "report_md": report_md,
+            "attack_graph": tmp_path / "attack_graph.mmd",
+        }
+
+    result = run_generated_campaign(
+        plan={
+            "id": "aws-iam-create-policy-version-privesc:test",
+            "profile": "aws-iam-create-policy-version-privesc",
+            "resource_arn": "arn:aws:iam::550192603632:role/privesc-CreatePolicyVersion-role",
+            "generated_scope": str(scope_path),
+            "generated_objective": str(objective_path),
+        },
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        runner=fake_runner,
+        discovery_snapshot={
+            "caller_identity": {"Account": "550192603632"},
+            "resources": [
+                {
+                    "identifier": "arn:aws:iam::550192603632:role/privesc-CreatePolicyVersion-role",
+                    "resource_type": "identity.role",
+                    "service": "iam",
+                    "metadata": {},
+                }
+            ],
+        },
+    )
+
+    assert result.status == "passed"
+    runtime_fixture = calls["runtime_fixture"]
+    tools = {action.tool for action in runtime_fixture.enumerate_actions(None)}
+    assert "iam_create_policy_version" in tools
+    assert "iam_attach_role_policy" not in tools
+    assert "iam_pass_role_service_create" not in tools
 
 
 def test_run_generated_campaign_uses_discovered_user_entry_identity_for_blind_real(
@@ -2759,6 +3067,200 @@ def test_action_shaping_prefers_direct_objective_access_globally() -> None:
     assert shaped[0].tool == "s3_read_sensitive"
 
 
+def test_action_shaping_does_not_prefer_direct_access_for_assume_role_proved() -> None:
+    objective = Objective(
+        description="assume target role",
+        target="arn:aws:iam::123456789012:role/AppRole",
+        success_criteria={"mode": "assume_role_proved"},
+    )
+    scope = Scope(
+        target="aws",
+        allowed_actions=["enumerate", "assume_role", "access_resource"],
+        allowed_resources=["arn:aws:iam::123456789012:role/AppRole"],
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam"],
+        authorized_by="tester",
+        authorized_at="2026-04-04",
+        authorization_document="doc",
+    )
+    snapshot = StateManager(
+        objective=objective,
+        scope=scope,
+        fixture=Fixture.load(Path("fixtures/mixed_generalization_iam_s3_lab.json")),
+    ).snapshot()
+    actions = [
+        Action(
+            action_type=ActionType.ACCESS_RESOURCE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target="arn:aws:iam::123456789012:role/AppRole",
+            parameters={"service": "iam", "region": "us-east-1"},
+            tool="iam_simulate_target_access",
+        ),
+        Action(
+            action_type=ActionType.ASSUME_ROLE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target="arn:aws:iam::123456789012:role/AppRole",
+            parameters={"service": "iam", "region": "us-east-1", "role_arn": "arn:aws:iam::123456789012:role/AppRole"},
+            tool="iam_simulate_assume_role",
+        ),
+    ]
+
+    shaped = shape_available_actions(snapshot, actions)
+
+    assert any(action.tool == "iam_simulate_assume_role" for action in shaped)
+    assert all(action.tool != "iam_simulate_target_access" for action in shaped)
+
+
+def test_action_shaping_prefers_assume_role_over_analyze_for_assume_role_proved() -> None:
+    objective = Objective(
+        description="assume target role",
+        target="arn:aws:iam::123456789012:role/AppRole",
+        success_criteria={"mode": "assume_role_proved"},
+    )
+    scope = Scope(
+        target="aws",
+        allowed_actions=["enumerate", "assume_role", "analyze"],
+        allowed_resources=["arn:aws:iam::123456789012:role/AppRole"],
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam"],
+        authorized_by="tester",
+        authorized_at="2026-04-04",
+        authorization_document="doc",
+    )
+    snapshot = StateManager(
+        objective=objective,
+        scope=scope,
+        fixture=Fixture.load(Path("fixtures/mixed_generalization_iam_s3_lab.json")),
+    ).snapshot()
+    snapshot.active_branch_identities = ["arn:aws:iam::123456789012:user/analyst"]
+    actions = [
+        Action(
+            action_type=ActionType.ANALYZE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target=None,
+            parameters={},
+            tool="analyze",
+        ),
+        Action(
+            action_type=ActionType.ASSUME_ROLE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target="arn:aws:iam::123456789012:role/AppRole",
+            parameters={"service": "iam", "region": "us-east-1", "role_arn": "arn:aws:iam::123456789012:role/AppRole"},
+            tool="iam_simulate_assume_role",
+        ),
+    ]
+
+    shaped = shape_available_actions(snapshot, actions)
+
+    assert len(shaped) == 1
+    assert shaped[0].action_type == ActionType.ASSUME_ROLE
+    assert shaped[0].tool == "iam_simulate_assume_role"
+
+
+def test_stabilize_decision_overrides_analyze_when_assume_role_commit_is_due() -> None:
+    objective = Objective(
+        description="assume target role",
+        target="arn:aws:iam::123456789012:role/AppRole",
+        success_criteria={"mode": "assume_role_proved"},
+    )
+    scope = Scope(
+        target="aws",
+        allowed_actions=["enumerate", "assume_role", "analyze"],
+        allowed_resources=["arn:aws:iam::123456789012:role/AppRole"],
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam"],
+        authorized_by="tester",
+        authorized_at="2026-04-04",
+        authorization_document="doc",
+    )
+    snapshot = StateManager(
+        objective=objective,
+        scope=scope,
+        fixture=Fixture.load(Path("fixtures/mixed_generalization_iam_s3_lab.json")),
+    ).snapshot()
+    snapshot.should_commit_to_pivot = True
+    available_actions = [
+        Action(
+            action_type=ActionType.ANALYZE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target=None,
+            parameters={},
+            tool="analyze",
+        ),
+        Action(
+            action_type=ActionType.ASSUME_ROLE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target="arn:aws:iam::123456789012:role/AppRole",
+            parameters={"service": "iam", "region": "us-east-1", "role_arn": "arn:aws:iam::123456789012:role/AppRole"},
+            tool="iam_simulate_assume_role",
+        ),
+    ]
+    decision = Decision(
+        action=available_actions[0],
+        reason="No viable action.",
+        planner_metadata={"planner_backend": "mock"},
+    )
+
+    stabilized = _stabilize_decision(snapshot, available_actions, decision)
+
+    assert stabilized.action.action_type == ActionType.ASSUME_ROLE
+    assert stabilized.planner_metadata["decision_stabilized"] is True
+    assert stabilized.planner_metadata["stabilization_reason"] == "assume_role_commit_after_enumeration"
+
+
+def test_action_shaping_filters_repeated_enumeration_with_null_target() -> None:
+    objective = Objective(
+        description="assume target role",
+        target="arn:aws:iam::123456789012:role/AppRole",
+        success_criteria={"mode": "assume_role_proved"},
+    )
+    scope = Scope(
+        target="aws",
+        allowed_actions=["enumerate", "assume_role", "access_resource"],
+        allowed_resources=["arn:aws:iam::123456789012:role/AppRole"],
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam"],
+        authorized_by="tester",
+        authorized_at="2026-04-04",
+        authorization_document="doc",
+    )
+    snapshot = StateManager(
+        objective=objective,
+        scope=scope,
+        fixture=Fixture.load(Path("fixtures/mixed_generalization_iam_s3_lab.json")),
+    ).snapshot()
+    snapshot.attempted_enumerations = [{"actor": "arn:aws:iam::123456789012:user/analyst", "target": "*"}]
+    actions = [
+        Action(
+            action_type=ActionType.ENUMERATE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target=None,
+            parameters={"service": "iam", "region": "us-east-1"},
+            tool="iam_list_roles",
+        ),
+        Action(
+            action_type=ActionType.ASSUME_ROLE,
+            actor="arn:aws:iam::123456789012:user/analyst",
+            target="arn:aws:iam::123456789012:role/AppRole",
+            parameters={"service": "iam", "region": "us-east-1", "role_arn": "arn:aws:iam::123456789012:role/AppRole"},
+            tool="iam_simulate_assume_role",
+        ),
+    ]
+
+    shaped = shape_available_actions(snapshot, actions)
+
+    assert len(shaped) == 1
+    assert shaped[0].tool == "iam_simulate_assume_role"
+
+
 def test_real_execution_restores_direct_objective_access_even_if_tool_preconditions_filter_it() -> None:
     objective = Objective(
         description="read target object",
@@ -2793,6 +3295,42 @@ def test_real_execution_restores_direct_objective_access_even_if_tool_preconditi
     restored = _restore_objective_target_access_actions(snapshot, [access_action], [], scope)
 
     assert restored == [access_action]
+
+
+def test_real_execution_does_not_restore_direct_access_for_assume_role_proved() -> None:
+    objective = Objective(
+        description="assume target role",
+        target="arn:aws:iam::123456789012:role/AppRole",
+        success_criteria={"mode": "assume_role_proved"},
+    )
+    scope = Scope(
+        target="aws",
+        allowed_actions=["enumerate", "assume_role", "access_resource"],
+        allowed_resources=["arn:aws:iam::123456789012:role/AppRole"],
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam"],
+        authorized_by="tester",
+        authorized_at="2026-04-04",
+        authorization_document="doc",
+    )
+    snapshot = StateManager(
+        objective=objective,
+        scope=scope,
+        fixture=Fixture.load(Path("fixtures/mixed_generalization_iam_s3_lab.json")),
+    ).snapshot()
+    access_action = Action(
+        action_type=ActionType.ACCESS_RESOURCE,
+        actor="arn:aws:iam::123456789012:user/analyst",
+        target="arn:aws:iam::123456789012:role/AppRole",
+        parameters={"service": "iam", "region": "us-east-1"},
+        tool="iam_simulate_target_access",
+    )
+
+    restored = _restore_objective_target_access_actions(snapshot, [access_action], [], scope)
+
+    assert restored == []
 
 
 def test_write_assessment_summary_prefers_effective_entry_identity_for_findings(tmp_path: Path) -> None:
@@ -5404,7 +5942,131 @@ def test_write_assessment_summary_deduplicates_findings_with_same_report(tmp_pat
 
     findings = json.loads((tmp_path / "assessment_findings.json").read_text())
     assert findings["summary"]["findings_total"] == 1
+    assert findings["summary"]["source_campaign_findings_total"] == 2
+    assert findings["summary"]["distinct_paths_total"] == 1
+    assert findings["summary"]["principal_multiplicity_total"] == 1
+    assert findings["summary"]["additional_principal_observations"] == 0
     assert findings["summary"]["validated_findings"] == 1
+    finding = findings["findings"][0]
+    assert finding["principal_multiplicity"] == 1
+    assert finding["finding_state"] == "validated_impact"
+    assert finding["distinct_path_key"]
+
+
+def test_write_assessment_summary_collapses_same_path_across_multiple_principals(tmp_path: Path) -> None:
+    campaign_a = tmp_path / "campaign-a"
+    campaign_b = tmp_path / "campaign-b"
+    campaign_a.mkdir(parents=True, exist_ok=True)
+    campaign_b.mkdir(parents=True, exist_ok=True)
+
+    report_payload = {
+        "objective": {"target": "arn:aws:s3:::sensitive-finance-data/payroll.csv"},
+        "executive_summary": {
+            "final_resource": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+        },
+        "execution_policy": {"allowed_services": ["s3"]},
+        "mitre_techniques": [],
+        "steps": [
+            {
+                "action": {
+                    "action_type": "access_resource",
+                    "tool": "s3_read_sensitive",
+                    "target": "arn:aws:s3:::sensitive-finance-data/payroll.csv",
+                },
+                "observation": {
+                    "success": True,
+                    "details": {"evidence": {"bucket": "sensitive-finance-data"}},
+                },
+            }
+        ],
+    }
+    report_a = {
+        **report_payload,
+        "executive_summary": {
+            **report_payload["executive_summary"],
+            "effective_entry_identity": "arn:aws:iam::123456789012:user/analyst",
+        },
+        "steps": [
+            {
+                **report_payload["steps"][0],
+                "action": {
+                    **report_payload["steps"][0]["action"],
+                    "actor": "arn:aws:iam::123456789012:user/analyst",
+                },
+            }
+        ],
+    }
+    report_b = {
+        **report_payload,
+        "executive_summary": {
+            **report_payload["executive_summary"],
+            "effective_entry_identity": "arn:aws:iam::123456789012:user/auditor",
+        },
+        "steps": [
+            {
+                **report_payload["steps"][0],
+                "action": {
+                    **report_payload["steps"][0]["action"],
+                    "actor": "arn:aws:iam::123456789012:user/auditor",
+                },
+            }
+        ],
+    }
+    (campaign_a / "report.json").write_text(json.dumps(report_a))
+    (campaign_b / "report.json").write_text(json.dumps(report_b))
+    (campaign_a / "report.md").write_text("# report\n")
+    (campaign_b / "report.md").write_text("# report\n")
+
+    result = AssessmentResult(
+        bundle="aws-foundation",
+        target="lab",
+        campaigns=[
+            CampaignResult(
+                status="passed",
+                campaign_id="plan-1",
+                profile="aws-iam-s3",
+                output_dir=campaign_a,
+                generated_scope=campaign_a / "scope.json",
+                objective_met=True,
+                preflight_ok=True,
+                report_json=campaign_a / "report.json",
+                report_md=campaign_a / "report.md",
+            ),
+            CampaignResult(
+                status="passed",
+                campaign_id="plan-2",
+                profile="aws-iam-s3",
+                output_dir=campaign_b,
+                generated_scope=campaign_b / "scope.json",
+                objective_met=True,
+                preflight_ok=True,
+                report_json=campaign_b / "report.json",
+                report_md=campaign_b / "report.md",
+            ),
+        ],
+    )
+
+    write_assessment_summary(result, tmp_path)
+
+    findings = json.loads((tmp_path / "assessment_findings.json").read_text())
+    assert findings["summary"]["findings_total"] == 1
+    assert findings["summary"]["source_campaign_findings_total"] == 2
+    assert findings["summary"]["distinct_paths_total"] == 1
+    assert findings["summary"]["principal_multiplicity_total"] == 2
+    assert findings["summary"]["additional_principal_observations"] == 1
+    assert findings["summary"]["paths_with_multiple_principals"] == 1
+    assert findings["summary"]["principal_multiplicity_by_profile"]["aws-iam-s3"] == 2
+    finding = findings["findings"][0]
+    assert finding["principal_multiplicity"] == 2
+    assert finding["entry_points"] == [
+        "arn:aws:iam::123456789012:user/analyst",
+        "arn:aws:iam::123456789012:user/auditor",
+    ]
+    assert finding["finding_state"] == "exploited"
+    assert "access_resource:s3_read_sensitive:objective_target" in finding["distinct_path_key"]
+    findings_md = (tmp_path / "assessment_findings.md").read_text()
+    assert "Distinct paths total: 1" in findings_md
+    assert "Additional principal observations: 1" in findings_md
 
 
 def test_role_chaining_without_proof_is_observed_not_validated(tmp_path: Path) -> None:
@@ -5459,8 +6121,150 @@ def test_role_chaining_without_proof_is_observed_not_validated(tmp_path: Path) -
     finding = findings["findings"][0]
     assert finding["status"] == "observed"
     assert finding["evidence_level"] == "observed"
-    assert finding["finding_state"] == "reachable"
+    assert finding["profile"] == "aws-iam-role-chaining"
+    assert finding["finding_state"] == "observed"
     assert "minimum proof" in finding["evidence_summary"]
+
+
+def test_role_chaining_objective_not_met_still_surfaces_observed_finding(tmp_path: Path) -> None:
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir(parents=True, exist_ok=True)
+    (campaign_dir / "report.json").write_text(
+        json.dumps(
+            {
+                "objective": {"target": "arn:aws:iam::123456789012:role/TargetRole"},
+                "executive_summary": {
+                    "initial_identity": "arn:aws:iam::123456789012:user/analyst",
+                    "final_resource": "arn:aws:iam::123456789012:role/TargetRole",
+                    "proof": None,
+                },
+                "execution_policy": {"allowed_services": ["iam"]},
+                "mitre_techniques": [],
+                "steps": [
+                    {
+                        "action": {
+                            "action_type": "assume_role",
+                            "actor": "arn:aws:iam::123456789012:user/analyst",
+                            "target": "arn:aws:iam::123456789012:role/TargetRole",
+                            "tool": "iam_simulate_assume_role",
+                        },
+                        "observation": {
+                            "success": True,
+                            "details": {
+                                "granted_role": "arn:aws:iam::123456789012:role/TargetRole",
+                                "request_summary": {"api_calls": ["iam:SimulatePrincipalPolicy"]},
+                                "simulated_policy_result": {"action": "sts:AssumeRole", "decision": "allowed"},
+                            },
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    (campaign_dir / "report.md").write_text("# report\n")
+
+    result = AssessmentResult(
+        bundle="aws-foundation",
+        target="lab",
+        campaigns=[
+            CampaignResult(
+                status="objective_not_met",
+                profile="aws-iam-role-chaining",
+                output_dir=campaign_dir,
+                generated_scope=campaign_dir / "scope.json",
+                objective_met=False,
+                preflight_ok=True,
+                report_json=campaign_dir / "report.json",
+                report_md=campaign_dir / "report.md",
+            )
+        ],
+    )
+
+    write_assessment_summary(result, tmp_path)
+
+    findings = json.loads((tmp_path / "assessment_findings.json").read_text())
+    assert findings["summary"]["findings_total"] == 1
+    finding = findings["findings"][0]
+    assert finding["profile"] == "aws-iam-role-chaining-simulated"
+    assert finding["status"] == "observed"
+    assert finding["finding_state"] == "reachable"
+
+
+def test_distinct_path_key_collapses_repeated_identical_simulation_steps(tmp_path: Path) -> None:
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir(parents=True, exist_ok=True)
+    report_json = campaign_dir / "report.json"
+    report_json.write_text(
+        json.dumps(
+            {
+                "objective": {"target": "arn:aws:iam::123456789012:role/AppRole"},
+                "executive_summary": {
+                    "initial_identity": "arn:aws:iam::123456789012:user/analyst",
+                    "final_resource": "arn:aws:iam::123456789012:role/AppRole",
+                    "simulated_policy_result": {
+                        "action": "sts:AssumeRole",
+                        "resource": "arn:aws:iam::123456789012:role/AppRole",
+                        "decision": "allowed",
+                    },
+                    "proof": None,
+                },
+                "execution_policy": {"allowed_services": ["iam"]},
+                "steps": [
+                    {
+                        "action": {
+                            "action_type": "assume_role",
+                            "actor": "arn:aws:iam::123456789012:user/analyst",
+                            "target": "arn:aws:iam::123456789012:role/AppRole",
+                            "tool": "iam_simulate_assume_role",
+                        },
+                        "observation": {
+                            "success": True,
+                            "details": {
+                                "simulated_policy_result": {"decision": "allowed"},
+                            },
+                        },
+                    },
+                    {
+                        "action": {
+                            "action_type": "assume_role",
+                            "actor": "arn:aws:iam::123456789012:user/analyst",
+                            "target": "arn:aws:iam::123456789012:role/AppRole",
+                            "tool": "iam_simulate_assume_role",
+                        },
+                        "observation": {
+                            "success": True,
+                            "details": {
+                                "simulated_policy_result": {"decision": "allowed"},
+                            },
+                        },
+                    },
+                ],
+            }
+        )
+    )
+    (campaign_dir / "report.md").write_text("# report\n")
+    result = AssessmentResult(
+        bundle="aws-iam-role-chaining-only",
+        target="lab",
+        campaigns=[
+            CampaignResult(
+                status="objective_not_met",
+                profile="aws-iam-role-chaining",
+                output_dir=campaign_dir,
+                generated_scope=campaign_dir / "scope.json",
+                objective_met=False,
+                preflight_ok=True,
+                report_json=campaign_dir / "report.json",
+                report_md=campaign_dir / "report.md",
+            )
+        ],
+    )
+
+    write_assessment_summary(result, tmp_path)
+
+    findings = json.loads((tmp_path / "assessment_findings.json").read_text())
+    finding = findings["findings"][0]
+    assert finding["distinct_path_key"].count("iam_simulate_assume_role") == 1
 
 
 def test_assessment_finding_state_validated_impact(tmp_path: Path) -> None:
@@ -5513,6 +6317,285 @@ def test_assessment_finding_state_validated_impact(tmp_path: Path) -> None:
     findings = json.loads((tmp_path / "assessment_findings.json").read_text())
     finding = findings["findings"][0]
     assert finding["finding_state"] == "validated_impact"
+
+
+def test_policy_probe_findings_remain_observed(tmp_path: Path) -> None:
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir(parents=True, exist_ok=True)
+    report_json = campaign_dir / "report.json"
+    report_json.write_text(
+        json.dumps(
+            {
+                "objective": {"target": "arn:aws:iam::123456789012:role/privesc-CreatePolicyVersion-role"},
+                "executive_summary": {
+                    "initial_identity": "arn:aws:iam::123456789012:user/analyst",
+                    "final_resource": "arn:aws:iam::123456789012:role/privesc-CreatePolicyVersion-role",
+                    "simulated_policy_result": {
+                        "action": "iam:CreatePolicyVersion",
+                        "resource": "arn:aws:iam::123456789012:role/privesc-CreatePolicyVersion-role",
+                        "decision": "allowed",
+                    },
+                    "proof": None,
+                },
+                "execution_policy": {"allowed_services": ["iam"]},
+                "steps": [
+                    {
+                        "action": {
+                            "action_type": "access_resource",
+                            "actor": "arn:aws:iam::123456789012:user/analyst",
+                            "target": "arn:aws:iam::123456789012:role/privesc-CreatePolicyVersion-role",
+                            "tool": "iam_create_policy_version",
+                        },
+                        "observation": {
+                            "success": True,
+                            "details": {
+                                "request_summary": {"api_calls": ["iam:SimulatePrincipalPolicy"]},
+                                "simulated_policy_result": {
+                                    "action": "iam:CreatePolicyVersion",
+                                    "decision": "allowed",
+                                },
+                            },
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    (campaign_dir / "report.md").write_text("# report\n")
+    result = AssessmentResult(
+        bundle="aws-iam-heavy",
+        target="lab",
+        campaigns=[
+            CampaignResult(
+                status="passed",
+                campaign_id="plan-policy-probe",
+                profile="aws-iam-create-policy-version-privesc",
+                output_dir=campaign_dir,
+                generated_scope=campaign_dir / "scope.json",
+                objective_met=True,
+                preflight_ok=True,
+                report_json=report_json,
+                report_md=campaign_dir / "report.md",
+            )
+        ],
+    )
+
+    write_assessment_summary(result, tmp_path)
+
+    findings = json.loads((tmp_path / "assessment_findings.json").read_text())
+    finding = findings["findings"][0]
+    assert finding["status"] == "observed"
+    assert finding["evidence_level"] == "observed"
+    assert finding["finding_state"] == "reachable"
+    assert "policy simulation" in finding["evidence_summary"].lower()
+
+
+def test_role_chaining_simulation_finding_exposes_simulation_proof_mode(tmp_path: Path) -> None:
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir(parents=True, exist_ok=True)
+    report_json = campaign_dir / "report.json"
+    report_json.write_text(
+        json.dumps(
+            {
+                "objective": {"target": "arn:aws:iam::123456789012:role/AppRole"},
+                "executive_summary": {
+                    "initial_identity": "arn:aws:iam::123456789012:user/analyst",
+                    "final_resource": "arn:aws:iam::123456789012:role/AppRole",
+                    "simulated_policy_result": {
+                        "action": "sts:AssumeRole",
+                        "resource": "arn:aws:iam::123456789012:role/AppRole",
+                        "decision": "allowed",
+                    },
+                    "proof": None,
+                },
+                "execution_policy": {"allowed_services": ["iam"]},
+                "steps": [
+                    {
+                        "action": {
+                            "action_type": "assume_role",
+                            "actor": "arn:aws:iam::123456789012:user/analyst",
+                            "target": "arn:aws:iam::123456789012:role/AppRole",
+                            "tool": "iam_simulate_assume_role",
+                        },
+                        "observation": {
+                            "success": True,
+                            "details": {
+                                "request_summary": {"api_calls": ["iam:SimulatePrincipalPolicy"]},
+                                "simulated_policy_result": {
+                                    "action": "sts:AssumeRole",
+                                    "decision": "allowed",
+                                },
+                            },
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    (campaign_dir / "report.md").write_text("# report\n")
+    result = AssessmentResult(
+        bundle="aws-iam-role-chaining-only",
+        target="lab",
+        campaigns=[
+            CampaignResult(
+                status="objective_not_met",
+                profile="aws-iam-role-chaining",
+                output_dir=campaign_dir,
+                generated_scope=campaign_dir / "scope.json",
+                objective_met=False,
+                preflight_ok=True,
+                report_json=campaign_dir / "report.json",
+                report_md=campaign_dir / "report.md",
+            )
+        ],
+    )
+
+    write_assessment_summary(result, tmp_path)
+
+    findings = json.loads((tmp_path / "assessment_findings.json").read_text())
+    finding = findings["findings"][0]
+    assert finding["profile"] == "aws-iam-role-chaining-simulated"
+    assert finding["proof_mode"] == "simulation"
+    assert finding["finding_state"] == "reachable"
+    assert "simulation opportunity" in finding["title"].lower()
+    assert findings["summary"]["proof_modes"]["simulation"] == 1
+
+
+def test_role_chaining_implicit_deny_stays_observed_not_reachable(tmp_path: Path) -> None:
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir(parents=True, exist_ok=True)
+    report_json = campaign_dir / "report.json"
+    report_json.write_text(
+        json.dumps(
+            {
+                "objective": {"target": "arn:aws:iam::123456789012:role/AppRole"},
+                "executive_summary": {
+                    "initial_identity": "arn:aws:iam::123456789012:user/analyst",
+                    "final_resource": "arn:aws:iam::123456789012:role/AppRole",
+                    "simulated_policy_result": {
+                        "action": "sts:AssumeRole",
+                        "resource": "arn:aws:iam::123456789012:role/AppRole",
+                        "decision": "implicitDeny",
+                    },
+                    "proof": None,
+                },
+                "execution_policy": {"allowed_services": ["iam"]},
+                "steps": [
+                    {
+                        "action": {
+                            "action_type": "assume_role",
+                            "actor": "arn:aws:iam::123456789012:user/analyst",
+                            "target": "arn:aws:iam::123456789012:role/AppRole",
+                            "tool": "iam_simulate_assume_role",
+                        },
+                        "observation": {
+                            "success": True,
+                            "details": {
+                                "request_summary": {"api_calls": ["iam:SimulatePrincipalPolicy"]},
+                                "simulated_policy_result": {
+                                    "action": "sts:AssumeRole",
+                                    "decision": "implicitDeny",
+                                },
+                            },
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    (campaign_dir / "report.md").write_text("# report\n")
+    result = AssessmentResult(
+        bundle="aws-iam-role-chaining-only",
+        target="lab",
+        campaigns=[
+            CampaignResult(
+                status="objective_not_met",
+                profile="aws-iam-role-chaining",
+                output_dir=campaign_dir,
+                generated_scope=campaign_dir / "scope.json",
+                objective_met=False,
+                preflight_ok=True,
+                report_json=campaign_dir / "report.json",
+                report_md=campaign_dir / "report.md",
+            )
+        ],
+    )
+
+    write_assessment_summary(result, tmp_path)
+
+    findings = json.loads((tmp_path / "assessment_findings.json").read_text())
+    finding = findings["findings"][0]
+    assert finding["profile"] == "aws-iam-role-chaining-simulated"
+    assert finding["status"] == "observed"
+    assert finding["finding_state"] == "observed"
+    assert "did not prove" in finding["evidence_summary"].lower()
+
+
+def test_simulated_s3_policy_result_without_evidence_stays_observed(tmp_path: Path) -> None:
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir(parents=True, exist_ok=True)
+    report_json = campaign_dir / "report.json"
+    report_json.write_text(
+        json.dumps(
+            {
+                "objective": {"target": "arn:aws:s3:::bucket-a/payroll.csv"},
+                "executive_summary": {
+                    "initial_identity": "arn:aws:iam::123456789012:user/analyst",
+                    "final_resource": "arn:aws:s3:::bucket-a/payroll.csv",
+                    "simulated_policy_result": {
+                        "action": "s3:GetObject",
+                        "resource": "arn:aws:s3:::bucket-a/payroll.csv",
+                        "decision": "implicitDeny",
+                    },
+                    "proof": None,
+                },
+                "execution_policy": {"allowed_services": ["s3"]},
+                "steps": [
+                    {
+                        "action": {
+                            "action_type": "access_resource",
+                            "actor": "arn:aws:iam::123456789012:user/analyst",
+                            "target": "arn:aws:s3:::bucket-a/payroll.csv",
+                            "tool": "iam_simulate_target_access",
+                        },
+                        "observation": {
+                            "success": True,
+                            "details": {
+                                "request_summary": {"api_calls": ["iam:SimulatePrincipalPolicy"]},
+                                "simulated_policy_result": {
+                                    "action": "s3:GetObject",
+                                    "decision": "implicitDeny",
+                                },
+                            },
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    (campaign_dir / "report.md").write_text("# report\n")
+    result = AssessmentResult(
+        bundle="aws-iam-heavy",
+        target="lab",
+        campaigns=[
+            CampaignResult(
+                status="objective_not_met",
+                campaign_id="plan-sim-s3",
+                profile="aws-iam-s3",
+                output_dir=campaign_dir,
+                generated_scope=campaign_dir / "scope.json",
+                objective_met=False,
+                preflight_ok=True,
+                report_json=report_json,
+                report_md=campaign_dir / "report.md",
+            )
+        ],
+    )
+
+    write_assessment_summary(result, tmp_path)
+
+    findings = json.loads((tmp_path / "assessment_findings.json").read_text())
+    assert findings["summary"]["findings_total"] == 0
 
 def test_run_campaign_marks_preflight_failure_without_crashing(tmp_path: Path) -> None:
     target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
@@ -6077,6 +7160,86 @@ def test_snapshot_exposes_guidance_for_commit_to_pivot() -> None:
     assert snapshot.should_commit_to_pivot is True
     assert "arn:aws:iam::123456789012:role/AuditRole" in snapshot.candidate_roles
     assert "arn:aws:iam::123456789012:role/BucketReaderRole" in snapshot.candidate_roles
+
+
+def test_blind_runtime_omits_target_access_probe_for_role_chaining_profile() -> None:
+    scope = Scope(
+        target="aws",
+        allowed_actions=["enumerate", "assume_role", "access_resource"],
+        allowed_resources=["arn:aws:iam::123456789012:role/AppRole"],
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam"],
+        authorized_by="tester",
+        authorized_at="2026-04-04",
+        authorization_document="doc",
+    )
+    runtime = BlindRealRuntime.build(
+        plan={"resource_arn": "arn:aws:iam::123456789012:role/AppRole", "profile": "aws-iam-role-chaining"},
+        discovery_snapshot={
+            "caller_identity": {"Account": "123456789012"},
+            "resources": [
+                {"resource_type": "identity.role", "identifier": "arn:aws:iam::123456789012:role/AppRole"},
+            ],
+        },
+        scope=scope,
+        entry_identities=["arn:aws:iam::123456789012:user/analyst"],
+    )
+
+    actions = runtime.enumerate_actions(snapshot=None)
+
+    assert any(action.tool == "iam_simulate_assume_role" for action in actions)
+    assert all(action.tool != "iam_simulate_target_access" for action in actions)
+
+
+def test_state_derives_candidate_roles_from_blind_runtime_discovered_roles() -> None:
+    class RuntimeLikeFixture:
+        def state_copy(self):
+            return {
+                "flags": [],
+                "identities": {
+                    "arn:aws:iam::123456789012:user/analyst": {"active": True},
+                },
+                "discovered_roles": [
+                    "arn:aws:iam::123456789012:role/AppRole",
+                    "arn:aws:iam::123456789012:role/AuditRole",
+                ],
+            }
+
+        def has_flag(self, flag: str) -> bool:
+            return False
+
+        def canonicalize(self, value):
+            return value
+
+    objective = Objective(
+        description="assume target role",
+        target="arn:aws:iam::123456789012:role/AppRole",
+        success_criteria={"mode": "assume_role_proved"},
+    )
+    scope = Scope(
+        target="aws",
+        allowed_actions=["enumerate", "assume_role", "analyze"],
+        allowed_resources=["arn:aws:iam::123456789012:role/AppRole"],
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam"],
+        authorized_by="tester",
+        authorized_at="2026-04-04",
+        authorization_document="doc",
+    )
+    state = StateManager(objective=objective, scope=scope, fixture=RuntimeLikeFixture())
+    state._steps_taken = 1
+    state._activated_identities = ["arn:aws:iam::123456789012:user/analyst"]
+
+    snapshot = state.snapshot()
+
+    assert snapshot.enumeration_sufficient is True
+    assert snapshot.should_commit_to_pivot is True
+    assert "arn:aws:iam::123456789012:role/AppRole" in snapshot.candidate_roles
+    assert "arn:aws:iam::123456789012:user/analyst" in snapshot.active_branch_identities
 
 
 def test_ollama_prompt_includes_path_memory() -> None:

@@ -175,6 +175,7 @@ def execute_run(
             )
         available_actions = shape_available_actions(snapshot, available_actions)
         decision = planner.decide(snapshot, available_actions)
+        decision = _stabilize_decision(snapshot, available_actions, decision)
 
         allowed = scope_enforcer.validate(decision.action)
         if not allowed:
@@ -461,6 +462,42 @@ def _build_execution_policy(scope: Scope) -> dict:
 
 
 
+def _stabilize_decision(snapshot, available_actions, decision):
+    success_mode = getattr(getattr(snapshot, "objective", None), "success_criteria", {}).get("mode")
+    should_commit_to_pivot = getattr(snapshot, "should_commit_to_pivot", False)
+    if success_mode != "assume_role_proved" or not should_commit_to_pivot:
+        return decision
+    assume_actions = [
+        action for action in available_actions if action.action_type == ActionType.ASSUME_ROLE
+    ]
+    if not assume_actions:
+        return decision
+    if decision.action.action_type != ActionType.ANALYZE:
+        return decision
+    preferred = next(
+        (
+            action
+            for action in assume_actions
+            if action.target == getattr(getattr(snapshot, "objective", None), "target", None)
+        ),
+        assume_actions[0],
+    )
+    return decision.model_copy(
+        update={
+            "action": preferred,
+            "reason": (
+                "Planner selected analyze while assume_role pivot was available after sufficient enumeration; "
+                f"overriding to {preferred.action_type.value}. Original reason: {decision.reason}"
+            ),
+            "planner_metadata": {
+                **decision.planner_metadata,
+                "decision_stabilized": True,
+                "stabilization_reason": "assume_role_commit_after_enumeration",
+            },
+        }
+    )
+
+
 def _validate_run_inputs(fixture, objective: Objective, scope: Scope) -> None:
     if scope.target == TargetType.AWS and not scope.dry_run and not _aws_real_execution_enabled():
         raise typer.BadParameter(
@@ -501,6 +538,9 @@ def _aws_real_execution_enabled() -> bool:
 
 def _restore_objective_target_access_actions(snapshot, original_actions, filtered_actions, scope: Scope):
     if scope.target != TargetType.AWS or scope.dry_run:
+        return filtered_actions
+    success_mode = getattr(getattr(snapshot, "objective", None), "success_criteria", {}).get("mode")
+    if success_mode not in {"access_proved", "target_observed"}:
         return filtered_actions
     objective_target = getattr(getattr(snapshot, "objective", None), "target", None)
     if not objective_target:

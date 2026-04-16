@@ -49,11 +49,58 @@ FOUNDATION_PROFILES: dict[str, ProfileDefinition] = {
         scope_path=_real_path("terraform_local_lab", "rastro_local", "scope_aws_role_chaining_openai.local.json"),
         discovery_ssm_prefixes=["/prod", "/app", "/finance", "/shared"],
     ),
+    "aws-iam-create-policy-version-privesc": ProfileDefinition(
+        name="aws-iam-create-policy-version-privesc",
+        bundle="aws-iam-heavy",
+        description="IAM privilege-escalation opportunity via CreatePolicyVersion or SetDefaultPolicyVersion.",
+        fixture_path=_real_path("terraform_local_lab", "rastro_local", "aws_role_chaining_lab.local.json"),
+        objective_path=_real_path("terraform_local_lab", "rastro_local", "objective_aws_role_chaining.local.json"),
+        scope_path=_real_path("terraform_local_lab", "rastro_local", "scope_aws_role_chaining_openai.local.json"),
+        discovery_ssm_prefixes=["/prod", "/app", "/finance", "/shared"],
+    ),
+    "aws-iam-attach-role-policy-privesc": ProfileDefinition(
+        name="aws-iam-attach-role-policy-privesc",
+        bundle="aws-iam-heavy",
+        description="IAM privilege-escalation opportunity via policy attachment or inline policy mutation.",
+        fixture_path=_real_path("terraform_local_lab", "rastro_local", "aws_role_chaining_lab.local.json"),
+        objective_path=_real_path("terraform_local_lab", "rastro_local", "objective_aws_role_chaining.local.json"),
+        scope_path=_real_path("terraform_local_lab", "rastro_local", "scope_aws_role_chaining_openai.local.json"),
+        discovery_ssm_prefixes=["/prod", "/app", "/finance", "/shared"],
+    ),
+    "aws-iam-pass-role-privesc": ProfileDefinition(
+        name="aws-iam-pass-role-privesc",
+        bundle="aws-iam-heavy",
+        description="IAM privilege-escalation opportunity via PassRole into service-controlled compute.",
+        fixture_path=_real_path("terraform_local_lab", "rastro_local", "aws_role_chaining_lab.local.json"),
+        objective_path=_real_path("terraform_local_lab", "rastro_local", "objective_aws_role_chaining.local.json"),
+        scope_path=_real_path("terraform_local_lab", "rastro_local", "scope_aws_role_chaining_openai.local.json"),
+        discovery_ssm_prefixes=["/prod", "/app", "/finance", "/shared"],
+    ),
 }
 
 
 BUNDLES: dict[str, list[str]] = {
-    "aws-foundation": list(FOUNDATION_PROFILES.keys()),
+    "aws-foundation": [
+        "aws-iam-s3",
+        "aws-iam-secrets",
+        "aws-iam-ssm",
+        "aws-iam-role-chaining",
+    ],
+    "aws-iam-role-chaining-only": [
+        "aws-iam-role-chaining",
+    ],
+    "aws-iam-attach-role-policy-only": [
+        "aws-iam-attach-role-policy-privesc",
+    ],
+    "aws-iam-heavy": [
+        "aws-iam-role-chaining",
+        "aws-iam-create-policy-version-privesc",
+        "aws-iam-attach-role-policy-privesc",
+        "aws-iam-pass-role-privesc",
+        "aws-iam-s3",
+        "aws-iam-secrets",
+        "aws-iam-ssm",
+    ],
 }
 
 

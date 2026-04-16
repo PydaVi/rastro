@@ -141,8 +141,8 @@ class StateManager:
         if action.action_type.value == "enumerate":
             actor = action.actor
             target = action.target
-            if actor and target:
-                self._attempted_enumerations.add((actor, target))
+            if actor:
+                self._attempted_enumerations.add((actor, target or "*"))
         self._update_path_memory(action, observation)
 
     def record_blocked(self, action: Action, reason: str) -> None:
@@ -155,7 +155,55 @@ class StateManager:
             active_flags = self._active_flags(self._fixture.state_copy().get("flags", []))
             if required_flag in active_flags:
                 return True
+        mode = criteria.get("mode")
         target = self._objective.target
+        if mode == "access_proved" and target:
+            canonical_target = self._fixture.canonicalize(target)
+            for action, observation in zip(self._actions_taken, self._observations):
+                if not observation.success:
+                    continue
+                if action.action_type.value != "access_resource":
+                    continue
+                if self._fixture.canonicalize(action.target) != canonical_target:
+                    continue
+                evidence = observation.details.get("evidence") or {}
+                if not evidence:
+                    continue
+                if evidence.get("simulated"):
+                    continue
+                return True
+            return False
+        if mode == "assume_role_proved" and target:
+            canonical_target = self._fixture.canonicalize(target)
+            for action, observation in zip(self._actions_taken, self._observations):
+                if not observation.success:
+                    continue
+                if action.action_type.value != "assume_role":
+                    continue
+                granted_role = observation.details.get("granted_role") or action.target
+                if self._fixture.canonicalize(granted_role) != canonical_target:
+                    continue
+                if action.tool == "iam_simulate_assume_role":
+                    continue
+                return True
+            return False
+        if mode == "policy_probe_proved" and target:
+            canonical_target = self._fixture.canonicalize(target)
+            required_tool = criteria.get("required_tool")
+            for action, observation in zip(self._actions_taken, self._observations):
+                if not observation.success:
+                    continue
+                if action.action_type.value != "access_resource":
+                    continue
+                if self._fixture.canonicalize(action.target) != canonical_target:
+                    continue
+                if required_tool and action.tool != required_tool:
+                    continue
+                request_summary = observation.details.get("request_summary") or {}
+                if "iam:SimulatePrincipalPolicy" not in request_summary.get("api_calls", []):
+                    continue
+                return True
+            return False
         if target:
             canonical_target = self._fixture.canonicalize(target)
             for action, observation in zip(self._actions_taken, self._observations):
@@ -245,7 +293,7 @@ class StateManager:
             progress_actions = []
             for action in available_actions:
                 action_type = action.get("action_type")
-                if action_type not in {"enumerate", "access_resource", "analyze"}:
+                if action_type not in {"enumerate", "access_resource", "analyze", "assume_role"}:
                     continue
                 if action_type == "access_resource":
                     target = action.get("target")
@@ -253,6 +301,9 @@ class StateManager:
                         continue
                 progress_actions.append(action)
             if progress_actions:
+                active_roles.append(role)
+                continue
+            if identities.get(role, {}).get("active"):
                 active_roles.append(role)
         return active_roles
 
@@ -269,7 +320,7 @@ class StateManager:
             progress_actions = []
             for action in available_actions:
                 action_type = action.get("action_type")
-                if action_type not in {"enumerate", "access_resource", "analyze"}:
+                if action_type not in {"enumerate", "access_resource", "analyze", "assume_role"}:
                     continue
                 if action_type == "access_resource":
                     target = action.get("target")
@@ -277,6 +328,9 @@ class StateManager:
                         continue
                 progress_actions.append(action)
             if progress_actions:
+                active_identities.append(identity)
+                continue
+            if identities.get(identity, {}).get("active"):
                 active_identities.append(identity)
         return active_identities
 
@@ -286,13 +340,17 @@ class StateManager:
         total = 0
         for identity in self._active_branch_identities():
             available_actions = identities.get(identity, {}).get("available_actions", [])
-            total += len(
-                [
-                    action
-                    for action in available_actions
-                    if action.get("action_type") in {"enumerate", "access_resource", "analyze"}
-                ]
-            )
+            if available_actions:
+                total += len(
+                    [
+                        action
+                        for action in available_actions
+                        if action.get("action_type") in {"enumerate", "access_resource", "analyze", "assume_role"}
+                    ]
+                )
+                continue
+            if identities.get(identity, {}).get("active"):
+                total += 1
         return total
 
     def _candidate_roles(self) -> List[str]:
@@ -306,6 +364,11 @@ class StateManager:
                 target = action.get("target")
                 if target and target not in candidate_roles:
                     candidate_roles.append(target)
+        if candidate_roles:
+            return candidate_roles
+        for role in fixture_state.get("discovered_roles", []):
+            if role and role not in candidate_roles:
+                candidate_roles.append(role)
         return candidate_roles
 
     def _enumeration_sufficient(self) -> bool:
@@ -334,7 +397,8 @@ class StateManager:
         active_roles = set(self._active_assumed_roles())
         failed_roles = set(self._failed_assume_roles)
         tested_roles = set(self._tested_assume_roles)
-        identities = self._fixture.state_copy().get("identities", {})
+        fixture_state = self._fixture.state_copy()
+        identities = fixture_state.get("identities", {})
         candidate_paths: List[CandidatePath] = []
 
         for role in self._candidate_roles():
@@ -342,7 +406,7 @@ class StateManager:
             has_progress_actions = False
             for action in available_actions:
                 action_type = action.get("action_type")
-                if action_type not in {"enumerate", "access_resource", "analyze"}:
+                if action_type not in {"enumerate", "access_resource", "analyze", "assume_role"}:
                     continue
                 if action_type == "access_resource":
                     target = action.get("target")
@@ -350,6 +414,8 @@ class StateManager:
                         continue
                 has_progress_actions = True
                 break
+            if not has_progress_actions and role in fixture_state.get("discovered_roles", []):
+                has_progress_actions = True
             if role in active_roles:
                 status = "active"
             elif role in failed_roles:

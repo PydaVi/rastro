@@ -1,0 +1,11 @@
+name: iam_pass_role_service_create
+description: Simulate whether the current principal can pass a role into a service create path
+phase: privilege-escalation
+mitre_id: T1098
+platform: AWS IAM
+preconditions:
+  - iam_roles_listed
+postconditions:
+  - iam_policy_abuse_reachable
+implementation: tools/aws/iam_pass_role_service_create.py
+safe_simulation: true
