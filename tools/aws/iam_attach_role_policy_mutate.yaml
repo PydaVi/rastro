@@ -1,0 +1,10 @@
+name: iam_attach_role_policy_mutate
+description: Execute real iam:AttachRolePolicy to attach a managed policy to a target role, proving privilege escalation
+phase: privilege-escalation
+mitre_id: T1098
+platform: AWS IAM
+preconditions: []
+postconditions:
+  - iam_policy_mutation_executed
+implementation: ~
+safe_simulation: false

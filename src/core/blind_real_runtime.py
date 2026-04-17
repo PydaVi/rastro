@@ -209,7 +209,7 @@ class BlindRealRuntime:
         abuse_actions: list[Action] = []
         profile_tools = {
             "aws-iam-create-policy-version-privesc": ["iam_create_policy_version"],
-            "aws-iam-attach-role-policy-privesc": ["iam_attach_role_policy"],
+            "aws-iam-attach-role-policy-privesc": ["iam_attach_role_policy_mutate", "iam_attach_role_policy"],
             "aws-iam-pass-role-privesc": ["iam_pass_role_service_create"],
         }.get(
             self.profile_name,
@@ -266,6 +266,7 @@ def _policy_probe_technique(tool: str) -> Technique:
     mapping = {
         "iam_create_policy_version": _technique("T1484.001", "Domain Policy Modification"),
         "iam_attach_role_policy": _technique("T1098", "Account Manipulation"),
+        "iam_attach_role_policy_mutate": _technique("T1098", "Account Manipulation"),
         "iam_pass_role_service_create": _technique("T1098", "Account Manipulation"),
     }
     return mapping[tool]

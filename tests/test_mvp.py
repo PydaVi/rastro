@@ -9019,3 +9019,250 @@ def test_aws_backtracking_real_local_exposes_progress_after_assume_role() -> Non
     assert any(action.tool == "s3_read_sensitive" for action in available)
     assert len(shaped) == 1
     assert shaped[0].tool == "s3_read_sensitive"
+
+
+# ---------------------------------------------------------------------------
+# Bloco 2 — IAM Mutation tests
+# ---------------------------------------------------------------------------
+
+def test_rollback_tracker_registers_and_executes() -> None:
+    from execution.aws_executor import RollbackTracker
+
+    calls: list[dict] = []
+
+    class FakeClient:
+        def detach_role_policy(self, region, role_name, policy_arn, credentials=None):
+            calls.append({"op": "detach", "role": role_name, "policy": policy_arn})
+
+    tracker = RollbackTracker()
+    assert tracker.is_empty()
+
+    tracker.register_detach_role_policy("us-east-1", "my-role", "arn:aws:iam::aws:policy/AdministratorAccess")
+    assert not tracker.is_empty()
+
+    errors = tracker.execute_all(FakeClient())
+    assert errors == []
+    assert len(calls) == 1
+    assert calls[0] == {"op": "detach", "role": "my-role", "policy": "arn:aws:iam::aws:policy/AdministratorAccess"}
+    assert tracker.is_empty()
+
+
+def test_rollback_tracker_handles_errors_gracefully() -> None:
+    from execution.aws_executor import RollbackTracker
+
+    class FailingClient:
+        def detach_role_policy(self, **kwargs):
+            raise RuntimeError("AccessDenied")
+
+    tracker = RollbackTracker()
+    tracker.register_detach_role_policy("us-east-1", "role", "arn:policy")
+    errors = tracker.execute_all(FailingClient())
+    assert len(errors) == 1
+    assert tracker.is_empty()
+
+
+def test_rollback_tracker_executes_in_reverse_order() -> None:
+    from execution.aws_executor import RollbackTracker
+
+    order: list[str] = []
+
+    class FakeClient:
+        def detach_role_policy(self, region, role_name, policy_arn, credentials=None):
+            order.append(role_name)
+
+    tracker = RollbackTracker()
+    tracker.register_detach_role_policy("us-east-1", "role-first", "p1")
+    tracker.register_detach_role_policy("us-east-1", "role-second", "p2")
+    tracker.execute_all(FakeClient())
+    assert order == ["role-second", "role-first"]
+
+
+def test_policy_mutation_proved_mode_passes_on_real_mutation(tmp_path: Path) -> None:
+    from core.state import StateManager
+    from core.domain import Action, ActionType, Objective, Scope, TargetType
+
+    objective = Objective(
+        description="Prove AttachRolePolicy path",
+        target="arn:aws:iam::123:role/privesc-role",
+        success_criteria={
+            "mode": "policy_mutation_proved",
+            "required_tool": "iam_attach_role_policy_mutate",
+        },
+    )
+    scope = Scope(
+        target=TargetType.FIXTURE,
+        allowed_actions=[ActionType.ACCESS_RESOURCE],
+        allowed_resources=["arn:aws:iam::123:role/privesc-role"],
+    )
+
+    from core.fixture import Fixture
+    fixture = Fixture.load(Path("fixtures/iam_lab.json"))
+    state = StateManager(objective=objective, scope=scope, fixture=fixture)
+
+    action = Action(
+        action_type=ActionType.ACCESS_RESOURCE,
+        actor="arn:aws:iam::123:user/analyst",
+        target="arn:aws:iam::123:role/privesc-role",
+        parameters={"region": "us-east-1", "role_arn": "arn:aws:iam::123:role/privesc-role"},
+        tool="iam_attach_role_policy_mutate",
+    )
+    from core.domain import Observation
+    observation = Observation(
+        success=True,
+        details={
+            "mutation_executed": True,
+            "request_summary": {"api_calls": ["iam:AttachRolePolicy"]},
+        },
+    )
+    state.apply_observation(action, observation, "Mutation executed", {})
+    assert state.is_objective_met()
+
+
+def test_policy_mutation_proved_mode_fails_without_mutation_flag(tmp_path: Path) -> None:
+    from core.state import StateManager
+    from core.domain import Action, ActionType, Objective, Scope, TargetType, Observation
+
+    objective = Objective(
+        description="Prove AttachRolePolicy path",
+        target="arn:aws:iam::123:role/privesc-role",
+        success_criteria={
+            "mode": "policy_mutation_proved",
+            "required_tool": "iam_attach_role_policy_mutate",
+        },
+    )
+    scope = Scope(
+        target=TargetType.FIXTURE,
+        allowed_actions=[ActionType.ACCESS_RESOURCE],
+        allowed_resources=["arn:aws:iam::123:role/privesc-role"],
+    )
+
+    from core.fixture import Fixture
+    fixture = Fixture.load(Path("fixtures/iam_lab.json"))
+    state = StateManager(objective=objective, scope=scope, fixture=fixture)
+
+    # Simulation only — no mutation_executed flag
+    action = Action(
+        action_type=ActionType.ACCESS_RESOURCE,
+        actor="arn:aws:iam::123:user/analyst",
+        target="arn:aws:iam::123:role/privesc-role",
+        parameters={"region": "us-east-1"},
+        tool="iam_attach_role_policy_mutate",
+    )
+    observation = Observation(
+        success=True,
+        details={"request_summary": {"api_calls": ["iam:SimulatePrincipalPolicy"]}},
+    )
+    state.apply_observation(action, observation, "Simulation only", {})
+    assert not state.is_objective_met()
+
+
+def test_campaign_synthesis_attach_role_policy_uses_mutation_mode() -> None:
+    from operations.campaign_synthesis import synthesize_foundation_campaigns
+    from operations.models import TargetConfig, AuthorizationConfig
+
+    target = TargetConfig(
+        name="test",
+        accounts=["123456789012"],
+        allowed_regions=["us-east-1"],
+        entry_roles=["arn:aws:iam::123456789012:user/analyst"],
+    )
+    authorization = AuthorizationConfig(
+        authorized_by="tester",
+        authorized_at="2026-01-01",
+        authorization_document="doc.pdf",
+        permitted_profiles=["aws-iam-attach-role-policy-privesc"],
+    )
+    candidates_payload = {
+        "candidates": [
+            {
+                "id": "aws-iam-attach-role-policy-privesc:test-role",
+                "resource_arn": "arn:aws:iam::123456789012:role/privesc9-role",
+                "resource_type": "identity.role",
+                "profile_family": "aws-iam-attach-role-policy-privesc",
+                "score": 80,
+                "confidence": "high",
+                "signals": {"attack_steps": ["iam:AttachRolePolicy on privesc9-role"]},
+                "execution_fixture_set": None,
+                "fixture_path": None,
+                "scope_template_path": None,
+            }
+        ]
+    }
+
+    import tempfile, json as _json
+    with tempfile.TemporaryDirectory() as tmp:
+        _, _, plan = synthesize_foundation_campaigns(
+            candidates_payload=candidates_payload,
+            target=target,
+            authorization=authorization,
+            output_dir=Path(tmp),
+        )
+        plans = plan["plans"]
+        assert len(plans) == 1
+        p = plans[0]
+        assert p["profile"] == "aws-iam-attach-role-policy-privesc"
+        obj = _json.loads(Path(p["generated_objective"]).read_text())
+        assert obj["success_criteria"]["mode"] == "policy_mutation_proved"
+        assert obj["success_criteria"]["required_tool"] == "iam_attach_role_policy_mutate"
+        assert p["signals"]["attack_steps"] == ["iam:AttachRolePolicy on privesc9-role"]
+
+
+def test_action_shaping_prefers_required_tool_for_policy_mutation_proved() -> None:
+    from planner.action_shaping import shape_available_actions
+    from core.domain import Action, ActionType, Objective, Scope
+    from core.state import StateManager
+    from core.fixture import Fixture
+
+    objective = Objective(
+        description="attach policy to role",
+        target="arn:aws:iam::123456789012:role/privesc9-role",
+        success_criteria={
+            "mode": "policy_mutation_proved",
+            "required_tool": "iam_attach_role_policy_mutate",
+        },
+    )
+    scope = Scope(
+        target="aws",
+        allowed_actions=["enumerate", "access_resource"],
+        allowed_resources=["arn:aws:iam::123456789012:role/privesc9-role"],
+        dry_run=False,
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam"],
+        authorized_by="tester",
+        authorized_at="2026-04-04",
+        authorization_document="doc",
+    )
+    snapshot = StateManager(
+        objective=objective,
+        scope=scope,
+        fixture=Fixture.load(Path("fixtures/mixed_generalization_iam_s3_lab.json")),
+    ).snapshot()
+    snapshot.active_branch_identities = ["arn:aws:iam::123456789012:user/analyst"]
+
+    enumerate_action = Action(
+        action_type=ActionType.ENUMERATE,
+        actor="arn:aws:iam::123456789012:user/analyst",
+        target=None,
+        parameters={"service": "iam", "region": "us-east-1"},
+        tool="iam_list_roles",
+    )
+    simulate_action = Action(
+        action_type=ActionType.ACCESS_RESOURCE,
+        actor="arn:aws:iam::123456789012:user/analyst",
+        target="arn:aws:iam::123456789012:role/privesc9-role",
+        parameters={"service": "iam", "region": "us-east-1"},
+        tool="iam_simulate_target_access",
+    )
+    mutate_action = Action(
+        action_type=ActionType.ACCESS_RESOURCE,
+        actor="arn:aws:iam::123456789012:user/analyst",
+        target="arn:aws:iam::123456789012:role/privesc9-role",
+        parameters={"service": "iam", "region": "us-east-1"},
+        tool="iam_attach_role_policy_mutate",
+    )
+
+    shaped = shape_available_actions(snapshot, [enumerate_action, simulate_action, mutate_action])
+
+    assert len(shaped) == 1
+    assert shaped[0].tool == "iam_attach_role_policy_mutate"

@@ -31,6 +31,39 @@ class AwsRealExecutorStub:
 
 
 @dataclass
+class RollbackTracker:
+    """Records IAM mutations for guaranteed cleanup at end of campaign."""
+    _pending: list[dict] = field(default_factory=list)
+
+    def register_detach_role_policy(self, region: str, role_name: str, policy_arn: str) -> None:
+        self._pending.append({
+            "op": "detach_role_policy",
+            "region": region,
+            "role_name": role_name,
+            "policy_arn": policy_arn,
+        })
+
+    def execute_all(self, client: AwsClient) -> list[str]:
+        """Runs all registered rollbacks. Returns list of errors (best-effort)."""
+        errors: list[str] = []
+        for entry in reversed(self._pending):
+            try:
+                if entry["op"] == "detach_role_policy":
+                    client.detach_role_policy(
+                        region=entry["region"],
+                        role_name=entry["role_name"],
+                        policy_arn=entry["policy_arn"],
+                    )
+            except Exception as exc:
+                errors.append(str(exc))
+        self._pending.clear()
+        return errors
+
+    def is_empty(self) -> bool:
+        return len(self._pending) == 0
+
+
+@dataclass
 class AwsRealExecutor:
     fixture: object
     scope: Scope
@@ -40,6 +73,7 @@ class AwsRealExecutor:
     _credentials_by_actor: dict[str, AwsCredentials] = field(default_factory=dict, init=False)
     _base_actor_arn: str | None = field(default=None, init=False)
     _entry_assumed_identity_arn: str | None = field(default=None, init=False)
+    rollback_tracker: RollbackTracker = field(default_factory=RollbackTracker, init=False)
 
     def execute(self, action: Action) -> Observation:
         client = self.client or Boto3AwsClient()
@@ -87,6 +121,8 @@ class AwsRealExecutor:
                 details = self._execute_iam_policy_abuse_probe(client, action, "iam:CreatePolicyVersion")
             elif action.tool == "iam_attach_role_policy":
                 details = self._execute_iam_policy_abuse_probe(client, action, "iam:AttachRolePolicy")
+            elif action.tool == "iam_attach_role_policy_mutate":
+                details = self._execute_iam_attach_role_policy_mutate(client, action)
             elif action.tool == "iam_pass_role_service_create":
                 details = self._execute_iam_policy_abuse_probe(client, action, "iam:PassRole")
             elif action.tool == "iam_simulate_target_access":
@@ -562,6 +598,42 @@ class AwsRealExecutor:
                 "decision": decision,
             },
             "aws_region": region,
+        }
+
+    def _execute_iam_attach_role_policy_mutate(self, client: AwsClient, action: Action) -> dict:
+        """Executa iam:AttachRolePolicy real e registra rollback automático."""
+        region = _required_parameter(action, "region")
+        role_arn = action.parameters.get("role_arn") or action.target
+        if not role_arn:
+            raise ValueError("iam_attach_role_policy_mutate requires role_arn or target")
+        policy_arn = action.parameters.get("policy_arn", "arn:aws:iam::aws:policy/AdministratorAccess")
+        role_name = role_arn.split("/")[-1]
+        client.attach_role_policy(
+            region=region,
+            role_name=role_name,
+            policy_arn=policy_arn,
+            credentials=self._credentials_for_actor(action.actor),
+        )
+        self.rollback_tracker.register_detach_role_policy(
+            region=region,
+            role_name=role_name,
+            policy_arn=policy_arn,
+        )
+        return {
+            "details": f"Executed iam:AttachRolePolicy — attached {policy_arn} to {role_name}.",
+            "mutation_executed": True,
+            "request_summary": {
+                "api_calls": ["iam:AttachRolePolicy"],
+                "role_name": role_name,
+                "policy_arn": policy_arn,
+            },
+            "response_summary": {
+                "attached": True,
+                "rollback_registered": True,
+            },
+            "aws_region": region,
+            "execution_mode": "real",
+            "real_api_called": True,
         }
 
     def _execute_iam_simulate_target_access(self, client: AwsClient, action: Action) -> dict:

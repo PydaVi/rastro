@@ -204,6 +204,24 @@ class StateManager:
                     continue
                 return True
             return False
+        if mode == "policy_mutation_proved" and target:
+            # Proves a real IAM mutation was executed against the target role.
+            canonical_target = self._fixture.canonicalize(target)
+            required_tool = criteria.get("required_tool")
+            for action, observation in zip(self._actions_taken, self._observations):
+                if not observation.success:
+                    continue
+                if action.action_type.value != "access_resource":
+                    continue
+                canonical_action_target = self._fixture.canonicalize(action.target or "")
+                if canonical_action_target != canonical_target and canonical_target not in (action.parameters.get("role_arn", "") or ""):
+                    continue
+                if required_tool and action.tool != required_tool:
+                    continue
+                if not observation.details.get("mutation_executed"):
+                    continue
+                return True
+            return False
         if target:
             canonical_target = self._fixture.canonicalize(target)
             for action, observation in zip(self._actions_taken, self._observations):

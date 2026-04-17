@@ -18,6 +18,7 @@ from planner.interface import Planner
 from execution.scope_enforcer import ScopeEnforcer
 from execution.executor import Executor
 from execution.aws_executor import AwsRealExecutor
+from execution.aws_client import Boto3AwsClient
 from execution.preflight import run_preflight
 from operations.campaign_synthesis import synthesize_foundation_campaigns
 from operations.discovery import run_foundation_discovery
@@ -94,6 +95,7 @@ def execute_run(
     max_steps: int = 5,
     seed: Optional[int] = None,
     runtime_fixture=None,
+    attack_steps: list[str] | None = None,
 ) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -135,6 +137,8 @@ def execute_run(
             planner_kwargs["timeout"] = planner_cfg.timeout
     if seed is not None:
         planner_kwargs["seed"] = seed
+    if attack_steps:
+        planner_kwargs["attack_steps_hint"] = attack_steps
 
     planner: Planner = get_planner(backend=backend, **planner_kwargs)
     scope_enforcer = ScopeEnforcer(scope)
@@ -246,6 +250,12 @@ def execute_run(
             "execution_policy": execution_policy,
         },
     )
+
+    # Rollback any IAM mutations before returning.
+    if isinstance(execution_surface, AwsRealExecutor) and not execution_surface.rollback_tracker.is_empty():
+        rollback_client = execution_surface.client or Boto3AwsClient()
+        rollback_errors = execution_surface.rollback_tracker.execute_all(rollback_client)
+        audit.log_event("rollback_executed", {"errors": rollback_errors})
 
     return {
         "objective_met": state.is_objective_met(),

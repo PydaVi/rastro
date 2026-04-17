@@ -118,6 +118,31 @@ def _prefer_analyze(snapshot, actions: List[Action]) -> List[Action]:
     return actions
 
 
+def _prefer_required_tool(snapshot, actions: List[Action]) -> List[Action]:
+    """When objective requires a specific tool, prefer actions using that tool on the objective target."""
+    success_mode = getattr(getattr(snapshot, "objective", None), "success_criteria", {}).get("mode")
+    if success_mode not in {"policy_mutation_proved", "policy_probe_proved"}:
+        return actions
+    required_tool = getattr(getattr(snapshot, "objective", None), "success_criteria", {}).get("required_tool")
+    if not required_tool:
+        return actions
+    objective_target = getattr(getattr(snapshot, "objective", None), "target", None)
+    if objective_target:
+        targeted = [
+            action for action in actions
+            if getattr(action, "tool", None) == required_tool and action.target == objective_target
+        ]
+        if targeted:
+            return targeted
+    any_with_tool = [
+        action for action in actions
+        if getattr(action, "tool", None) == required_tool
+    ]
+    if any_with_tool:
+        return any_with_tool
+    return actions
+
+
 def _prefer_access_on_success(snapshot, actions: List[Action]) -> List[Action]:
     if not snapshot or not actions:
         return actions
@@ -160,6 +185,11 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
     if not snapshot or not available_actions:
         return available_actions
 
+    # When the objective mandates a specific mutation tool, surface it immediately.
+    preferred_tool = _prefer_required_tool(snapshot, available_actions)
+    if preferred_tool != available_actions:
+        return preferred_tool
+
     active_identities = set(getattr(snapshot, "active_branch_identities", [])) or set(
         getattr(snapshot, "active_assumed_roles", [])
     )
@@ -183,6 +213,9 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
             filtered = _filter_mismatched_bucket(snapshot, filtered)
             filtered = _filter_failed_assume(snapshot, filtered)
             if filtered:
+                preferred_tool = _prefer_required_tool(snapshot, filtered)
+                if preferred_tool != filtered:
+                    return preferred_tool
                 preferred_assume = _prefer_assume_role_on_success(snapshot, filtered)
                 if preferred_assume != filtered:
                     return preferred_assume
@@ -239,6 +272,9 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
     filtered = _filter_repeated_assume(snapshot, filtered)
     filtered = _filter_repeated_enumerate(snapshot, filtered)
     filtered = _filter_failed_assume(snapshot, filtered)
+    preferred_tool = _prefer_required_tool(snapshot, filtered)
+    if preferred_tool != filtered:
+        return preferred_tool
     preferred_assume = _prefer_assume_role_on_success(snapshot, filtered)
     if preferred_assume != filtered:
         return preferred_assume

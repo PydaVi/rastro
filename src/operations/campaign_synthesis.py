@@ -99,6 +99,7 @@ def synthesize_foundation_campaigns(
                     "score_components": candidate.get("score_components", {}),
                     "execution_fixture_set": candidate.get("execution_fixture_set"),
                     "external_entry_reachability": candidate.get("external_entry_reachability"),
+                    "signals": candidate.get("signals", {}),
                 }
             )
 
@@ -141,9 +142,10 @@ def _build_generated_success_criteria(candidate: dict) -> dict:
         mode = "access_proved"
     elif profile_family == "aws-iam-role-chaining":
         mode = "assume_role_proved"
+    elif profile_family == "aws-iam-attach-role-policy-privesc":
+        mode = "policy_mutation_proved"
     elif profile_family in {
         "aws-iam-create-policy-version-privesc",
-        "aws-iam-attach-role-policy-privesc",
         "aws-iam-pass-role-privesc",
     }:
         mode = "policy_probe_proved"
@@ -155,7 +157,7 @@ def _build_generated_success_criteria(candidate: dict) -> dict:
     }
     required_tool_by_profile = {
         "aws-iam-create-policy-version-privesc": "iam_create_policy_version",
-        "aws-iam-attach-role-policy-privesc": "iam_attach_role_policy",
+        "aws-iam-attach-role-policy-privesc": "iam_attach_role_policy_mutate",
         "aws-iam-pass-role-privesc": "iam_pass_role_service_create",
     }
     required_tool = required_tool_by_profile.get(profile_family)

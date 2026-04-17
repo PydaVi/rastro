@@ -177,6 +177,7 @@ def run_generated_campaign(
     seed: int | None = None,
     profile_resolver=None,
     discovery_snapshot: dict | None = None,
+    attack_steps: list[str] | None = None,
 ) -> CampaignResult:
     profile_resolver = profile_resolver or get_profile
     profile_name = plan["profile"]
@@ -243,6 +244,8 @@ def run_generated_campaign(
         )
         if runtime_fixture is not None:
             runner_kwargs["runtime_fixture"] = runtime_fixture
+        if attack_steps:
+            runner_kwargs["attack_steps"] = attack_steps
         result = runner(**runner_kwargs)
     except Exception as exc:
         message = str(exc)
@@ -408,7 +411,7 @@ def _hypotheses_to_candidates_payload(hypotheses, discovery_snapshot: dict, bund
             "score": score,
             "confidence": hyp.confidence,
             "selection_reason": [f"strategic:{hyp.attack_class}", *hyp.attack_steps[:2]],
-            "signals": {"reasoning": hyp.reasoning, "entry_identity": hyp.entry_identity},
+            "signals": {"reasoning": hyp.reasoning, "entry_identity": hyp.entry_identity, "attack_steps": hyp.attack_steps},
             "score_components": {"lexical": 0, "structural": score},
             "execution_fixture_set": None,
             "fixture_path": None,
@@ -553,6 +556,7 @@ def run_discovery_driven_assessment(
                     seed=seed,
                     profile_resolver=profile_resolver,
                     discovery_snapshot=discovery_snapshot,
+                    attack_steps=plan.get("signals", {}).get("attack_steps"),
                 )
             )
 

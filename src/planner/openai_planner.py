@@ -30,6 +30,7 @@ class OpenAIPlanner(Planner):
         model: str = "gpt-4o-mini",
         base_url: str = "https://api.openai.com/v1",
         api_key: str | None = None,
+        attack_steps_hint: list[str] | None = None,
     ) -> None:
         try:
             from openai import OpenAI
@@ -43,6 +44,7 @@ class OpenAIPlanner(Planner):
             api_key=api_key or os.environ.get("OPENAI_API_KEY"),
             base_url=base_url,
         )
+        self._attack_steps_hint = attack_steps_hint
 
     def decide(self, snapshot, available_actions: List[Action]) -> Decision:
         if not available_actions:
@@ -58,10 +60,17 @@ class OpenAIPlanner(Planner):
 
         user_message = build_prompt(snapshot, available_actions)
 
+        system_prompt = SYSTEM_PROMPT
+        if self._attack_steps_hint:
+            steps_str = "\n".join(f"  {i+1}. {s}" for i, s in enumerate(self._attack_steps_hint))
+            system_prompt = (
+                SYSTEM_PROMPT
+                + f"\n\nYou are executing this specific attack path. Prioritize actions that implement these steps:\n{steps_str}"
+            )
         response = self._client.chat.completions.create(
             model=self._model,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
             response_format={"type": "json_object"},

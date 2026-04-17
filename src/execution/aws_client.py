@@ -258,6 +258,26 @@ class AwsClient(Protocol):
         """Retorna lista de nomes de políticas inline."""
         ...
 
+    def attach_role_policy(
+        self,
+        region: str,
+        role_name: str,
+        policy_arn: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> None:
+        """Executa iam:AttachRolePolicy — mutação real."""
+        ...
+
+    def detach_role_policy(
+        self,
+        region: str,
+        role_name: str,
+        policy_arn: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> None:
+        """Executa iam:DetachRolePolicy — rollback de attach_role_policy."""
+        ...
+
 
 @dataclass
 class Boto3AwsClient:
@@ -941,6 +961,29 @@ class Boto3AwsClient:
             return names
         except Exception:
             return []
+
+    def attach_role_policy(
+        self,
+        region: str,
+        role_name: str,
+        policy_arn: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> None:
+        client = self._session(credentials).client("iam", region_name=region)
+        client.attach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
+
+    def detach_role_policy(
+        self,
+        region: str,
+        role_name: str,
+        policy_arn: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> None:
+        try:
+            client = self._session(credentials).client("iam", region_name=region)
+            client.detach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
+        except Exception:
+            pass  # best-effort rollback
 
     def _session(self, credentials: Optional[AwsCredentials] = None):
         import boto3
