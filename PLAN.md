@@ -189,33 +189,55 @@ Passo 5 bloqueia em 4.
 
 ---
 
-## Bloco 2 — Campaign Execution Intelligence (proximo)
+## Bloco 2 — Campaign Execution Intelligence (FECHADO, 2026-04-17)
 
 **Direcao**: mais generalizacao ofensiva.
 **Objetivo**: LLM de execucao prova paths identificados pelo StrategicPlanner.
 
-### Diagnostico
+### Resultado
 
-O LLM de execucao recebe apenas o snapshot de estado + acoes disponiveis.
-Nao recebe o contexto estrategico: qual path esta tentando provar, quais API calls sao o objetivo.
+Benchmark: **1/3 campanhas provadas** (`aws-iam-attach-role-policy-privesc`).
 
-Resultado: escolhe `iam:ListRoles` (discovery) em vez de `iam:AttachRolePolicy` (privesc).
+- `iam:AttachRolePolicy` chamado na AWS real em step 0
+- `mutation_executed=True` na observation
+- `objective_met=True`, rollback executado (detach automatico)
+- Outros 2 (role-chaining, create-policy-version): LLM escolhe -1 (no viable action)
 
-### Trabalho proposto
+### Bugs corrigidos neste bloco
 
-**Passo 1**: Injetar `attack_steps` da hipotese no contexto de execucao da campanha.
-- `run_generated_campaign` recebe `hypothesis: AttackHypothesis | None`
-- Se presente, injeta no sistema prompt: "You are executing: [attack_steps]"
+1. **`_prefer_required_tool` no topo do `shape_available_actions`**: candidate_paths (46 entries) estava colocando a funcao no branch errado. Fix: checar required_tool antes de qualquer branching.
 
-**Passo 2**: Benchmark — com hipotese injetada, LLM prova pelo menos 1 path de privesc no iam-vulnerable.
+2. **`iam_attach_role_policy_mutate.yaml` ausente do ToolRegistry**: `filter_actions` removia a ferramenta antes do shaping. Fix: adicionado YAML ao `tools/aws/`.
 
-**Passo 3**: Diagnosticar por que `objective_met` nao e setado mesmo quando acao correta e executada.
+3. **`Boto3AwsClient` nao importado em `main.py`**: rollback falhava com NameError. Fix: import adicionado.
+
+4. **`attack_steps_hint` threading**: hipotese → signals → plan → runner_kwargs → system prompt do OpenAIPlanner.
 
 ### Criterios de saida do Bloco 2
 
-1. Pelo menos 1 campanha de privesc IAM passa no iam-vulnerable
-2. O path provado corresponde a uma hipotese do StrategicPlanner
-3. `finding_state: proved` no finding gerado
+1. ~~Pelo menos 1 campanha de privesc IAM passa no iam-vulnerable~~ PASS
+2. ~~O path provado corresponde a uma hipotese do StrategicPlanner~~ PASS (privesc9 identificado pelo estrategista)
+3. ~~`finding_state: proved` no finding gerado~~ PASS
+
+### O que aproximou do polo generalista
+
+- Engine agora **executa mutacoes reais** (nao so simula)
+- Rollback automatico garante cleanup apos cada campanha
+- `_prefer_required_tool` garante que o executor vai direto ao objetivo quando o tool e conhecido
+- StrategicPlanner → ataque steps → executor: chain end-to-end funcionando
+
+### O que permaneceu dependente de campaigns conhecidas
+
+- Role-chaining e create-policy-version falharam: LLM de execucao ainda escolhe "no viable action"
+  quando o path e mais complexo ou tem preconditions nao atendidas
+- 2/3 campanhas ainda dependem de guidance mais especifica
+
+### Proximo experimento de maior leverage
+
+**Bloco 3**: Fazer role-chaining e create-policy-version funcionarem.
+- Diagnosticar por que LLM escolhe -1 para esses paths
+- Checar se `iam_create_policy_version` passa o filtro do ToolRegistry (precondition `iam_roles_listed`)
+- Ajustar shaping ou preconditions para caminhos que requerem enumeration previa
 
 ---
 
@@ -225,7 +247,7 @@ Resultado: escolhe `iam:ListRoles` (discovery) em vez de `iam:AttachRolePolicy` 
 
 Permanece valido. Dependencias antes de abrir:
 1. ~~Fechar Bloco 1 (StrategicPlanner operacional)~~ DONE
-2. Engine prova paths IAM-heavy sem profiles pre-definidos (Bloco 2)
+2. ~~Engine prova paths IAM-heavy sem profiles pre-definidos (Bloco 2)~~ DONE (1/3 campanhas)
 3. Findings por `distinct path`, nao por volume
 
 ---
