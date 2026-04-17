@@ -3060,7 +3060,13 @@ def test_run_generated_campaign_preserves_scope_planner_when_authorization_has_n
 
 def test_discovery_driven_assessment_expands_plans_for_discovered_users(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RASTRO_ENABLE_AWS_REAL", "1")
-    target = load_target(Path("examples/target_aws_blind_real.json"))
+    from operations.models import TargetConfig
+    target = TargetConfig(
+        name="test-blind-real",
+        accounts=["123456789012"],
+        allowed_regions=["us-east-1"],
+        entry_roles=[],
+    )
     authorization = load_authorization(Path("examples/authorization_aws_blind_real.json"))
     discovery_snapshot = {
         "target": "aws-blind-real-assessment",
@@ -3566,7 +3572,7 @@ def test_hypotheses_to_candidates_payload_maps_attack_classes_to_profiles() -> N
             reasoning="Role can create policy versions.",
         ),
     ]
-    payload = _hypotheses_to_candidates_payload(hypotheses, {"target": "test"}, "aws-foundation")
+    payload = _hypotheses_to_candidates_payload(hypotheses, {"target": "test"}, "aws-iam-heavy")
 
     by_profile = {c["profile_family"]: c for c in payload["candidates"]}
     assert by_profile["aws-iam-role-chaining"]["resource_arn"] == "arn:aws:iam::123:role/AdminRole"

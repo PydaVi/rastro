@@ -3,9 +3,9 @@
 __pycache__/
 *.pyc
 outputs/
-outputs_aws_dry_run/
-outputs_real/
-outputs_real*/
+outputs_*/
+tmp/
+tmp_*/
 terraform_local_lab/
 .env
 .env.*

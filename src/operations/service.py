@@ -387,10 +387,14 @@ def _infer_resource_type_from_arn(arn: str) -> str:
 
 
 def _hypotheses_to_candidates_payload(hypotheses, discovery_snapshot: dict, bundle_name: str) -> dict:
+    bundle_profiles = {p.name for p in resolve_bundle(bundle_name)}
     candidates = []
     seen: set[tuple[str, str]] = set()
     for hyp in hypotheses:
         profile_family = _attack_class_to_profile(hyp.attack_class, hyp.target, hyp.attack_steps)
+        if profile_family not in bundle_profiles:
+            logger.debug("Skipping hypothesis: profile %s not in bundle %s", profile_family, bundle_name)
+            continue
         key = (profile_family, hyp.target)
         if key in seen:
             continue
@@ -476,9 +480,15 @@ def run_discovery_driven_assessment(
     strategic_hypotheses_path = None
     strategic_active = False
     if strategic_planner is not None:
-        effective_entry_identities = _blind_real_entry_identities(
-            discovery_snapshot=discovery_snapshot, target=target
-        )
+        # For strategic reasoning, always expose all discovered identities so the LLM
+        # can reason about which users have vulnerable permissions (e.g. iam:CreatePolicyVersion).
+        # Campaign execution uses entry_roles separately (see below).
+        discovered_users = [
+            r.get("identifier")
+            for r in discovery_snapshot.get("resources", [])
+            if r.get("resource_type") == "identity.user" and r.get("identifier")
+        ]
+        effective_entry_identities = sorted(set(discovered_users)) or list(target.entry_roles)
         scope_for_strategic = _build_scope_for_strategic_planner(target, authorization)
         try:
             hypotheses = strategic_planner.plan_attacks(
@@ -507,9 +517,13 @@ def run_discovery_driven_assessment(
             max_candidates_per_profile=max_candidates_per_profile,
             bundle_name=bundle_name,
         )
+    entry_identities = _blind_real_entry_identities(discovery_snapshot=discovery_snapshot, target=target)
+    synthesis_target = target
+    if entry_identities and not target.entry_roles:
+        synthesis_target = target.model_copy(update={"entry_roles": entry_identities})
     campaign_plan_json, campaign_plan_md, campaign_plan_payload = campaign_synthesizer(
         candidates_payload=candidates_payload,
-        target=target,
+        target=synthesis_target,
         authorization=authorization,
         output_dir=campaign_plan_dir,
         max_plans_per_profile=max_plans_per_profile,
@@ -518,7 +532,6 @@ def run_discovery_driven_assessment(
     )
 
     campaigns: list[CampaignResult] = []
-    entry_identities = _blind_real_entry_identities(discovery_snapshot=discovery_snapshot, target=target)
     for plan in campaign_plan_payload["plans"]:
         base_plan_id = plan.get("id") or f"{plan['profile']}:{_slugify(plan.get('resource_arn', plan.get('generated_objective', 'campaign')))}"
         for entry_identity in entry_identities:
@@ -595,12 +608,14 @@ def _blind_real_allowed_resources(*, plan: dict, discovery_snapshot: dict, targe
 
 
 def _blind_real_entry_identities(*, discovery_snapshot: dict, target: TargetConfig) -> list[str]:
+    if target.entry_roles:
+        return list(target.entry_roles)
     users = [
         resource.get("identifier")
         for resource in discovery_snapshot.get("resources", [])
         if resource.get("resource_type") == "identity.user" and resource.get("identifier")
     ]
-    return sorted(set(users)) or list(target.entry_roles)
+    return sorted(set(users))
 
 
 def write_assessment_summary(result: AssessmentResult, output_dir: Path) -> tuple[Path, Path]:

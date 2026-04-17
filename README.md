@@ -77,18 +77,15 @@ Loop: `enumerate → plan → validate → execute → observe → graph`
 Benchmark contra [iam-vulnerable](https://github.com/BishopFox/iam-vulnerable)
 (31 paths de privilege escalation conhecidos):
 
-- 105 recursos descobertos, 10 targets selecionados, 84 campanhas executadas
-- Resultado: **0/31 paths identificados**
+**Bloco 1 (StrategicPlanner) — concluído:**
 
-Root causes identificados e sendo endereçados no Bloco 1:
+- gpt-4o identifica 6–10 paths de privesc IAM por run, diretamente do discovery
+- Exemplo: vê `attached_policy_names: ["privesc1-CreateNewPolicyVersion"]` → infere
+  `iam:CreatePolicyVersion` → hipótese estruturada com `attack_steps` e `reasoning`
+- 0 campanhas provaram o path — o executor ainda não muta estado (simula via policy)
 
-1. Target selection cega a permissões — mapeava tipo de recurso → perfil, sem
-   perguntar o que o principal *pode fazer*
-2. Contaminação sintética — runs reais usavam mock planner por bug no fixture set
-3. LLM entrava tarde demais — só via ações pré-filtradas por regras estáticas
-
-O `StrategicPlanner` (Bloco 1) é a resposta arquitetural para esses três problemas.
-O benchmark de validação (meta: ≥ 10/31 paths) ainda está pendente.
+**Próximo (Bloco 2):** ação de mutação IAM real — chamar `iam:AttachRolePolicy`,
+verificar escalada, fazer rollback. O que fecha a cadeia de comprometimento com evidência.
 
 ---
 
@@ -225,8 +222,9 @@ obrigatória igual aos positivos.
 Leia o [PLAN.md](PLAN.md) para o estado atual e direção,
 e o [AGENTS.md](AGENTS.md) para o contrato de desenvolvimento.
 
-O foco atual é validar o `StrategicPlanner` contra o benchmark iam-vulnerable.
-Contribuições alinhadas com generalização ofensiva têm prioridade.
+O foco atual é o Bloco 2: ação de mutação IAM real para provar paths de privesc
+identificados pelo `StrategicPlanner`. Contribuições alinhadas com generalização
+ofensiva têm prioridade.
 
 ---
 

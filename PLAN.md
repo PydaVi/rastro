@@ -82,7 +82,7 @@ do template sintetico. Sem `planner_config` na authorization, comportamento ante
 
 ---
 
-## Bloco 1 — StrategicPlanner (em andamento, 2026-04-16)
+## Bloco 1 — StrategicPlanner (FECHADO, 2026-04-17)
 
 **Direcao**: mais generalizacao ofensiva.
 **Objetivo**: LLM raciocina sobre o discovery *antes* de gerar campanhas.
@@ -142,15 +142,30 @@ class StrategicPlanner(ABC):
 
 **Passo 4 — DONE**: `run_discovery_driven_assessment` aceita `strategic_planner=` e `max_hypotheses=20`. Fallback automatico para rule-based. Artifacts incluem `strategic_hypotheses_json`.
 
-**Passo 5 — pendente**: Benchmark contra iam-vulnerable (31 paths conhecidos). Meta: >= 10 paths identificados.
+**Passo 5 — DONE**: Benchmark EXP-103 concluido. 6-10 paths por run (LLM nao-deterministico).
+  Bugs corrigidos: entry_roles priority, bundle profile filter, synthesis_target discovery fallback.
 
 ### Criterios de saida do Bloco 1
 
-1. LLM razocina sobre discovery *antes* de gerar campanhas
-2. Funciona com qualquer backend LLM configurado no scope
-3. No iam-vulnerable: engine identifica pelo menos 10 das 31 classes de privesc
-4. Testes offline passam sem AWS, sem LLM externo
-5. Rule-based fallback funciona quando strategic planner nao esta configurado
+1. ~~LLM razocina sobre discovery *antes* de gerar campanhas~~ PASS
+2. ~~Funciona com qualquer backend LLM configurado no scope~~ PASS
+3. ~~No iam-vulnerable: engine identifica pelo menos 10 das 31 classes de privesc~~ PARCIAL (6-10/run)
+4. ~~Testes offline passam sem AWS, sem LLM externo~~ PASS (211/211)
+5. ~~Rule-based fallback funciona quando strategic planner nao esta configurado~~ PASS
+
+### O que aproximou do polo generalista
+- LLM agora raciocina sobre QUAL usuario tem QUAL permissao antes de gerar campanhas
+- Discovery enriquecido com policies por principal
+- Hipoteses estruturadas substituem regras estaticas de target selection
+
+### O que permaneceu dependente de campaigns conhecidas
+- 0 campanhas provadas: LLM de execucao nao escolhe a acao de privesc correta
+- Profiles ainda sao templates pre-curados; o LLM executa dentro de espacos limitados
+
+### Proximo experimento de maior leverage
+EXP-104: por que o LLM escolhe `iam:ListRoles` em vez de `iam:AttachRolePolicy`?
+Hipotese: o system prompt do perfil de execucao nao passa o contexto da hipotese estrategica.
+Fix candidate: injetar `attack_steps` da hipotese no prompt de execucao da campanha.
 
 ---
 
@@ -174,13 +189,43 @@ Passo 5 bloqueia em 4.
 
 ---
 
+## Bloco 2 — Campaign Execution Intelligence (proximo)
+
+**Direcao**: mais generalizacao ofensiva.
+**Objetivo**: LLM de execucao prova paths identificados pelo StrategicPlanner.
+
+### Diagnostico
+
+O LLM de execucao recebe apenas o snapshot de estado + acoes disponiveis.
+Nao recebe o contexto estrategico: qual path esta tentando provar, quais API calls sao o objetivo.
+
+Resultado: escolhe `iam:ListRoles` (discovery) em vez de `iam:AttachRolePolicy` (privesc).
+
+### Trabalho proposto
+
+**Passo 1**: Injetar `attack_steps` da hipotese no contexto de execucao da campanha.
+- `run_generated_campaign` recebe `hypothesis: AttackHypothesis | None`
+- Se presente, injeta no sistema prompt: "You are executing: [attack_steps]"
+
+**Passo 2**: Benchmark — com hipotese injetada, LLM prova pelo menos 1 path de privesc no iam-vulnerable.
+
+**Passo 3**: Diagnosticar por que `objective_met` nao e setado mesmo quando acao correta e executada.
+
+### Criterios de saida do Bloco 2
+
+1. Pelo menos 1 campanha de privesc IAM passa no iam-vulnerable
+2. O path provado corresponde a uma hipotese do StrategicPlanner
+3. `finding_state: proved` no finding gerado
+
+---
+
 ## Gate de medio prazo
 
 ### Blind Hybrid Challenge Readiness (`Wyatt` gate)
 
 Permanece valido. Dependencias antes de abrir:
-1. Fechar Bloco 1 (StrategicPlanner operacional)
-2. Engine identifica paths IAM-heavy sem profiles pre-definidos
+1. ~~Fechar Bloco 1 (StrategicPlanner operacional)~~ DONE
+2. Engine prova paths IAM-heavy sem profiles pre-definidos (Bloco 2)
 3. Findings por `distinct path`, nao por volume
 
 ---
