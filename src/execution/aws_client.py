@@ -240,6 +240,24 @@ class AwsClient(Protocol):
     ) -> list[Dict[str, Any]]:
         ...
 
+    def list_attached_user_policies(
+        self,
+        region: str,
+        user_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[Dict[str, Any]]:
+        """Retorna lista de dicts com PolicyName e PolicyArn."""
+        ...
+
+    def list_user_inline_policies(
+        self,
+        region: str,
+        user_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[str]:
+        """Retorna lista de nomes de políticas inline."""
+        ...
+
 
 @dataclass
 class Boto3AwsClient:
@@ -891,6 +909,38 @@ class Boto3AwsClient:
                     }
                 )
         return rules
+
+    def list_attached_user_policies(
+        self,
+        region: str,
+        user_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[Dict[str, Any]]:
+        try:
+            client = self._session(credentials).client("iam", region_name=region)
+            paginator = client.get_paginator("list_attached_user_policies")
+            policies: list[Dict[str, Any]] = []
+            for page in paginator.paginate(UserName=user_name):
+                policies.extend(page.get("AttachedPolicies", []))
+            return policies
+        except Exception:
+            return []
+
+    def list_user_inline_policies(
+        self,
+        region: str,
+        user_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[str]:
+        try:
+            client = self._session(credentials).client("iam", region_name=region)
+            paginator = client.get_paginator("list_user_policies")
+            names: list[str] = []
+            for page in paginator.paginate(UserName=user_name):
+                names.extend(page.get("PolicyNames", []))
+            return names
+        except Exception:
+            return []
 
     def _session(self, credentials: Optional[AwsCredentials] = None):
         import boto3

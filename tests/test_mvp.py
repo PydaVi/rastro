@@ -2912,6 +2912,152 @@ def test_run_generated_campaign_uses_discovered_user_entry_identity_for_blind_re
     assert any(action.tool == "iam_simulate_target_access" for action in actions)
 
 
+def test_run_generated_campaign_injects_planner_from_authorization_in_real_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RASTRO_ENABLE_AWS_REAL", "1")
+    target = load_target(Path("examples/target_aws_blind_real.json"))
+    authorization = load_authorization(Path("examples/authorization_aws_blind_real.json")).model_copy(
+        update={"planner_config": {"backend": "openai", "model": "gpt-4o"}}
+    )
+    scope_path = tmp_path / "scope.json"
+    objective_path = tmp_path / "objective.json"
+    scope_path.write_text(
+        json.dumps(
+            {
+                "target": "aws",
+                "allowed_actions": ["enumerate", "assume_role", "access_resource"],
+                "allowed_resources": ["arn:aws:s3:::bucket-a/payroll.csv"],
+                "max_steps": 6,
+                "dry_run": True,
+                "planner": {"backend": "mock"},
+                "aws_account_ids": ["123456789012"],
+                "allowed_regions": ["us-east-1"],
+                "allowed_services": ["iam", "s3"],
+                "authorized_by": "PydaVi",
+                "authorized_at": "2026-04-04",
+                "authorization_document": "docs/authorization-blind-real.md",
+            }
+        )
+    )
+    objective_path.write_text(
+        json.dumps(
+            {
+                "description": "planner injection test",
+                "target": "arn:aws:s3:::bucket-a/payroll.csv",
+                "success_criteria": {"mode": "target_observed"},
+            }
+        )
+    )
+
+    def fake_runner(**kwargs):
+        report_json = tmp_path / "report.json"
+        report_md = tmp_path / "report.md"
+        report_json.write_text("{}")
+        report_md.write_text("# report\n")
+        return {
+            "objective_met": True,
+            "preflight": {"ok": True, "details": {}},
+            "report_json": report_json,
+            "report_md": report_md,
+            "attack_graph": tmp_path / "attack_graph.mmd",
+        }
+
+    run_generated_campaign(
+        plan={
+            "profile": "aws-iam-s3",
+            "resource_arn": "arn:aws:s3:::bucket-a/payroll.csv",
+            "generated_scope": str(scope_path),
+            "generated_objective": str(objective_path),
+        },
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        runner=fake_runner,
+        discovery_snapshot={
+            "caller_identity": {"Account": "123456789012"},
+            "resources": [],
+        },
+    )
+
+    rewritten_scope = json.loads(scope_path.read_text())
+    assert rewritten_scope["dry_run"] is False
+    assert rewritten_scope["planner"]["backend"] == "openai"
+    assert rewritten_scope["planner"]["model"] == "gpt-4o"
+
+
+def test_run_generated_campaign_preserves_scope_planner_when_authorization_has_no_planner_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("RASTRO_ENABLE_AWS_REAL", "1")
+    target = load_target(Path("examples/target_aws_blind_real.json"))
+    authorization = load_authorization(Path("examples/authorization_aws_blind_real.json"))
+    assert authorization.planner_config is None
+    scope_path = tmp_path / "scope.json"
+    objective_path = tmp_path / "objective.json"
+    scope_path.write_text(
+        json.dumps(
+            {
+                "target": "aws",
+                "allowed_actions": ["enumerate", "assume_role", "access_resource"],
+                "allowed_resources": ["arn:aws:s3:::bucket-a/payroll.csv"],
+                "max_steps": 6,
+                "dry_run": True,
+                "planner": {"backend": "mock"},
+                "aws_account_ids": ["123456789012"],
+                "allowed_regions": ["us-east-1"],
+                "allowed_services": ["iam", "s3"],
+                "authorized_by": "PydaVi",
+                "authorized_at": "2026-04-04",
+                "authorization_document": "docs/authorization-blind-real.md",
+            }
+        )
+    )
+    objective_path.write_text(
+        json.dumps(
+            {
+                "description": "planner preservation test",
+                "target": "arn:aws:s3:::bucket-a/payroll.csv",
+                "success_criteria": {"mode": "target_observed"},
+            }
+        )
+    )
+
+    def fake_runner(**kwargs):
+        report_json = tmp_path / "report.json"
+        report_md = tmp_path / "report.md"
+        report_json.write_text("{}")
+        report_md.write_text("# report\n")
+        return {
+            "objective_met": True,
+            "preflight": {"ok": True, "details": {}},
+            "report_json": report_json,
+            "report_md": report_md,
+            "attack_graph": tmp_path / "attack_graph.mmd",
+        }
+
+    run_generated_campaign(
+        plan={
+            "profile": "aws-iam-s3",
+            "resource_arn": "arn:aws:s3:::bucket-a/payroll.csv",
+            "generated_scope": str(scope_path),
+            "generated_objective": str(objective_path),
+        },
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        runner=fake_runner,
+        discovery_snapshot={
+            "caller_identity": {"Account": "123456789012"},
+            "resources": [],
+        },
+    )
+
+    rewritten_scope = json.loads(scope_path.read_text())
+    assert rewritten_scope["dry_run"] is False
+    assert rewritten_scope["planner"]["backend"] == "mock"
+
+
 def test_discovery_driven_assessment_expands_plans_for_discovered_users(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("RASTRO_ENABLE_AWS_REAL", "1")
     target = load_target(Path("examples/target_aws_blind_real.json"))
@@ -3019,6 +3165,510 @@ def test_discovery_driven_assessment_expands_plans_for_discovered_users(tmp_path
         "arn:aws:iam::123456789012:user/analyst",
         "arn:aws:iam::123456789012:user/auditor",
     ]
+
+
+# ---------------------------------------------------------------------------
+# Bloco 1 — StrategicPlanner tests
+# ---------------------------------------------------------------------------
+
+def test_attack_hypothesis_schema_validates_valid_input() -> None:
+    from planner.strategic_planner import AttackHypothesis
+    h = AttackHypothesis(
+        entry_identity="arn:aws:iam::123456789012:user/analyst",
+        target="arn:aws:iam::123456789012:role/AdminRole",
+        attack_class="role_chain",
+        attack_steps=["sts:AssumeRole on AdminRole"],
+        confidence="high",
+        reasoning="Trust policy allows the entry identity.",
+    )
+    assert h.attack_class == "role_chain"
+    assert h.confidence == "high"
+
+
+def test_attack_hypothesis_rejects_invalid_attack_class() -> None:
+    from pydantic import ValidationError
+    from planner.strategic_planner import AttackHypothesis
+    with pytest.raises(ValidationError):
+        AttackHypothesis(
+            entry_identity="arn:aws:iam::123456789012:user/analyst",
+            target="arn:aws:iam::123456789012:role/AdminRole",
+            attack_class="invalid_class",
+            attack_steps=["step1"],
+            confidence="high",
+            reasoning="test",
+        )
+
+
+def test_attack_hypothesis_rejects_empty_attack_steps() -> None:
+    from pydantic import ValidationError
+    from planner.strategic_planner import AttackHypothesis
+    with pytest.raises(ValidationError):
+        AttackHypothesis(
+            entry_identity="arn:aws:iam::123456789012:user/analyst",
+            target="arn:aws:iam::123456789012:role/AdminRole",
+            attack_class="role_chain",
+            attack_steps=[],
+            confidence="high",
+            reasoning="test",
+        )
+
+
+def test_mock_strategic_planner_returns_hypotheses() -> None:
+    from planner.strategic_mock import MockStrategicPlanner
+    from planner.strategic_planner import AttackHypothesis
+    from core.domain import ActionType, Scope, TargetType
+
+    scope = Scope(
+        target=TargetType.AWS,
+        allowed_actions=[ActionType.ENUMERATE, ActionType.ASSUME_ROLE, ActionType.ACCESS_RESOURCE],
+        allowed_resources=["*"],
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam", "s3", "secretsmanager"],
+        authorized_by="tester",
+        authorized_at="2026-04-16",
+        authorization_document="docs/test.md",
+    )
+    snapshot = {
+        "resources": [
+            {
+                "resource_type": "identity.role",
+                "identifier": "arn:aws:iam::123456789012:role/AdminRole",
+                "metadata": {"policy_escalation_signals": ["administratoraccess"]},
+            },
+            {
+                "resource_type": "secret.secrets_manager",
+                "identifier": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/key",
+                "metadata": {"name": "prod-payroll-key"},
+            },
+            {
+                "resource_type": "data_store.s3_object",
+                "identifier": "arn:aws:s3:::payroll-data/2026/payroll.csv",
+                "metadata": {},
+            },
+        ]
+    }
+    planner = MockStrategicPlanner()
+    hypotheses = planner.plan_attacks(snapshot, ["arn:aws:iam::123456789012:user/analyst"], scope)
+
+    assert len(hypotheses) == 3
+    assert all(isinstance(h, AttackHypothesis) for h in hypotheses)
+    assert all(h.entry_identity == "arn:aws:iam::123456789012:user/analyst" for h in hypotheses)
+    assert all(len(h.attack_steps) >= 1 for h in hypotheses)
+
+
+def test_mock_strategic_planner_detects_iam_privesc_from_escalation_signals() -> None:
+    from planner.strategic_mock import MockStrategicPlanner
+    from core.domain import ActionType, Scope, TargetType
+
+    scope = Scope(
+        target=TargetType.AWS,
+        allowed_actions=[ActionType.ENUMERATE, ActionType.ASSUME_ROLE],
+        allowed_resources=["*"],
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam"],
+        authorized_by="t",
+        authorized_at="2026-04-16",
+        authorization_document="d",
+    )
+    snapshot = {
+        "resources": [
+            {
+                "resource_type": "identity.role",
+                "identifier": "arn:aws:iam::123456789012:role/PrivescRole",
+                "metadata": {"policy_escalation_signals": ["createpolicyversion"]},
+            },
+        ]
+    }
+    planner = MockStrategicPlanner()
+    hypotheses = planner.plan_attacks(snapshot, ["arn:aws:iam::123456789012:user/analyst"], scope)
+
+    assert len(hypotheses) == 1
+    assert hypotheses[0].attack_class == "iam_privesc"
+
+
+def test_mock_strategic_planner_is_deterministic() -> None:
+    from planner.strategic_mock import MockStrategicPlanner
+    from core.domain import ActionType, Scope, TargetType
+
+    scope = Scope(
+        target=TargetType.AWS,
+        allowed_actions=[ActionType.ENUMERATE],
+        allowed_resources=["*"],
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam"],
+        authorized_by="t",
+        authorized_at="2026-04-16",
+        authorization_document="d",
+    )
+    snapshot = {
+        "resources": [
+            {"resource_type": "identity.role", "identifier": "arn:aws:iam::123456789012:role/RoleA", "metadata": {}},
+            {"resource_type": "secret.secrets_manager", "identifier": "arn:aws:secretsmanager:us-east-1:123456789012:secret:s1", "metadata": {}},
+        ]
+    }
+    entry = ["arn:aws:iam::123456789012:user/analyst"]
+    h1 = MockStrategicPlanner().plan_attacks(snapshot, entry, scope)
+    h2 = MockStrategicPlanner().plan_attacks(snapshot, entry, scope)
+    assert [h.model_dump() for h in h1] == [h.model_dump() for h in h2]
+
+
+def test_mock_strategic_planner_returns_empty_for_no_entry_identities() -> None:
+    from planner.strategic_mock import MockStrategicPlanner
+    from core.domain import ActionType, Scope, TargetType
+
+    scope = Scope(
+        target=TargetType.AWS,
+        allowed_actions=[ActionType.ENUMERATE],
+        allowed_resources=["*"],
+        aws_account_ids=["123456789012"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam"],
+        authorized_by="t",
+        authorized_at="2026-04-16",
+        authorization_document="d",
+    )
+    planner = MockStrategicPlanner()
+    assert planner.plan_attacks({"resources": []}, [], scope) == []
+
+
+def test_run_discovery_driven_with_strategic_planner_uses_hypotheses(tmp_path: Path) -> None:
+    from planner.strategic_mock import MockStrategicPlanner
+
+    target = load_target(Path("examples/target_aws_foundation.local.json"))
+    authorization = load_authorization(Path("examples/authorization_aws_foundation.local.json")).model_copy(
+        update={"permitted_profiles": []}
+    )
+    # Use the same account as target_aws_foundation.local.json (550192603632)
+    account = "550192603632"
+    discovery_snapshot = {
+        "target": "test",
+        "bundle": "aws-foundation",
+        "caller_identity": {"Account": account},
+        "resources": [
+            {
+                "resource_type": "identity.role",
+                "identifier": f"arn:aws:iam::{account}:role/PayrollRole",
+                "service": "iam",
+                "metadata": {},
+            },
+            {
+                "resource_type": "secret.secrets_manager",
+                "identifier": f"arn:aws:secretsmanager:us-east-1:{account}:secret:prod/payroll-key",
+                "service": "secretsmanager",
+                "metadata": {"name": "prod-payroll-key"},
+            },
+        ],
+        "relationships": [],
+    }
+
+    target_selector_calls: list = []
+
+    def fake_target_selector(**kwargs):
+        target_selector_calls.append(True)
+        return (
+            tmp_path / "candidates.json",
+            tmp_path / "candidates.md",
+            {"target": "test", "bundle": "aws-foundation", "derived_from": "fallback", "candidates": []},
+        )
+
+    def fake_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        p = output_dir / "discovery.json"
+        m = output_dir / "discovery.md"
+        p.write_text(json.dumps(discovery_snapshot))
+        m.write_text("# discovery\n")
+        return p, m, discovery_snapshot
+
+    def fake_campaign_synthesizer(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        plan_json = output_dir / "campaign_plan.json"
+        plan_md = output_dir / "campaign_plan.md"
+        payload = {"plans": [], "summary": {"plans_total": 0}}
+        plan_json.write_text(json.dumps(payload))
+        plan_md.write_text("# plan\n")
+        return plan_json, plan_md, payload
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "assessment",
+        runner=execute_run,
+        discovery_runner=fake_discovery_runner,
+        target_selector=fake_target_selector,
+        campaign_synthesizer=fake_campaign_synthesizer,
+        strategic_planner=MockStrategicPlanner(),
+        max_steps=4,
+    )
+
+    # strategic planner was used — rule-based target_selector must NOT have been called
+    assert len(target_selector_calls) == 0
+    assert "strategic_hypotheses_json" in assessment.artifacts
+    assert Path(assessment.artifacts["strategic_hypotheses_json"]).exists()
+    hypotheses_data = json.loads(Path(assessment.artifacts["strategic_hypotheses_json"]).read_text())
+    assert len(hypotheses_data) == 2  # one per resource
+
+
+def test_run_discovery_driven_strategic_planner_fallback_on_failure(tmp_path: Path) -> None:
+    from planner.strategic_planner import StrategicPlanner
+
+    class FailingStrategicPlanner(StrategicPlanner):
+        def plan_attacks(self, *args, **kwargs):
+            raise RuntimeError("LLM unavailable")
+
+    target = load_target(Path("examples/target_aws_foundation.local.json"))
+    authorization = load_authorization(Path("examples/authorization_aws_foundation.local.json")).model_copy(
+        update={"permitted_profiles": []}
+    )
+    discovery_snapshot = {
+        "target": "test",
+        "bundle": "aws-foundation",
+        "resources": [],
+        "relationships": [],
+    }
+
+    target_selector_calls: list = []
+
+    def fake_target_selector(**kwargs):
+        target_selector_calls.append(True)
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        p = output_dir / "target_candidates.json"
+        m = output_dir / "target_candidates.md"
+        payload = {"target": "test", "bundle": "aws-foundation", "derived_from": "rule-based", "candidates": []}
+        p.write_text(json.dumps(payload))
+        m.write_text("# candidates\n")
+        return p, m, payload
+
+    def fake_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        p = output_dir / "discovery.json"
+        m = output_dir / "discovery.md"
+        p.write_text(json.dumps(discovery_snapshot))
+        m.write_text("# discovery\n")
+        return p, m, discovery_snapshot
+
+    def fake_campaign_synthesizer(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        plan_json = output_dir / "campaign_plan.json"
+        plan_md = output_dir / "campaign_plan.md"
+        payload = {"plans": [], "summary": {"plans_total": 0}}
+        plan_json.write_text(json.dumps(payload))
+        plan_md.write_text("# plan\n")
+        return plan_json, plan_md, payload
+
+    assessment = run_discovery_driven_assessment(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "assessment",
+        runner=execute_run,
+        discovery_runner=fake_discovery_runner,
+        target_selector=fake_target_selector,
+        campaign_synthesizer=fake_campaign_synthesizer,
+        strategic_planner=FailingStrategicPlanner(),
+        max_steps=4,
+    )
+
+    # fallback activated — rule-based target_selector was called
+    assert len(target_selector_calls) == 1
+    assert "strategic_hypotheses_json" not in assessment.artifacts
+
+
+def test_run_discovery_driven_without_strategic_planner_uses_rule_based(tmp_path: Path) -> None:
+    target = load_target(Path("examples/target_aws_foundation.local.json"))
+    authorization = load_authorization(Path("examples/authorization_aws_foundation.local.json")).model_copy(
+        update={"permitted_profiles": []}
+    )
+    discovery_snapshot = {"target": "test", "resources": [], "relationships": []}
+
+    target_selector_calls: list = []
+
+    def fake_target_selector(**kwargs):
+        target_selector_calls.append(True)
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        p = output_dir / "target_candidates.json"
+        m = output_dir / "target_candidates.md"
+        payload = {"target": "test", "bundle": "aws-foundation", "derived_from": "rule-based", "candidates": []}
+        p.write_text(json.dumps(payload))
+        m.write_text("")
+        return p, m, payload
+
+    def fake_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        p = output_dir / "discovery.json"
+        m = output_dir / "discovery.md"
+        p.write_text(json.dumps(discovery_snapshot))
+        m.write_text("")
+        return p, m, discovery_snapshot
+
+    def fake_campaign_synthesizer(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        plan_json = output_dir / "campaign_plan.json"
+        plan_md = output_dir / "campaign_plan.md"
+        payload = {"plans": [], "summary": {"plans_total": 0}}
+        plan_json.write_text(json.dumps(payload))
+        plan_md.write_text("")
+        return plan_json, plan_md, payload
+
+    run_discovery_driven_assessment(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "assessment",
+        runner=execute_run,
+        discovery_runner=fake_discovery_runner,
+        target_selector=fake_target_selector,
+        campaign_synthesizer=fake_campaign_synthesizer,
+        max_steps=4,
+    )
+
+    assert len(target_selector_calls) == 1
+
+
+def test_hypotheses_to_candidates_payload_maps_attack_classes_to_profiles() -> None:
+    from planner.strategic_planner import AttackHypothesis
+    from operations.service import _hypotheses_to_candidates_payload
+
+    hypotheses = [
+        AttackHypothesis(
+            entry_identity="arn:aws:iam::123:user/analyst",
+            target="arn:aws:iam::123:role/AdminRole",
+            attack_class="role_chain",
+            attack_steps=["sts:AssumeRole on AdminRole"],
+            confidence="high",
+            reasoning="Trust policy allows analyst.",
+        ),
+        AttackHypothesis(
+            entry_identity="arn:aws:iam::123:user/analyst",
+            target="arn:aws:secretsmanager:us-east-1:123:secret:prod/key",
+            attack_class="credential_access",
+            attack_steps=["secretsmanager:GetSecretValue"],
+            confidence="medium",
+            reasoning="Role has access to secret.",
+        ),
+        AttackHypothesis(
+            entry_identity="arn:aws:iam::123:user/analyst",
+            target="arn:aws:iam::123:role/PrivescRole",
+            attack_class="iam_privesc",
+            attack_steps=["iam:CreatePolicyVersion on existing policy"],
+            confidence="high",
+            reasoning="Role can create policy versions.",
+        ),
+    ]
+    payload = _hypotheses_to_candidates_payload(hypotheses, {"target": "test"}, "aws-foundation")
+
+    by_profile = {c["profile_family"]: c for c in payload["candidates"]}
+    assert by_profile["aws-iam-role-chaining"]["resource_arn"] == "arn:aws:iam::123:role/AdminRole"
+    assert by_profile["aws-iam-secrets"]["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123:secret:prod/key"
+    assert by_profile["aws-iam-create-policy-version-privesc"]["resource_arn"] == "arn:aws:iam::123:role/PrivescRole"
+    assert by_profile["aws-iam-role-chaining"]["score"] == 80
+    assert by_profile["aws-iam-secrets"]["score"] == 50
+
+
+def test_scope_enforce_hypotheses_filters_out_of_account_targets() -> None:
+    from planner.strategic_planner import AttackHypothesis
+    from operations.service import _scope_enforce_hypotheses
+    from operations.models import TargetConfig
+
+    target = TargetConfig(
+        name="test",
+        accounts=["111111111111"],
+        allowed_regions=["us-east-1"],
+        entry_roles=["arn:aws:iam::111111111111:user/analyst"],
+    )
+    hypotheses = [
+        AttackHypothesis(
+            entry_identity="arn:aws:iam::111111111111:user/analyst",
+            target="arn:aws:iam::111111111111:role/InScopeRole",
+            attack_class="role_chain",
+            attack_steps=["assume role"],
+            confidence="high",
+            reasoning="in scope",
+        ),
+        AttackHypothesis(
+            entry_identity="arn:aws:iam::111111111111:user/analyst",
+            target="arn:aws:iam::999999999999:role/OutOfScopeRole",
+            attack_class="role_chain",
+            attack_steps=["assume role"],
+            confidence="high",
+            reasoning="out of scope",
+        ),
+    ]
+    filtered = _scope_enforce_hypotheses(hypotheses, target)
+    assert len(filtered) == 1
+    assert filtered[0].target == "arn:aws:iam::111111111111:role/InScopeRole"
+
+
+def test_strategic_planner_max_hypotheses_is_respected(tmp_path: Path) -> None:
+    from planner.strategic_planner import AttackHypothesis, StrategicPlanner
+
+    class BulkyStrategicPlanner(StrategicPlanner):
+        def plan_attacks(self, discovery_snapshot, entry_identities, scope):
+            return [
+                AttackHypothesis(
+                    entry_identity=entry_identities[0],
+                    target=f"arn:aws:iam::123456789012:role/Role{i}",
+                    attack_class="role_chain",
+                    attack_steps=[f"assume Role{i}"],
+                    confidence="low",
+                    reasoning="generated",
+                )
+                for i in range(50)
+            ]
+
+    target = load_target(Path("examples/target_aws_foundation.local.json"))
+    authorization = load_authorization(Path("examples/authorization_aws_foundation.local.json")).model_copy(
+        update={"permitted_profiles": []}
+    )
+    discovery_snapshot = {"target": "test", "resources": [], "relationships": []}
+
+    synthesizer_candidates: list = []
+
+    def fake_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        p = output_dir / "discovery.json"
+        m = output_dir / "discovery.md"
+        p.write_text(json.dumps(discovery_snapshot))
+        m.write_text("")
+        return p, m, discovery_snapshot
+
+    def fake_campaign_synthesizer(**kwargs):
+        synthesizer_candidates.extend(kwargs["candidates_payload"].get("candidates", []))
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        plan_json = output_dir / "campaign_plan.json"
+        plan_md = output_dir / "campaign_plan.md"
+        payload = {"plans": [], "summary": {"plans_total": 0}}
+        plan_json.write_text(json.dumps(payload))
+        plan_md.write_text("")
+        return plan_json, plan_md, payload
+
+    run_discovery_driven_assessment(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "assessment",
+        runner=execute_run,
+        discovery_runner=fake_discovery_runner,
+        campaign_synthesizer=fake_campaign_synthesizer,
+        strategic_planner=BulkyStrategicPlanner(),
+        max_hypotheses=5,
+        max_steps=2,
+    )
+
+    assert len(synthesizer_candidates) <= 5
 
 
 def test_action_shaping_prefers_direct_objective_access_globally() -> None:
@@ -4026,8 +4676,8 @@ def test_serverless_business_app_variant_b_supports_advanced_discovery_driven_en
         max_steps=8,
     )
 
-    assert assessment.summary["campaigns_total"] == 7
-    assert assessment.summary["campaigns_passed"] == 7
+    assert assessment.summary["campaigns_total"] == 6
+    assert assessment.summary["campaigns_passed"] == 6
 
 
 def test_serverless_business_app_variant_c_supports_advanced_discovery_driven_end_to_end(
@@ -4062,8 +4712,8 @@ def test_serverless_business_app_variant_c_supports_advanced_discovery_driven_en
         max_steps=8,
     )
 
-    assert assessment.summary["campaigns_total"] == 7
-    assert assessment.summary["campaigns_passed"] == 7
+    assert assessment.summary["campaigns_total"] == 6
+    assert assessment.summary["campaigns_passed"] == 6
 
 
 def test_compute_pivot_app_variant_a_has_coherent_compute_inventory_and_foundation_targets(
@@ -4529,7 +5179,7 @@ def test_mixed_generalization_variant_b_inferrs_profiles_without_curated_candida
     assert "aws-external-entry-data" in top_external["signals"]["inferred_profiles"]
     assert top_cross["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key"
     assert top_multi["resource_arn"] == "arn:aws:secretsmanager:us-east-1:210987654321:secret:prod/finance/warehouse-api-key"
-    assert top_external["execution_fixture_set"] == "compute-pivot-app"
+    assert top_external["execution_fixture_set"] == "mixed-generalization"
 
 
 def test_mixed_generalization_variant_p_infers_execution_fixture_sets_structurally(
@@ -4547,13 +5197,13 @@ def test_mixed_generalization_variant_p_infers_execution_fixture_sets_structural
 
     by_profile = {candidate["profile_family"]: candidate for candidate in payload["candidates"]}
 
-    assert by_profile["aws-external-entry-data"]["execution_fixture_set"] == "compute-pivot-app"
+    assert by_profile["aws-external-entry-data"]["execution_fixture_set"] == "mixed-generalization"
     assert by_profile["aws-iam-compute-iam"]["execution_fixture_set"] == "compute-pivot-app"
     assert by_profile["aws-iam-lambda-data"]["execution_fixture_set"] == "serverless-business-app"
     assert by_profile["aws-iam-kms-data"]["execution_fixture_set"] == "serverless-business-app"
     assert by_profile["aws-cross-account-data"]["execution_fixture_set"] == "mixed-generalization"
     assert by_profile["aws-multi-step-data"]["execution_fixture_set"] == "mixed-generalization"
-    assert by_profile["aws-external-entry-data"]["fixture_path"].endswith("compute_pivot_app_unified_lab.json")
+    assert by_profile["aws-external-entry-data"]["fixture_path"].endswith("mixed_generalization_external_entry_lab.json")
     assert by_profile["aws-iam-lambda-data"]["scope_template_path"].endswith(
         "scope_serverless_business_app_iam_lambda_data.json"
     )
@@ -4574,7 +5224,7 @@ def test_mixed_generalization_variant_p_infers_execution_fixture_sets_structural
 
     by_profile = {candidate["profile_family"]: candidate for candidate in payload["candidates"]}
 
-    assert by_profile["aws-external-entry-data"]["execution_fixture_set"] == "compute-pivot-app"
+    assert by_profile["aws-external-entry-data"]["execution_fixture_set"] == "mixed-generalization"
     assert by_profile["aws-iam-compute-iam"]["execution_fixture_set"] == "compute-pivot-app"
     assert by_profile["aws-iam-lambda-data"]["execution_fixture_set"] == "serverless-business-app"
     assert by_profile["aws-iam-kms-data"]["execution_fixture_set"] == "serverless-business-app"
@@ -4615,8 +5265,8 @@ def test_mixed_generalization_variant_b_supports_enterprise_discovery_driven_end
         max_steps=9,
     )
 
-    assert assessment.summary["campaigns_total"] == 9
-    assert assessment.summary["campaigns_passed"] == 9
+    assert assessment.summary["campaigns_total"] == 8
+    assert assessment.summary["campaigns_passed"] == 8
 
 
 def test_mixed_generalization_variant_c_keeps_best_targets_on_top_under_same_surface_competition(
@@ -5593,7 +6243,7 @@ def test_run_discovery_driven_assessment_generates_artifacts_and_campaigns(tmp_p
             objective = plan_dir / "objective.generated.json"
             scope = plan_dir / "scope.generated.json"
             objective.write_text("{}")
-            scope.write_text("{}")
+            scope.write_text('{"allowed_actions": ["enumerate", "access_resource"], "allowed_resources": ["*"]}')
             plans.append(
                 {
                     "profile": profile,

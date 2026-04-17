@@ -21,6 +21,7 @@ class AuthorizationConfig(BaseModel):
     authorization_document: str
     permitted_profiles: list[str] = Field(default_factory=list)
     excluded_profiles: list[str] = Field(default_factory=list)
+    planner_config: dict | None = None
 
 
 class ProfileDefinition(BaseModel):

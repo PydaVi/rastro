@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 
-from core.domain import Scope
+from core.domain import ActionType, Scope, TargetType
+
+logger = logging.getLogger(__name__)
 from core.blind_real_runtime import BlindRealRuntime
 from operations.catalog import BUNDLES, FOUNDATION_PROFILES, get_profile, resolve_bundle
 from operations.models import (
@@ -193,6 +196,8 @@ def run_generated_campaign(
             discovery_snapshot=discovery_snapshot,
             target=target,
         )
+        if authorization.planner_config:
+            generated_scope_data["planner"] = authorization.planner_config
         generated_scope_path.write_text(json.dumps(generated_scope_data, indent=2))
     generated_scope = Scope.model_validate(generated_scope_data)
     runtime_fixture = None
@@ -300,6 +305,136 @@ def run_assessment(
     )
 
 
+def _build_scope_for_strategic_planner(target: TargetConfig, authorization: AuthorizationConfig) -> Scope:
+    return Scope(
+        target=TargetType.AWS,
+        allowed_actions=[
+            ActionType.ENUMERATE,
+            ActionType.ASSUME_ROLE,
+            ActionType.ACCESS_RESOURCE,
+            ActionType.ANALYZE,
+        ],
+        allowed_resources=["*"],
+        aws_account_ids=target.accounts,
+        allowed_regions=target.allowed_regions or ["us-east-1"],
+        allowed_services=["iam", "sts", "s3", "secretsmanager", "ssm", "ec2", "lambda"],
+        authorized_by=authorization.authorized_by,
+        authorized_at=authorization.authorized_at,
+        authorization_document=authorization.authorization_document,
+    )
+
+
+def _scope_enforce_hypotheses(hypotheses, target: TargetConfig) -> list:
+    if not target.accounts:
+        return hypotheses
+    allowed_accounts = set(target.accounts)
+
+    def _account_ok(arn: str) -> bool:
+        parts = arn.split(":")
+        if len(parts) < 5:
+            return True  # non-ARN or global resource — allow
+        account = parts[4]
+        return not account or account in allowed_accounts
+
+    return [h for h in hypotheses if _account_ok(h.target)]
+
+
+def _attack_class_to_profile(attack_class: str, target_arn: str, attack_steps: list[str]) -> str:
+    if attack_class == "role_chain":
+        return "aws-iam-role-chaining"
+    if attack_class == "iam_privesc":
+        steps_lower = " ".join(attack_steps).lower()
+        if "createpolicyversion" in steps_lower or "create_policy_version" in steps_lower:
+            return "aws-iam-create-policy-version-privesc"
+        if "attachrolepolicy" in steps_lower or "attach_role_policy" in steps_lower:
+            return "aws-iam-attach-role-policy-privesc"
+        if "passrole" in steps_lower or "pass_role" in steps_lower:
+            return "aws-iam-pass-role-privesc"
+        return "aws-iam-role-chaining"
+    if attack_class == "credential_access":
+        if "secretsmanager" in target_arn:
+            return "aws-iam-secrets"
+        if ":ssm:" in target_arn or "/parameter/" in target_arn:
+            return "aws-iam-ssm"
+        return "aws-iam-secrets"
+    if attack_class == "data_exfil":
+        return "aws-iam-s3"
+    if attack_class == "compute_pivot":
+        return "aws-iam-compute-iam"
+    return "aws-iam-role-chaining"
+
+
+def _confidence_to_score(confidence: str) -> int:
+    return {"high": 80, "medium": 50, "low": 20}.get(confidence, 20)
+
+
+def _infer_resource_type_from_arn(arn: str) -> str:
+    if ":role/" in arn:
+        return "identity.role"
+    if ":user/" in arn:
+        return "identity.user"
+    if "secretsmanager" in arn:
+        return "secret.secrets_manager"
+    if ":ssm:" in arn and "/parameter/" in arn:
+        return "secret.ssm_parameter"
+    if arn.startswith("arn:aws:s3:::"):
+        return "data_store.s3_object" if "/" in arn.split(":::")[-1] else "data_store.s3_bucket"
+    if ":lambda:" in arn:
+        return "compute.lambda_function"
+    if ":ec2:" in arn:
+        return "compute.ec2_instance"
+    return "unknown"
+
+
+def _hypotheses_to_candidates_payload(hypotheses, discovery_snapshot: dict, bundle_name: str) -> dict:
+    candidates = []
+    seen: set[tuple[str, str]] = set()
+    for hyp in hypotheses:
+        profile_family = _attack_class_to_profile(hyp.attack_class, hyp.target, hyp.attack_steps)
+        key = (profile_family, hyp.target)
+        if key in seen:
+            continue
+        seen.add(key)
+        score = _confidence_to_score(hyp.confidence)
+        candidates.append({
+            "id": f"{profile_family}:{_slugify(hyp.target)}",
+            "resource_arn": hyp.target,
+            "resource_type": _infer_resource_type_from_arn(hyp.target),
+            "profile_family": profile_family,
+            "score": score,
+            "confidence": hyp.confidence,
+            "selection_reason": [f"strategic:{hyp.attack_class}", *hyp.attack_steps[:2]],
+            "signals": {"reasoning": hyp.reasoning, "entry_identity": hyp.entry_identity},
+            "score_components": {"lexical": 0, "structural": score},
+            "execution_fixture_set": None,
+            "fixture_path": None,
+            "scope_template_path": None,
+            "supporting_evidence": {},
+        })
+    by_profile: dict[str, int] = {}
+    for c in candidates:
+        by_profile[c["profile_family"]] = by_profile.get(c["profile_family"], 0) + 1
+    return {
+        "target": discovery_snapshot.get("target"),
+        "bundle": bundle_name,
+        "derived_from": "strategic_planner",
+        "summary": {"candidates_total": len(candidates), "by_profile": by_profile},
+        "candidates": candidates,
+    }
+
+
+def _write_strategic_candidates(payload: dict, output_dir: Path) -> tuple[Path, Path, dict]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / "target_candidates.json"
+    md_path = output_dir / "target_candidates.md"
+    json_path.write_text(json.dumps(payload, indent=2))
+    lines = ["# Strategic Candidates\n", f"Source: {payload.get('derived_from')}\n\n"]
+    for c in payload.get("candidates", []):
+        lines.append(f"- `{c['profile_family']}` → `{c['resource_arn']}` ({c['confidence']})\n")
+    md_path.write_text("".join(lines))
+    return json_path, md_path, payload
+
+
 def run_discovery_driven_assessment(
     *,
     bundle_name: str,
@@ -316,6 +451,8 @@ def run_discovery_driven_assessment(
     target_selector=None,
     campaign_synthesizer=None,
     profile_resolver=None,
+    strategic_planner=None,
+    max_hypotheses: int = 20,
 ) -> AssessmentResult:
     from operations.campaign_synthesis import synthesize_foundation_campaigns
     from operations.discovery import run_foundation_discovery
@@ -334,12 +471,42 @@ def run_discovery_driven_assessment(
         authorization=authorization,
         output_dir=discovery_dir,
     )
-    candidates_json, candidates_md, candidates_payload = target_selector(
-        discovery_snapshot=discovery_snapshot,
-        output_dir=candidates_dir,
-        max_candidates_per_profile=max_candidates_per_profile,
-        bundle_name=bundle_name,
-    )
+    # Strategic planner: LLM reasons about discovery before target selection.
+    # Falls back to rule-based target_selector on any failure or empty result.
+    strategic_hypotheses_path = None
+    strategic_active = False
+    if strategic_planner is not None:
+        effective_entry_identities = _blind_real_entry_identities(
+            discovery_snapshot=discovery_snapshot, target=target
+        )
+        scope_for_strategic = _build_scope_for_strategic_planner(target, authorization)
+        try:
+            hypotheses = strategic_planner.plan_attacks(
+                discovery_snapshot, effective_entry_identities, scope_for_strategic
+            )
+            hypotheses = _scope_enforce_hypotheses(hypotheses, target)[:max_hypotheses]
+            if hypotheses:
+                strategic_payload = _hypotheses_to_candidates_payload(
+                    hypotheses, discovery_snapshot, bundle_name
+                )
+                candidates_dir.mkdir(parents=True, exist_ok=True)
+                hyp_path = candidates_dir / "strategic_hypotheses.json"
+                hyp_path.write_text(json.dumps([h.model_dump() for h in hypotheses], indent=2))
+                strategic_hypotheses_path = hyp_path
+                candidates_json, candidates_md, candidates_payload = _write_strategic_candidates(
+                    strategic_payload, candidates_dir
+                )
+                strategic_active = True
+        except Exception as exc:
+            logger.warning("Strategic planner failed, falling back to rule-based: %s", exc)
+
+    if not strategic_active:
+        candidates_json, candidates_md, candidates_payload = target_selector(
+            discovery_snapshot=discovery_snapshot,
+            output_dir=candidates_dir,
+            max_candidates_per_profile=max_candidates_per_profile,
+            bundle_name=bundle_name,
+        )
     campaign_plan_json, campaign_plan_md, campaign_plan_payload = campaign_synthesizer(
         candidates_payload=candidates_payload,
         target=target,
@@ -376,18 +543,21 @@ def run_discovery_driven_assessment(
                 )
             )
 
+    artifacts = {
+        "discovery_json": str(discovery_json),
+        "discovery_md": str(discovery_md),
+        "target_candidates_json": str(candidates_json),
+        "target_candidates_md": str(candidates_md),
+        "campaign_plan_json": str(campaign_plan_json),
+        "campaign_plan_md": str(campaign_plan_md),
+    }
+    if strategic_hypotheses_path is not None:
+        artifacts["strategic_hypotheses_json"] = str(strategic_hypotheses_path)
     return AssessmentResult(
         bundle=bundle_name,
         target=target.name,
         summary=build_assessment_summary(campaigns),
-        artifacts={
-            "discovery_json": str(discovery_json),
-            "discovery_md": str(discovery_md),
-            "target_candidates_json": str(candidates_json),
-            "target_candidates_md": str(candidates_md),
-            "campaign_plan_json": str(campaign_plan_json),
-            "campaign_plan_md": str(campaign_plan_md),
-        },
+        artifacts=artifacts,
         campaigns=campaigns,
     )
 

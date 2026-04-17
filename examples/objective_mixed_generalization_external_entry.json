@@ -1,0 +1,7 @@
+{
+  "description": "Demonstrate external entry to sensitive secrets via compute instance role.",
+  "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key",
+  "success_criteria": {
+    "mode": "target_observed"
+  }
+}

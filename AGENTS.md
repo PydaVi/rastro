@@ -373,15 +373,99 @@ Quando um experimento falhar:
 ## Separação de responsabilidades
 
 ```
-Planner       → sugere próxima ação
-Engine        → controla loop, candidatos, backtracking
-Scope Enforcer → valida ação antes de executar
-Executor      → executa ação validada
-Reporting     → gera artefatos auditáveis
+StrategicPlanner → raciocina sobre discovery, propoe hipoteses de ataque
+Planner          → sugere próxima ação dentro de uma campanha
+Engine           → controla loop, candidatos, backtracking
+Scope Enforcer   → valida ação antes de executar (inclui hipoteses do StrategicPlanner)
+Executor         → executa ação validada
+Reporting        → gera artefatos auditáveis
 ```
 
 Nenhuma lógica de segurança depende do LLM.
 O LLM é um componente de raciocínio — não o orquestrador.
+
+O LLM opera em dois momentos distintos:
+1. **Estrategico** (StrategicPlanner): recebe discovery snapshot, retorna hipoteses de ataque
+2. **Tatico** (Planner): recebe snapshot de campanha + available_actions, retorna Decision
+
+---
+
+## StrategicPlanner — interface e contrato
+
+### Interface
+
+```python
+class StrategicPlanner(ABC):
+    @abstractmethod
+    def plan_attacks(
+        self,
+        discovery_snapshot: dict,
+        entry_identities: list[str],
+        scope: Scope,
+    ) -> list[AttackHypothesis]:
+        ...
+```
+
+### AttackHypothesis (Pydantic)
+
+```python
+class AttackHypothesis(BaseModel):
+    entry_identity: str
+    target: str
+    attack_class: str   # ex: "iam_privesc", "role_chain", "credential_access"
+    attack_steps: list[str]
+    confidence: Literal["high", "medium", "low"]
+    reasoning: str
+    profile_hint: str | None = None  # opcional, nao obrigatorio
+```
+
+### Regras obrigatorias
+
+1. **Qualquer LLM**: o mesmo `scope.planner` config (backend, model, base_url, api_key)
+   que configura o Planner tatico configura o StrategicPlanner. Sem vendor obrigatorio.
+
+2. **Output sempre JSON estruturado**: nunca texto livre. Validar schema antes de usar.
+
+3. **Fallback obrigatorio**: se LLM retornar formato invalido, cair para rule-based
+   target selection. O engine nunca para por falha do LLM estrategico.
+
+4. **Scope Enforcer valida hipoteses**: toda hipotese passa pelo Scope Enforcer antes
+   de virar campanha. O StrategicPlanner nao bypassa controles de seguranca.
+
+5. **MockStrategicPlanner obrigatorio**: implementacao deterministica para testes offline.
+   Mesma filosofia do `DeterministicPlanner` — permite pytest sem LLM externo.
+
+6. **Raciocinio e auditavel**: o `reasoning` de cada hipotese e logado no AuditLogger.
+
+### O que o StrategicPlanner NAO e
+
+- Nao e um scanner de vulnerabilidades — formula hipoteses, nao certezas
+- Nao e o orquestrador — o engine controla o loop
+- Nao substitui o Planner tatico — os dois coexistem
+- Nao emite evidencia — a evidencia vem da execucao das campanhas
+
+### Regra de discovery enriquecido
+
+Para que o StrategicPlanner razocine bem, o discovery snapshot deve incluir:
+- `permissions_by_principal`: dict de principal_arn → lista de permissoes-chave IAM
+- `policies_by_principal`: dict de principal_arn → lista de policy names/ARNs attached
+- `trust_relationships`: dict de role_arn → quem pode assumir
+
+Essas informacoes sao obtidas via:
+- `iam:ListAttachedUserPolicies` + `iam:ListUserPolicies` por principal
+- `iam:GetPolicyVersion` nas policies encontradas
+- Ja disponivel: trust policies via `iam:ListRoles`
+
+`iam:SimulatePrincipalPolicy` e usado como **validacao pontual** pos-hipotese,
+nao como varredura em massa no discovery.
+
+### Regra de entry identities
+
+`_blind_real_entry_identities` deve retornar **apenas o principal ativo** (caller identity),
+nao todos os usuarios descobertos.
+
+Usuarios descobertos sao *targets potenciais de escalada*, nao pontos de entrada.
+A confusao entre os dois gera explosion de campanhas sem sentido.
 
 ---
 

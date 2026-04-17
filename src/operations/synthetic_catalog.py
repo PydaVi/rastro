@@ -217,6 +217,14 @@ MIXED_GENERALIZATION_SYNTHETIC_PROFILES: dict[str, ProfileDefinition] = {
         objective_path=_path("examples", "objective_compute_pivot_app_multi_step.json"),
         scope_path=_path("examples", "scope_mixed_generalization_multi_step.json"),
     ),
+    "aws-external-entry-data": ProfileDefinition(
+        name="aws-external-entry-data",
+        bundle="aws-enterprise-mixed-synthetic",
+        description="Synthetic external entry to secrets path for mixed-generalization benchmark.",
+        fixture_path=_path("fixtures", "mixed_generalization_external_entry_lab.json"),
+        objective_path=_path("examples", "objective_mixed_generalization_external_entry.json"),
+        scope_path=_path("examples", "scope_mixed_generalization_external_entry.json"),
+    ),
 }
 
 PROFILE_SETS: dict[str, dict[str, ProfileDefinition]] = {

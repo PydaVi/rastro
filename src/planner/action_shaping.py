@@ -180,7 +180,6 @@ def shape_available_actions(snapshot, available_actions: List[Action]) -> List[A
         if progress_actions:
             filtered = _filter_uncredentialed_actors(snapshot, progress_actions)
             filtered = _filter_repeated_access(snapshot, filtered)
-            filtered = _filter_repeated_enumerate(snapshot, filtered)
             filtered = _filter_mismatched_bucket(snapshot, filtered)
             filtered = _filter_failed_assume(snapshot, filtered)
             if filtered:

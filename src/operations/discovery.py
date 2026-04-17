@@ -66,8 +66,23 @@ def run_foundation_discovery(
 
     users = aws_client.list_users(region=region)
     services_scanned.append("iam")
-    evidence.append({"service": "iam", "api_calls": ["iam:ListUsers"]})
+    evidence.append({"service": "iam", "api_calls": ["iam:ListUsers", "iam:ListAttachedUserPolicies", "iam:ListUserPolicies"]})
+    _list_attached_user_policies = getattr(aws_client, "list_attached_user_policies", None)
+    _list_user_inline_policies = getattr(aws_client, "list_user_inline_policies", None)
     for user_arn in users:
+        user_name = user_arn.rsplit("/", 1)[-1]
+        attached_policies: list[dict] = []
+        inline_policy_names: list[str] = []
+        if _list_attached_user_policies is not None:
+            try:
+                attached_policies = _list_attached_user_policies(region=region, user_name=user_name) or []
+            except Exception:
+                attached_policies = []
+        if _list_user_inline_policies is not None:
+            try:
+                inline_policy_names = _list_user_inline_policies(region=region, user_name=user_name) or []
+            except Exception:
+                inline_policy_names = []
         resources.append(
             {
                 "service": "iam",
@@ -75,7 +90,10 @@ def run_foundation_discovery(
                 "identifier": user_arn,
                 "region": region,
                 "metadata": {
-                    "user_name": user_arn.rsplit("/", 1)[-1],
+                    "user_name": user_name,
+                    "attached_policy_names": [p.get("PolicyName") for p in attached_policies if p.get("PolicyName")],
+                    "attached_policy_arns": [p.get("PolicyArn") for p in attached_policies if p.get("PolicyArn")],
+                    "inline_policy_names": inline_policy_names,
                 },
                 "source": "aws_api",
             }
