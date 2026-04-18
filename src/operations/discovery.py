@@ -28,6 +28,108 @@ def _is_service_linked_role(role_arn: str) -> bool:
     return ":role/aws-service-role/" in role_arn
 
 
+# IAM actions that target a ROLE ARN directly (Resource = role ARN)
+_ROLE_TARGET_ACTIONS = frozenset({
+    "iam:attachrolepolicy",
+    "iam:detachrolepolicy",
+    "iam:putrolepolicy",
+    "iam:updateassumerolepolicy",
+    "iam:deleterole",
+    "sts:assumerole",
+})
+
+# IAM actions that target a POLICY ARN (Resource = policy ARN) → resolve to role
+_POLICY_TARGET_ACTIONS = frozenset({
+    "iam:createpolicyversion",
+    "iam:setdefaultpolicyversion",
+    "iam:deletepolicyversion",
+})
+
+# IAM actions that target a USER ARN directly (Resource = user ARN)
+_USER_TARGET_ACTIONS = frozenset({
+    "iam:createaccesskey",
+    "iam:createloginprofile",
+    "iam:updateloginprofile",
+    "iam:attachuserpolicy",
+    "iam:putuserpolicy",
+    "iam:deleteaccesskey",
+})
+
+
+def _resolve_target_for_action(
+    action: str,
+    resource_arns: list[str],
+    policy_to_roles: dict[str, list[str]],
+) -> str | None:
+    """Resolve o target ARN de ataque para uma ação IAM e lista de Resource ARNs."""
+    action_lower = action.lower()
+    wildcard_action = action_lower in ("iam:*", "*")
+
+    for resource_arn in resource_arns:
+        if not resource_arn or resource_arn == "*" or resource_arn.endswith("*"):
+            continue
+
+        if action_lower in _ROLE_TARGET_ACTIONS or (wildcard_action and ":role/" in resource_arn):
+            if ":role/" in resource_arn:
+                return resource_arn
+
+        elif action_lower in _POLICY_TARGET_ACTIONS or (wildcard_action and ":policy/" in resource_arn):
+            if ":policy/" in resource_arn:
+                roles = policy_to_roles.get(resource_arn, [])
+                if roles:
+                    return roles[0]
+
+        elif action_lower in _USER_TARGET_ACTIONS or (wildcard_action and ":user/" in resource_arn):
+            if ":user/" in resource_arn:
+                return resource_arn
+
+    return None
+
+
+def _derive_attack_targets(resources: list[dict]) -> None:
+    """Pós-processa resources: adiciona derived_attack_targets a users e roles
+    com base no Resource field das policy_permissions (determinístico)."""
+    # Índice: policy_arn → [role_arns que têm essa policy attached]
+    policy_to_roles: dict[str, list[str]] = {}
+    for r in resources:
+        if r.get("resource_type") == "identity.role":
+            role_arn = r.get("identifier", "")
+            for policy_arn in (r.get("metadata") or {}).get("attached_policy_arns", []):
+                policy_to_roles.setdefault(policy_arn, []).append(role_arn)
+
+    for r in resources:
+        if r.get("resource_type") not in ("identity.user", "identity.role"):
+            continue
+        meta = r.get("metadata") or {}
+        policy_permissions = meta.get("policy_permissions", [])
+        if not policy_permissions:
+            continue
+
+        derived: list[dict] = []
+        seen_targets: set[tuple] = set()
+        for perm in policy_permissions:
+            for stmt in perm.get("statements", []):
+                if stmt.get("Effect") != "Allow":
+                    continue
+                actions = stmt.get("Action", [])
+                if isinstance(actions, str):
+                    actions = [actions]
+                resource_field = stmt.get("Resource", "*")
+                if isinstance(resource_field, str):
+                    resource_field = [resource_field]
+
+                for action in actions:
+                    target_arn = _resolve_target_for_action(action, resource_field, policy_to_roles)
+                    if target_arn:
+                        key = (action.lower(), target_arn)
+                        if key not in seen_targets:
+                            seen_targets.add(key)
+                            derived.append({"action": action, "target_arn": target_arn})
+
+        if derived:
+            meta["derived_attack_targets"] = derived
+
+
 def _ssm_parameter_arn(region: str, account_id: str, name: str) -> str:
     normalized = name if name.startswith("/") else f"/{name}"
     return f"arn:aws:ssm:{region}:{account_id}:parameter{normalized}"
@@ -738,6 +840,8 @@ def run_foundation_discovery(
                         "type": "integrates_with_instance",
                     }
                 )
+
+    _derive_attack_targets(resources)
 
     summary = {
         "roles": sum(1 for resource in resources if resource["resource_type"] == "identity.role"),

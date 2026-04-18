@@ -18,21 +18,20 @@ Valid attack_class values:
 - compute_pivot: exploit EC2/Lambda execution role to gain privileges
 
 Instructions:
-1. For each entry_identity in the input, examine its policy_permissions when available (actual \
-policy documents with Effect/Action/Resource/Condition). If policy_permissions is absent, fall back \
-to reasoning from attached_policy_names and inline_policy_names.
-2. When policy_permissions is present, reason about ACTUAL grants:
-   - A statement with Effect=Allow, Action=iam:* (or iam:CreatePolicyVersion, iam:AttachRolePolicy, \
-     iam:PutRolePolicy, etc.) and Resource=* with NO Condition is directly exploitable for iam_privesc.
-   - A statement with Effect=Allow, Action=sts:AssumeRole and Resource=<role ARN> enables role_chain.
-   - A statement with Effect=Allow, Action=secretsmanager:GetSecretValue or ssm:GetParameter enables \
-     credential_access.
-   - A Condition block (aws:RequestedRegion, StringEquals, etc.) may restrict the exploit — note it.
-3. If policy_permissions is absent, infer from policy names (e.g. "iam-CreatePolicyVersion" → grants \
-iam:CreatePolicyVersion).
-4. Identify what targets are reachable given those permissions (roles, secrets, S3 objects, etc.).
-5. Generate one hypothesis per (entry_identity, attack_path) pair.
-6. Prefer hypotheses with concrete IAM API calls in attack_steps.
+1. For each entry_identity in the input, check if it has `derived_attack_targets` in its metadata.
+   If present, each entry gives you `action` and `target_arn` — these are PRE-COMPUTED from the \
+   policy documents. Use them directly as the target for that action. Do NOT substitute a different \
+   target, even if another resource looks "more privileged".
+2. If `derived_attack_targets` is absent, examine `policy_permissions` (actual policy documents). \
+   Reason about ACTUAL grants:
+   - Effect=Allow, Action=iam:CreatePolicyVersion/AttachRolePolicy/PutRolePolicy + Resource=* → \
+     iam_privesc, pick a role ARN from the resources list as target.
+   - Effect=Allow, Action=sts:AssumeRole + Resource=<role ARN> → role_chain to that role.
+   - Effect=Allow, Action=secretsmanager:GetSecretValue or ssm:GetParameter → credential_access.
+   - A Condition block may restrict the exploit — note it in reasoning.
+3. If neither is available, infer from policy names (e.g. "iam-CreatePolicyVersion" → iam:CreatePolicyVersion).
+4. Generate one hypothesis per (entry_identity, attack_path) pair.
+5. Prefer hypotheses with concrete IAM API calls in attack_steps.
 
 Focus especially on: CreatePolicyVersion, AttachRolePolicy, PassRole, CreateAccessKey, \
 PutRolePolicy, AddUserToGroup, UpdateLoginProfile, SetDefaultPolicyVersion, \
@@ -99,7 +98,9 @@ def _compact_resource(r: dict) -> dict:
     meta = r.get("metadata", {}) or {}
     selected_meta: dict = {}
     for key in (
-        # Bloco 4 — policy documents (highest signal)
+        # Bloco 4b — pre-computed attack targets (deterministic, highest priority)
+        "derived_attack_targets",
+        # Bloco 4 — policy documents
         "policy_permissions",
         # discovery enrichment fields
         "attached_policy_names",
