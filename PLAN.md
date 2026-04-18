@@ -241,6 +241,56 @@ Benchmark: **1/3 campanhas provadas** (`aws-iam-attach-role-policy-privesc`).
 
 ---
 
+## Bloco 3 — Campaign Execution Intelligence: Create-Policy-Version + Role-Chaining (FECHADO, 2026-04-18)
+
+**Direcao**: mais generalizacao ofensiva.
+**Objetivo**: provar create-policy-version e role-chaining alem do attach-role-policy.
+
+### Resultado
+
+Benchmark: **7/7 campanhas provadas**.
+
+- `aws-iam-attach-role-policy-privesc`: 2/2 PASS
+- `aws-iam-create-policy-version-privesc`: 2/2 PASS
+- `aws-iam-role-chaining`: 2/2 PASS
+- `aws-iam-pass-role-privesc`: 1/1 PASS (bonus)
+
+### Root causes diagnosticados e corrigidos
+
+1. **`iam_create_policy_version` usava `iam:SimulatePrincipalPolicy`**: lab users nao tem essa
+   permissao. Fix: novo `iam_create_policy_version_mutate` que chama `iam:CreatePolicyVersion` real,
+   com rollback automatico (delete policy version). Policy ARN pre-resolvida do discovery snapshot
+   para evitar `iam:ListAttachedRolePolicies`.
+
+2. **`iam_simulate_assume_role` usava `iam:SimulatePrincipalPolicy`**: mesma restricao. Mesmo
+   para brainctl-user (que tem SimulatePrincipalPolicy), o `assume_role_proved` mode explicitamente
+   ignora resultados de simulacao. Fix: todos os atores usam `iam_passrole` (real `sts:AssumeRole`).
+   Simulacao pos-assume agora e best-effort (AccessDenied nao causa falha).
+
+3. **`min(None, int)` em `execute_run`**: quando `max_steps=None` passado pelo runner.
+   Fix: verificar None antes do min().
+
+4. **Token rate limit (38443 > 30000 TPM)**: `_prioritize_actions` limita actions a 20.
+   Retry exponencial em 429.
+
+### O que aproximou do polo generalista
+
+- Engine agora prova 3 classes distintas de privesc IAM com mutacoes reais
+- Sem `SimulatePrincipalPolicy` — engine usa apenas permissoes que o entry user realmente tem
+- Rollback automatico para `CreatePolicyVersion` (delete version) + `AttachRolePolicy` (detach)
+
+### O que permaneceu dependente de campaigns conhecidas
+
+- Profiles pre-definidos para cada classe de ataque
+- Target selection ainda depende do StrategicPlanner que pode falhar por rate limit
+
+### Proximo experimento de maior leverage
+
+**Bloco 4**: Deep IAM Reasoning — StrategicPlanner recebe policy documents reais,
+nao so nomes de policies. Engine identifica paths exploitaveis sem padroes iam-vulnerable.
+
+---
+
 ## Roadmap de medio prazo
 
 ### Bloco 4 — Deep IAM Reasoning
