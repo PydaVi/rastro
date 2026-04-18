@@ -318,6 +318,35 @@ class AwsClient(Protocol):
         """Remove uma versão da policy (rollback)."""
         ...
 
+    def get_policy_default_version(
+        self,
+        region: str,
+        policy_arn: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Retorna o documento da versão padrão de uma customer-managed policy, ou None."""
+        ...
+
+    def get_role_inline_policy(
+        self,
+        region: str,
+        role_name: str,
+        policy_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Retorna o documento de uma inline policy de role, ou None."""
+        ...
+
+    def get_user_inline_policy(
+        self,
+        region: str,
+        user_name: str,
+        policy_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Retorna o documento de uma inline policy de user, ou None."""
+        ...
+
 
 @dataclass
 class Boto3AwsClient:
@@ -1082,6 +1111,51 @@ class Boto3AwsClient:
             client.delete_policy_version(PolicyArn=policy_arn, VersionId=version_id)
         except Exception:
             pass  # best-effort rollback
+
+    def get_policy_default_version(
+        self,
+        region: str,
+        policy_arn: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            client = self._session(credentials).client("iam", region_name=region)
+            policy = client.get_policy(PolicyArn=policy_arn)["Policy"]
+            default_version_id = policy["DefaultVersionId"]
+            version = client.get_policy_version(
+                PolicyArn=policy_arn, VersionId=default_version_id
+            )["PolicyVersion"]
+            return version.get("Document")
+        except Exception:
+            return None
+
+    def get_role_inline_policy(
+        self,
+        region: str,
+        role_name: str,
+        policy_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            client = self._session(credentials).client("iam", region_name=region)
+            response = client.get_role_policy(RoleName=role_name, PolicyName=policy_name)
+            return response.get("PolicyDocument")
+        except Exception:
+            return None
+
+    def get_user_inline_policy(
+        self,
+        region: str,
+        user_name: str,
+        policy_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            client = self._session(credentials).client("iam", region_name=region)
+            response = client.get_user_policy(UserName=user_name, PolicyName=policy_name)
+            return response.get("PolicyDocument")
+        except Exception:
+            return None
 
     def _session(self, credentials: Optional[AwsCredentials] = None):
         import boto3

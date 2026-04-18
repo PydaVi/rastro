@@ -18,15 +18,24 @@ Valid attack_class values:
 - compute_pivot: exploit EC2/Lambda execution role to gain privileges
 
 Instructions:
-1. For each entry_identity in the input, examine its attached_policy_names and inline_policy_names.
-2. Reason about which IAM actions those policies grant (e.g. a policy named "iam-CreatePolicyVersion" \
-likely grants iam:CreatePolicyVersion).
-3. Identify what targets are reachable given those permissions (roles, secrets, S3 objects, etc.).
-4. Generate one hypothesis per (entry_identity, attack_path) pair.
-5. Prefer hypotheses with concrete IAM API calls in attack_steps.
+1. For each entry_identity in the input, examine its policy_permissions when available (actual \
+policy documents with Effect/Action/Resource/Condition). If policy_permissions is absent, fall back \
+to reasoning from attached_policy_names and inline_policy_names.
+2. When policy_permissions is present, reason about ACTUAL grants:
+   - A statement with Effect=Allow, Action=iam:* (or iam:CreatePolicyVersion, iam:AttachRolePolicy, \
+     iam:PutRolePolicy, etc.) and Resource=* with NO Condition is directly exploitable for iam_privesc.
+   - A statement with Effect=Allow, Action=sts:AssumeRole and Resource=<role ARN> enables role_chain.
+   - A statement with Effect=Allow, Action=secretsmanager:GetSecretValue or ssm:GetParameter enables \
+     credential_access.
+   - A Condition block (aws:RequestedRegion, StringEquals, etc.) may restrict the exploit — note it.
+3. If policy_permissions is absent, infer from policy names (e.g. "iam-CreatePolicyVersion" → grants \
+iam:CreatePolicyVersion).
+4. Identify what targets are reachable given those permissions (roles, secrets, S3 objects, etc.).
+5. Generate one hypothesis per (entry_identity, attack_path) pair.
+6. Prefer hypotheses with concrete IAM API calls in attack_steps.
 
-Focus especially on policies whose names contain: CreatePolicyVersion, AttachRolePolicy, PassRole, \
-CreateAccessKey, PutRolePolicy, AddUserToGroup, UpdateLoginProfile, SetDefaultPolicyVersion, \
+Focus especially on: CreatePolicyVersion, AttachRolePolicy, PassRole, CreateAccessKey, \
+PutRolePolicy, AddUserToGroup, UpdateLoginProfile, SetDefaultPolicyVersion, \
 AssumeRole, GetSecretValue, GetParameter.
 
 IMPORTANT — target ARN rules:
@@ -49,7 +58,7 @@ Response schema:
       "attack_class": "<iam_privesc|role_chain|credential_access|data_exfil|compute_pivot>",
       "attack_steps": ["<concrete step 1>", "<concrete step 2>"],
       "confidence": "<high|medium|low>",
-      "reasoning": "<why this path is viable based on the observed policies>"
+      "reasoning": "<why this path is viable based on the observed policies or policy_permissions>"
     }
   ]
 }
@@ -85,7 +94,9 @@ def _compact_resource(r: dict) -> dict:
     meta = r.get("metadata", {}) or {}
     selected_meta: dict = {}
     for key in (
-        # discovery enrichment fields (Passo 4)
+        # Bloco 4 — policy documents (highest signal)
+        "policy_permissions",
+        # discovery enrichment fields
         "attached_policy_names",
         "attached_policy_arns",
         "inline_policy_names",

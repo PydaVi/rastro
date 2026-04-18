@@ -21,6 +21,7 @@ class DiscoveryLimits:
     max_objects_per_bucket: int = 20
     max_secrets: int = 100
     max_parameters_per_prefix: int = 100
+    max_policies_per_principal: int = 5
 
 
 def _is_service_linked_role(role_arn: str) -> bool:
@@ -34,6 +35,81 @@ def _ssm_parameter_arn(region: str, account_id: str, name: str) -> str:
 
 def _ec2_arn(region: str, account_id: str, resource_type: str, resource_id: str) -> str:
     return f"arn:aws:ec2:{region}:{account_id}:{resource_type}/{resource_id}"
+
+
+def _is_customer_managed_policy(policy_arn: str) -> bool:
+    return bool(policy_arn) and not policy_arn.startswith("arn:aws:iam::aws:policy/")
+
+
+def _compact_policy_doc(doc: dict, max_statements: int = 8) -> list[dict]:
+    """Extrai Effect/Action/Resource/Condition de um policy document."""
+    if not doc:
+        return []
+    statements = doc.get("Statement", [])
+    if isinstance(statements, dict):
+        statements = [statements]
+    result = []
+    for stmt in statements[:max_statements]:
+        compact: dict = {
+            "Effect": stmt.get("Effect", "Allow"),
+            "Action": stmt.get("Action", []),
+            "Resource": stmt.get("Resource", "*"),
+        }
+        condition = stmt.get("Condition")
+        if condition:
+            compact["Condition"] = condition
+        result.append(compact)
+    return result
+
+
+def _fetch_policy_permissions(
+    *,
+    aws_client: "AwsClient",
+    region: str,
+    attached_policy_arns: list[str],
+    inline_policy_names: list[str],
+    principal_type: str,
+    principal_name: str,
+    max_policies: int,
+) -> list[dict]:
+    """Retorna policy_permissions: lista de {source, statements} para roles e users."""
+    _get_policy_doc = getattr(aws_client, "get_policy_default_version", None)
+    _get_role_inline = getattr(aws_client, "get_role_inline_policy", None)
+    _get_user_inline = getattr(aws_client, "get_user_inline_policy", None)
+
+    permissions: list[dict] = []
+    count = 0
+
+    for policy_arn in attached_policy_arns:
+        if count >= max_policies:
+            break
+        if not _is_customer_managed_policy(policy_arn):
+            continue
+        if _get_policy_doc is None:
+            break
+        doc = _get_policy_doc(region=region, policy_arn=policy_arn)
+        if doc:
+            policy_name = policy_arn.rsplit("/", 1)[-1]
+            statements = _compact_policy_doc(doc)
+            if statements:
+                permissions.append({"source": policy_name, "policy_arn": policy_arn, "statements": statements})
+                count += 1
+
+    for policy_name in inline_policy_names:
+        if count >= max_policies:
+            break
+        doc = None
+        if principal_type == "role" and _get_role_inline is not None:
+            doc = _get_role_inline(region=region, role_name=principal_name, policy_name=policy_name)
+        elif principal_type == "user" and _get_user_inline is not None:
+            doc = _get_user_inline(region=region, user_name=principal_name, policy_name=policy_name)
+        if doc:
+            statements = _compact_policy_doc(doc)
+            if statements:
+                permissions.append({"source": f"inline:{policy_name}", "statements": statements})
+                count += 1
+
+    return permissions
 
 
 def run_foundation_discovery(
@@ -66,7 +142,7 @@ def run_foundation_discovery(
 
     users = aws_client.list_users(region=region)
     services_scanned.append("iam")
-    evidence.append({"service": "iam", "api_calls": ["iam:ListUsers", "iam:ListAttachedUserPolicies", "iam:ListUserPolicies"]})
+    evidence.append({"service": "iam", "api_calls": ["iam:ListUsers", "iam:ListAttachedUserPolicies", "iam:ListUserPolicies", "iam:GetUserPolicy", "iam:GetPolicyVersion"]})
     _list_attached_user_policies = getattr(aws_client, "list_attached_user_policies", None)
     _list_user_inline_policies = getattr(aws_client, "list_user_inline_policies", None)
     for user_arn in users:
@@ -83,25 +159,38 @@ def run_foundation_discovery(
                 inline_policy_names = _list_user_inline_policies(region=region, user_name=user_name) or []
             except Exception:
                 inline_policy_names = []
+        user_attached_arns = [p.get("PolicyArn") for p in attached_policies if p.get("PolicyArn")]
+        policy_permissions = _fetch_policy_permissions(
+            aws_client=aws_client,
+            region=region,
+            attached_policy_arns=user_attached_arns,
+            inline_policy_names=inline_policy_names,
+            principal_type="user",
+            principal_name=user_name,
+            max_policies=effective_limits.max_policies_per_principal,
+        )
+        user_meta: dict = {
+            "user_name": user_name,
+            "attached_policy_names": [p.get("PolicyName") for p in attached_policies if p.get("PolicyName")],
+            "attached_policy_arns": user_attached_arns,
+            "inline_policy_names": inline_policy_names,
+        }
+        if policy_permissions:
+            user_meta["policy_permissions"] = policy_permissions
         resources.append(
             {
                 "service": "iam",
                 "resource_type": "identity.user",
                 "identifier": user_arn,
                 "region": region,
-                "metadata": {
-                    "user_name": user_name,
-                    "attached_policy_names": [p.get("PolicyName") for p in attached_policies if p.get("PolicyName")],
-                    "attached_policy_arns": [p.get("PolicyArn") for p in attached_policies if p.get("PolicyArn")],
-                    "inline_policy_names": inline_policy_names,
-                },
+                "metadata": user_meta,
                 "source": "aws_api",
             }
         )
 
     roles = aws_client.list_roles(region=region)[: effective_limits.max_roles]
     services_scanned.append("iam")
-    evidence.append({"service": "iam", "api_calls": ["sts:GetCallerIdentity", "iam:ListRoles", "iam:GetRole", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies"]})
+    evidence.append({"service": "iam", "api_calls": ["sts:GetCallerIdentity", "iam:ListRoles", "iam:GetRole", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:GetPolicyVersion"]})
     for role_arn in roles:
         if _is_service_linked_role(role_arn):
             continue
@@ -110,24 +199,37 @@ def run_foundation_discovery(
         trust_principals = _extract_trust_principals(role_details.get("AssumeRolePolicyDocument"))
         attached_policies = role_details.get("AttachedPolicies", [])
         inline_policy_names = role_details.get("InlinePolicyNames", [])
+        role_attached_arns = [policy.get("PolicyArn") for policy in attached_policies if policy.get("PolicyArn")]
+        policy_permissions = _fetch_policy_permissions(
+            aws_client=aws_client,
+            region=region,
+            attached_policy_arns=role_attached_arns,
+            inline_policy_names=inline_policy_names,
+            principal_type="role",
+            principal_name=role_name,
+            max_policies=effective_limits.max_policies_per_principal,
+        )
+        role_meta: dict = {
+            "is_service_linked": False,
+            "role_name": role_name,
+            "trust_principals": trust_principals,
+            "trust_is_broad": any(principal == "*" for principal in trust_principals),
+            "attached_policy_arns": role_attached_arns,
+            "attached_policy_names": [policy.get("PolicyName") for policy in attached_policies if policy.get("PolicyName")],
+            "inline_policy_names": inline_policy_names,
+            "permissions_boundary_arn": (role_details.get("PermissionsBoundary") or {}).get("PermissionsBoundaryArn"),
+            "managed_policy_count": len(attached_policies),
+            "inline_policy_count": len(inline_policy_names),
+        }
+        if policy_permissions:
+            role_meta["policy_permissions"] = policy_permissions
         resources.append(
             {
                 "service": "iam",
                 "resource_type": "identity.role",
                 "identifier": role_arn,
                 "region": region,
-                "metadata": {
-                    "is_service_linked": False,
-                    "role_name": role_name,
-                    "trust_principals": trust_principals,
-                    "trust_is_broad": any(principal == "*" for principal in trust_principals),
-                    "attached_policy_arns": [policy.get("PolicyArn") for policy in attached_policies if policy.get("PolicyArn")],
-                    "attached_policy_names": [policy.get("PolicyName") for policy in attached_policies if policy.get("PolicyName")],
-                    "inline_policy_names": inline_policy_names,
-                    "permissions_boundary_arn": (role_details.get("PermissionsBoundary") or {}).get("PermissionsBoundaryArn"),
-                    "managed_policy_count": len(attached_policies),
-                    "inline_policy_count": len(inline_policy_names),
-                },
+                "metadata": role_meta,
                 "source": "aws_api",
             }
         )
