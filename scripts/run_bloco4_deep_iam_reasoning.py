@@ -9,7 +9,7 @@ nao apenas em heuristicas de nome de policy.
 
 Identidades selecionadas (cobertura expandida — mais paths do lab):
   - privesc1 a privesc9 users (os 9 mais comuns de IAM privesc)
-  - privesc-AssumeRole-starting-user (role chaining)
+  - brainctl-user (role chaining — starting-role only trusts brainctl-user)
   - brainctl-user (sanity check admin)
 """
 from __future__ import annotations
@@ -57,7 +57,6 @@ PROFILE_ENTRY_IDENTITIES = {
         f"arn:aws:iam::{ACCOUNT}:user/brainctl-user",
     ],
     "aws-iam-role-chaining": [
-        f"arn:aws:iam::{ACCOUNT}:user/privesc-AssumeRole-starting-user",
         f"arn:aws:iam::{ACCOUNT}:user/brainctl-user",
     ],
     "aws-iam-pass-role-privesc": [

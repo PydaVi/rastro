@@ -18,10 +18,10 @@ Valid attack_class values:
 - compute_pivot: exploit EC2/Lambda execution role to gain privileges
 
 Instructions:
-1. For each entry_identity in the input, check if it has `derived_attack_targets` in its metadata.
-   If present, each entry gives you `action` and `target_arn` — these are PRE-COMPUTED from the \
-   policy documents. Use them directly as the target for that action. Do NOT substitute a different \
-   target, even if another resource looks "more privileged".
+1. MANDATORY: For each entry_identity in the input, check if it has `derived_attack_targets` in \
+   its metadata. If present, you MUST generate at least one hypothesis for that identity — one per \
+   (action, target_arn) pair in the list. Each entry gives you `action` and `target_arn` \
+   PRE-COMPUTED from the policy documents. Use them directly. Do NOT substitute a different target.
 2. If `derived_attack_targets` is absent, examine `policy_permissions` (actual policy documents). \
    Reason about ACTUAL grants:
    - Effect=Allow, Action=iam:CreatePolicyVersion/AttachRolePolicy/PutRolePolicy + Resource=* → \

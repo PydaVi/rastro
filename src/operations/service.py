@@ -379,6 +379,116 @@ def _confidence_to_score(confidence: str) -> int:
     return {"high": 80, "medium": 50, "low": 20}.get(confidence, 20)
 
 
+_ACTION_TO_CLASS: dict[str, str] = {
+    "iam:attachrolepolicy": "iam_privesc",
+    "iam:createpolicyversion": "iam_privesc",
+    "iam:putrolepolicy": "iam_privesc",
+    "iam:setdefaultpolicyversion": "iam_privesc",
+    "iam:updateassumerolepolicy": "iam_privesc",
+    "iam:createaccesskey": "iam_privesc",
+    "iam:createloginprofile": "iam_privesc",
+    "iam:updateloginprofile": "iam_privesc",
+    "iam:attachuserpolicy": "iam_privesc",
+    "iam:addusertgroup": "iam_privesc",
+    "sts:assumerole": "role_chain",
+    "iam:passrole": "compute_pivot",
+    "secretsmanager:getsecretvalue": "credential_access",
+    "ssm:getparameter": "credential_access",
+    "ssm:getparametersbypath": "credential_access",
+    "s3:getobject": "data_exfil",
+}
+
+_IAM_PRIVESC_STEP: dict[str, str] = {
+    "iam:attachrolepolicy": "Call iam:AttachRolePolicy to attach AdministratorAccess to {target}",
+    "iam:createpolicyversion": "Call iam:CreatePolicyVersion on {target} to inject Allow:* policy version",
+    "iam:putrolepolicy": "Call iam:PutRolePolicy on {target} to inject an inline Allow:* policy",
+    "iam:setdefaultpolicyversion": "Call iam:SetDefaultPolicyVersion on {target} to activate a privileged version",
+    "iam:updateassumerolepolicy": "Call iam:UpdateAssumeRolePolicy on {target} to add attacker as trusted principal, then sts:AssumeRole",
+    "iam:createaccesskey": "Call iam:CreateAccessKey on {target} to extract long-term credentials",
+    "iam:createloginprofile": "Call iam:CreateLoginProfile on {target} to set console password",
+    "iam:updateloginprofile": "Call iam:UpdateLoginProfile on {target} to reset console password",
+    "iam:attachuserpolicy": "Call iam:AttachUserPolicy on {target} to attach AdministratorAccess",
+    "iam:addusertgroup": "Call iam:AddUserToGroup on {target} to add attacker to privileged group",
+}
+
+
+def _derive_hypotheses_from_snapshot(
+    discovery_snapshot: dict,
+    entry_identities: list[str],
+) -> list:
+    """Síntese determinística: converte derived_attack_targets em AttackHypothesis sem LLM.
+
+    Garante recall 100% para todos os entry identities com targets pré-computados.
+    """
+    from planner.strategic_planner import AttackHypothesis
+
+    identity_set = set(entry_identities)
+    resource_map = {
+        r["identifier"]: r
+        for r in discovery_snapshot.get("resources", [])
+        if r.get("identifier")
+    }
+    hypotheses: list[AttackHypothesis] = []
+
+    for arn in entry_identities:
+        r = resource_map.get(arn)
+        if r is None:
+            continue
+        meta = r.get("metadata") or {}
+        derived = meta.get("derived_attack_targets")
+        if not derived:
+            continue
+
+        for entry in derived:
+            action: str = entry.get("action", "")
+            target_arn: str = entry.get("target_arn", "")
+            if not action or not target_arn:
+                continue
+            action_lower = action.lower()
+            attack_class = _ACTION_TO_CLASS.get(action_lower)
+            if not attack_class:
+                continue
+
+            step_template = _IAM_PRIVESC_STEP.get(
+                action_lower,
+                f"Call {action} on {{target}}",
+            )
+            step = step_template.format(target=target_arn)
+
+            if attack_class == "role_chain":
+                steps = [
+                    f"Call sts:AssumeRole to assume {target_arn}",
+                    "Use assumed role credentials to escalate further in the chain",
+                ]
+            elif attack_class == "compute_pivot":
+                steps = [
+                    f"Call iam:PassRole to pass {target_arn} to a Lambda/EC2/Glue/SageMaker service",
+                    "Create a compute resource with the passed role to gain its permissions",
+                ]
+            elif attack_class == "credential_access":
+                steps = [f"Call {action} on {target_arn} to extract credentials or secrets"]
+            elif attack_class == "data_exfil":
+                steps = [f"Call {action} on {target_arn} to read sensitive data"]
+            else:
+                steps = [step]
+
+            hypotheses.append(
+                AttackHypothesis(
+                    entry_identity=arn,
+                    target=target_arn,
+                    attack_class=attack_class,
+                    attack_steps=steps,
+                    confidence="high",
+                    reasoning=(
+                        f"Deterministic: policy_permissions grants {action} with "
+                        f"resolved target {target_arn} (derived_attack_targets)."
+                    ),
+                )
+            )
+
+    return hypotheses
+
+
 def _infer_resource_type_from_arn(arn: str) -> str:
     if ":role/" in arn:
         return "identity.role"
@@ -512,10 +622,29 @@ def run_discovery_driven_assessment(
         effective_entry_identities = sorted(set(discovered_users)) or list(target.entry_roles)
         scope_for_strategic = _build_scope_for_strategic_planner(target, authorization)
         try:
-            hypotheses = strategic_planner.plan_attacks(
+            # Síntese determinística primeiro (derived_attack_targets → hipóteses sem LLM)
+            det_hypotheses = _derive_hypotheses_from_snapshot(
+                discovery_snapshot, effective_entry_identities
+            )
+            logger.info(
+                "Deterministic hypotheses from derived_attack_targets: %d", len(det_hypotheses)
+            )
+
+            llm_hypotheses = strategic_planner.plan_attacks(
                 discovery_snapshot, effective_entry_identities, scope_for_strategic
             )
-            hypotheses = _scope_enforce_hypotheses(hypotheses, target)[:max_hypotheses]
+
+            # Merge: LLM first (may have richer steps), then fill in any missed with deterministic
+            seen_keys: set[tuple] = {
+                (h.entry_identity, h.target, h.attack_class) for h in llm_hypotheses
+            }
+            for h in det_hypotheses:
+                key = (h.entry_identity, h.target, h.attack_class)
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    llm_hypotheses.append(h)
+
+            hypotheses = _scope_enforce_hypotheses(llm_hypotheses, target)[:max_hypotheses]
             if hypotheses:
                 strategic_payload = _hypotheses_to_candidates_payload(
                     hypotheses, discovery_snapshot, bundle_name

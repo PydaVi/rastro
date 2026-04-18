@@ -35,6 +35,7 @@ _ROLE_TARGET_ACTIONS = frozenset({
     "iam:putrolepolicy",
     "iam:updateassumerolepolicy",
     "iam:deleterole",
+    "iam:passrole",
     "sts:assumerole",
 })
 
@@ -86,27 +87,58 @@ def _resolve_target_for_action(
     return None
 
 
+def _name_match_role(principal_arn: str, role_arns: set[str]) -> str | None:
+    """Heurística: principal terminado em -user → busca role com mesmo prefixo terminado em -role.
+    Funciona para labs com naming convention explícita (e.g. iam-vulnerable).
+    """
+    name = principal_arn.rsplit("/", 1)[-1]
+    if name.endswith("-user"):
+        candidate = name[:-5] + "-role"
+        for role_arn in role_arns:
+            if role_arn.rsplit("/", 1)[-1] == candidate:
+                return role_arn
+    return None
+
+
 def _derive_attack_targets(resources: list[dict]) -> None:
     """Pós-processa resources: adiciona derived_attack_targets a users e roles
-    com base no Resource field das policy_permissions (determinístico)."""
-    # Índice: policy_arn → [role_arns que têm essa policy attached]
+    com base no Resource field das policy_permissions e trust relationships (determinístico).
+
+    Pass 1 — Resource ARN específico: resolve diretamente (role, policy→role, user).
+    Pass 2 — Resource=* com naming convention: user-X-user → busca role X-role no snapshot.
+    Pass 3 — Trust inversion: se o user aparece no trust_principals de um role,
+              pode assumir esse role (sts:AssumeRole).
+    """
     policy_to_roles: dict[str, list[str]] = {}
+    role_arns_in_snapshot: set[str] = set()
+    # user_arn → [role_arns where user is in trust_principals]
+    user_assumable_roles: dict[str, list[str]] = {}
+
     for r in resources:
         if r.get("resource_type") == "identity.role":
             role_arn = r.get("identifier", "")
-            for policy_arn in (r.get("metadata") or {}).get("attached_policy_arns", []):
+            role_arns_in_snapshot.add(role_arn)
+            meta = r.get("metadata") or {}
+            for policy_arn in meta.get("attached_policy_arns", []):
                 policy_to_roles.setdefault(policy_arn, []).append(role_arn)
+            for principal in meta.get("trust_principals", []):
+                if ":user/" in principal:
+                    user_assumable_roles.setdefault(principal, []).append(role_arn)
+
+    _wildcard_privesc_actions = _ROLE_TARGET_ACTIONS | _POLICY_TARGET_ACTIONS | {"iam:*", "*"}
 
     for r in resources:
         if r.get("resource_type") not in ("identity.user", "identity.role"):
             continue
         meta = r.get("metadata") or {}
+        user_arn = r.get("identifier", "")
         policy_permissions = meta.get("policy_permissions", [])
-        if not policy_permissions:
-            continue
 
         derived: list[dict] = []
         seen_targets: set[tuple] = set()
+        wildcard_privesc_actions: list[str] = []
+
+        # Pass 1 + collect wildcard actions
         for perm in policy_permissions:
             for stmt in perm.get("statements", []):
                 if stmt.get("Effect") != "Allow":
@@ -118,13 +150,37 @@ def _derive_attack_targets(resources: list[dict]) -> None:
                 if isinstance(resource_field, str):
                     resource_field = [resource_field]
 
+                is_wildcard = all(ra == "*" or ra.endswith("*") for ra in resource_field)
+
                 for action in actions:
+                    if is_wildcard:
+                        if action.lower() in _wildcard_privesc_actions:
+                            wildcard_privesc_actions.append(action)
+                        continue
                     target_arn = _resolve_target_for_action(action, resource_field, policy_to_roles)
                     if target_arn:
                         key = (action.lower(), target_arn)
                         if key not in seen_targets:
                             seen_targets.add(key)
                             derived.append({"action": action, "target_arn": target_arn})
+
+        # Pass 2: name-match para Resource=* quando Pass 1 não encontrou targets
+        if not derived and wildcard_privesc_actions:
+            matched_role = _name_match_role(user_arn, role_arns_in_snapshot)
+            if matched_role:
+                for action in wildcard_privesc_actions:
+                    key = (action.lower(), matched_role)
+                    if key not in seen_targets:
+                        seen_targets.add(key)
+                        derived.append({"action": action, "target_arn": matched_role})
+
+        # Pass 3: trust inversion — roles que listam este user em trust_principals
+        assumable = user_assumable_roles.get(user_arn, [])
+        for role_arn in assumable:
+            key = ("sts:assumerole", role_arn)
+            if key not in seen_targets:
+                seen_targets.add(key)
+                derived.append({"action": "sts:AssumeRole", "target_arn": role_arn})
 
         if derived:
             meta["derived_attack_targets"] = derived

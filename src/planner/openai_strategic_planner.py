@@ -112,7 +112,10 @@ class OpenAICompatibleStrategicPlanner(StrategicPlanner):
         try:
             raw = response.choices[0].message.content
             data = json.loads(raw)
-            raw_hypotheses = data.get("hypotheses", [])
+            raw_hypotheses = [
+                h for h in data.get("hypotheses", [])
+                if h.get("attack_steps")  # filtra hipóteses sem steps antes do pydantic
+            ]
             return [AttackHypothesis.model_validate(h) for h in raw_hypotheses]
         except Exception as exc:
             logger.error("StrategicPlanner failed to parse batch response: %s", exc)
