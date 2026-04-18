@@ -291,27 +291,37 @@ nao so nomes de policies. Engine identifica paths exploitaveis sem padroes iam-v
 
 ---
 
-## Roadmap de medio prazo
-
-### Bloco 4 — Deep IAM Reasoning
+## Bloco 4 — Deep IAM Reasoning (em andamento, 2026-04-18)
 
 **Direcao**: profundidade antes de expansao.
 **Objetivo**: engine entende permissoes reais, nao so nomes de roles.
 
-O gap atual: o StrategicPlanner recebe discovery com *quais* policies estao attached,
-mas nao o *conteudo* das policies. Ele raciocina sobre heuristicas (nome do role,
-tipo de recurso) em vez de permissoes reais.
+### Implementado
 
-O que muda:
-- Discovery enriquecido: `GetPolicyVersion` + `GetRolePolicy` + `GetUserPolicy`
-  capturam o JSON bruto das policies de cada principal
-- StrategicPlanner recebe policy documents e raciocina:
-  "esse `Action: iam:*` com `Resource: *` sem `Condition` e exploravel via AttachRolePolicy"
-- Hipoteses geradas sao especificas: entry identity + permissao concreta + path
+- `GetPolicyVersion` + `GetRolePolicy` + `GetUserPolicy` no discovery
+- `policy_permissions: [{source, statements: [{Effect, Action, Resource, Condition}]}]`
+  em cada principal do snapshot
+- `StrategicPlanner` recebe documentos reais; system prompt atualizado para raciocinar
+  sobre `Action: iam:*`, `Resource: *` sem `Condition` como sinal de exploitabilidade
+- Fallback gracioso: se o client nao tem os novos metodos, discovery retorna sem policy_permissions
+  (compatibilidade retroativa total — 224/224 testes passando)
+- `DiscoveryLimits.max_policies_per_principal = 5` para controlar volume de API calls
+
+### Pendente
+
+Benchmark EXP-104: rodar `scripts/run_bloco4_deep_iam_reasoning.py` contra iam-vulnerable
+e verificar:
+1. Quantos principals tem `policy_permissions` no snapshot
+2. Se o StrategicPlanner usa os documentos para fundamentar hipoteses
+3. Se cobertura de paths sobe alem dos 6-10/run do Bloco 1
 
 Criterio de saida:
+- StrategicPlanner fundamenta hipoteses em permissoes reais (Action/Resource/Condition), nao em nome de role
 - Engine identifica paths exploitaveis em conta sem padroes iam-vulnerable
-- StrategicPlanner fundamenta hipoteses em permissoes reais, nao em nome de role
+
+---
+
+## Roadmap de medio prazo
 
 ---
 
