@@ -87,9 +87,130 @@ def _resolve_target_for_action(
     return None
 
 
+# ---------------------------------------------------------------------------
+# Bloco 4c — Privilege Scoring
+# ---------------------------------------------------------------------------
+
+# Pesos base por ação. Resource=* aplica multiplicador 2x.
+_PRIV_ACTION_SCORES: dict[str, int] = {
+    "iam:*":                          1000,
+    "*":                              1000,
+    "iam:createpolicyversion":         500,
+    "iam:attachrolepolicy":            500,
+    "iam:putrolepolicy":               500,
+    "iam:updateassumerolepolicy":      450,
+    "iam:setdefaultpolicyversion":     400,
+    "iam:createaccesskey":             350,
+    "iam:passrole":                    350,
+    "iam:attachuserpolicy":            350,
+    "iam:attachgrouppolicy":           300,
+    "iam:addusertgroup":               300,
+    "iam:putuserpolicy":               300,
+    "iam:createloginprofile":          250,
+    "iam:updateloginprofile":          250,
+    "sts:assumerole":                  200,
+    "secretsmanager:*":               150,
+    "secretsmanager:getsecretvalue":  120,
+    "ssm:*":                          120,
+    "ssm:getparameter":                80,
+    "ssm:getparametersbypath":         80,
+    "s3:*":                           150,
+    "s3:getobject":                    50,
+    "ec2:*":                          100,
+    "lambda:*":                       100,
+    "glue:*":                         100,
+    "sagemaker:*":                    100,
+}
+
+_HIGH_VALUE_THRESHOLD = 300
+
+
+def _score_principal(r: dict) -> int:
+    """Score de privilégio de um principal com base em suas policy_permissions.
+
+    Score alto = principal é valioso como alvo de escalonamento (pode causar dano amplo).
+    Resource=* dobra o peso de cada ação (permissão irrestrita > permissão específica).
+    """
+    meta = r.get("metadata") or {}
+    score = 0
+    for perm in meta.get("policy_permissions", []):
+        for stmt in perm.get("statements", []):
+            if stmt.get("Effect") != "Allow":
+                continue
+            actions = stmt.get("Action", [])
+            if isinstance(actions, str):
+                actions = [actions]
+            resource_field = stmt.get("Resource", "*")
+            if isinstance(resource_field, str):
+                resource_field = [resource_field]
+
+            is_wildcard = all(ra in ("*",) or ra.endswith("*") for ra in resource_field)
+            multiplier = 2.0 if is_wildcard else 1.0
+
+            for action in actions:
+                al = action.lower()
+                action_score = _PRIV_ACTION_SCORES.get(al, 0)
+                if not action_score:
+                    # prefixo (e.g. iam:create* → iam:createpolicyversion)
+                    for pat, ps in _PRIV_ACTION_SCORES.items():
+                        if pat.endswith("*") and al.startswith(pat[:-1]):
+                            action_score = max(action_score, ps // 2)
+                score += int(action_score * multiplier)
+
+    return min(score, 9999)
+
+
+def _compute_privilege_scores(resources: list[dict]) -> None:
+    """Adiciona privilege_score e is_high_value_target a cada principal no snapshot.
+
+    Chamado ANTES de _derive_attack_targets para que Pass 2 use scores reais
+    em vez de heurísticas de naming convention.
+    """
+    for r in resources:
+        if r.get("resource_type") not in ("identity.user", "identity.role"):
+            continue
+        if not r.get("metadata"):
+            r["metadata"] = {}
+        score = _score_principal(r)
+        r["metadata"]["privilege_score"] = score
+        r["metadata"]["is_high_value_target"] = score >= _HIGH_VALUE_THRESHOLD
+
+
+def _best_role_by_score(
+    role_arns: set[str],
+    resources: list[dict],
+    prefer_arns: list[str] | None = None,
+) -> str | None:
+    """Retorna o role ARN com maior privilege_score no snapshot.
+
+    Se prefer_arns for fornecida (roles que o user pode assumir via trust),
+    prefere candidatos dentro desse conjunto — fallback para qualquer role.
+    Retorna None se nenhum role tiver score > 0 (e.g., testes offline).
+    """
+    score_map: dict[str, int] = {}
+    for r in resources:
+        if r.get("resource_type") == "identity.role":
+            arn = r.get("identifier", "")
+            if arn in role_arns:
+                score_map[arn] = (r.get("metadata") or {}).get("privilege_score", 0)
+
+    candidates = [(arn, sc) for arn, sc in score_map.items() if sc > 0]
+    if not candidates:
+        return None
+
+    if prefer_arns:
+        preferred = [(arn, sc) for arn, sc in candidates if arn in prefer_arns]
+        if preferred:
+            return max(preferred, key=lambda x: x[1])[0]
+
+    return max(candidates, key=lambda x: x[1])[0]
+
+
 def _name_match_role(principal_arn: str, role_arns: set[str]) -> str | None:
-    """Heurística: principal terminado em -user → busca role com mesmo prefixo terminado em -role.
-    Funciona para labs com naming convention explícita (e.g. iam-vulnerable).
+    """Fallback heurístico: principal -user → role com mesmo prefixo -role.
+
+    Usado apenas quando privilege_score não está disponível (testes offline,
+    discovery sem policy_permissions). Em produção, _best_role_by_score tem precedência.
     """
     name = principal_arn.rsplit("/", 1)[-1]
     if name.endswith("-user"):
@@ -164,15 +285,22 @@ def _derive_attack_targets(resources: list[dict]) -> None:
                             seen_targets.add(key)
                             derived.append({"action": action, "target_arn": target_arn})
 
-        # Pass 2: name-match para Resource=* quando Pass 1 não encontrou targets
+        # Pass 2: privilege-score para Resource=* quando Pass 1 não encontrou targets.
+        # Prefere roles que o user já pode assumir (trust policy); fallback para maior
+        # score global; último recurso: name-match (lab convention).
         if not derived and wildcard_privesc_actions:
-            matched_role = _name_match_role(user_arn, role_arns_in_snapshot)
-            if matched_role:
+            assumable_here = user_assumable_roles.get(user_arn, [])
+            best_role = _best_role_by_score(
+                role_arns_in_snapshot, resources, prefer_arns=assumable_here or None
+            )
+            if best_role is None:
+                best_role = _name_match_role(user_arn, role_arns_in_snapshot)
+            if best_role:
                 for action in wildcard_privesc_actions:
-                    key = (action.lower(), matched_role)
+                    key = (action.lower(), best_role)
                     if key not in seen_targets:
                         seen_targets.add(key)
-                        derived.append({"action": action, "target_arn": matched_role})
+                        derived.append({"action": action, "target_arn": best_role})
 
         # Pass 3: trust inversion — roles que listam este user em trust_principals
         assumable = user_assumable_roles.get(user_arn, [])
@@ -897,6 +1025,7 @@ def run_foundation_discovery(
                     }
                 )
 
+    _compute_privilege_scores(resources)
     _derive_attack_targets(resources)
 
     summary = {

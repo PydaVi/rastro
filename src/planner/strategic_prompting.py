@@ -22,16 +22,19 @@ Instructions:
    its metadata. If present, you MUST generate at least one hypothesis for that identity — one per \
    (action, target_arn) pair in the list. Each entry gives you `action` and `target_arn` \
    PRE-COMPUTED from the policy documents. Use them directly. Do NOT substitute a different target.
-2. If `derived_attack_targets` is absent, examine `policy_permissions` (actual policy documents). \
+2. When choosing a target role for iam_privesc paths: prefer roles with high `privilege_score` \
+   (computed from their own permissions — higher score = broader blast radius). \
+   `is_high_value_target: true` means the role has score ≥ 300 and is worth escalating to.
+3. If `derived_attack_targets` is absent, examine `policy_permissions` (actual policy documents). \
    Reason about ACTUAL grants:
    - Effect=Allow, Action=iam:CreatePolicyVersion/AttachRolePolicy/PutRolePolicy + Resource=* → \
      iam_privesc, pick a role ARN from the resources list as target.
    - Effect=Allow, Action=sts:AssumeRole + Resource=<role ARN> → role_chain to that role.
    - Effect=Allow, Action=secretsmanager:GetSecretValue or ssm:GetParameter → credential_access.
    - A Condition block may restrict the exploit — note it in reasoning.
-3. If neither is available, infer from policy names (e.g. "iam-CreatePolicyVersion" → iam:CreatePolicyVersion).
-4. Generate one hypothesis per (entry_identity, attack_path) pair.
-5. Prefer hypotheses with concrete IAM API calls in attack_steps.
+4. If neither is available, infer from policy names (e.g. "iam-CreatePolicyVersion" → iam:CreatePolicyVersion).
+5. Generate one hypothesis per (entry_identity, attack_path) pair.
+6. Prefer hypotheses with concrete IAM API calls in attack_steps.
 
 Focus especially on: CreatePolicyVersion, AttachRolePolicy, PassRole, CreateAccessKey, \
 PutRolePolicy, AddUserToGroup, UpdateLoginProfile, SetDefaultPolicyVersion, \
@@ -100,6 +103,9 @@ def _compact_resource(r: dict) -> dict:
     for key in (
         # Bloco 4b — pre-computed attack targets (deterministic, highest priority)
         "derived_attack_targets",
+        # Bloco 4c — privilege score (higher = more valuable as escalation target)
+        "privilege_score",
+        "is_high_value_target",
         # Bloco 4 — policy documents
         "policy_permissions",
         # discovery enrichment fields
