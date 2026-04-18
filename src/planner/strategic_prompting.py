@@ -39,13 +39,25 @@ PutRolePolicy, AddUserToGroup, UpdateLoginProfile, SetDefaultPolicyVersion, \
 AssumeRole, GetSecretValue, GetParameter.
 
 IMPORTANT — target ARN rules:
-- For iam_privesc (CreatePolicyVersion, AttachRolePolicy, PutRolePolicy, etc.): target must be an IAM \
-ROLE ARN (arn:aws:iam::ACCOUNT:role/ROLE_NAME) visible in the resources list. \
+- For iam_privesc via role mutation (CreatePolicyVersion, AttachRolePolicy, PutRolePolicy, \
+SetDefaultPolicyVersion, UpdatingAssumeRolePolicy): target must be an IAM ROLE ARN \
+(arn:aws:iam::ACCOUNT:role/ROLE_NAME) visible in the resources list. \
 Never use a policy ARN (arn:aws:iam::ACCOUNT:policy/...) as target.
+- For iam_privesc via user manipulation (CreateAccessKey, CreateLoginProfile, UpdateLoginProfile, \
+AttachUserPolicy, PutUserPolicy): target must be an IAM USER ARN \
+(arn:aws:iam::ACCOUNT:user/USER_NAME) visible in the resources list. \
+Pick the most privileged-looking user available (e.g. admin, root, or a user with broad permissions). \
+Never invent ARNs like "any-user" or "any-admin-user".
+- For iam_privesc via group (AddUserToGroup, AttachGroupPolicy, PutGroupPolicy): target must be \
+an IAM user ARN or role ARN visible in the resources list that will benefit from the group escalation. \
+Never invent ARNs.
 - For role_chain: target must be an IAM role ARN visible in the resources list.
 - For credential_access: target must be a Secrets Manager or SSM ARN visible in the resources list.
 - For data_exfil: target must be an S3 bucket or object ARN visible in the resources list.
-- Only use ARNs that appear in the provided resources. Do NOT invent ARNs.
+- For compute_pivot (PassRole to Lambda, EC2, CodeBuild, Glue, SageMaker): target must be an IAM \
+role ARN visible in the resources list that will be passed to the service.
+- CRITICAL: Only use ARNs that appear in the provided resources. Do NOT invent ARNs. \
+If no real ARN fits, omit the hypothesis entirely.
 
 Respond with valid JSON only. No markdown. No text outside JSON.
 
