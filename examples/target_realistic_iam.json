@@ -1,0 +1,14 @@
+{
+  "name": "realistic-iam",
+  "platform": "aws",
+  "accounts": [
+    "550192603632"
+  ],
+  "allowed_regions": [
+    "us-east-1"
+  ],
+  "entry_roles": [],
+  "entry_credential_profiles": {
+    "arn:aws:iam::550192603632:user/ops-deploy-user": "ops-deploy-user"
+  }
+}
