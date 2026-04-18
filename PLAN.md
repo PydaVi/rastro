@@ -291,33 +291,47 @@ nao so nomes de policies. Engine identifica paths exploitaveis sem padroes iam-v
 
 ---
 
-## Bloco 4 — Deep IAM Reasoning (em andamento, 2026-04-18)
+## Bloco 4 — Deep IAM Reasoning (FECHADO, 2026-04-18)
 
 **Direcao**: profundidade antes de expansao.
 **Objetivo**: engine entende permissoes reais, nao so nomes de roles.
 
-### Implementado
+### Resultado
+
+Benchmark: **6/6 campanhas provadas**. 82/88 principals com `policy_permissions` no snapshot.
+
+- `aws-iam-attach-role-policy-privesc`: 2/2 PASS
+- `aws-iam-create-policy-version-privesc`: 2/2 PASS (era intermitentemente falho no Bloco 3)
+- `aws-iam-role-chaining`: 2/2 PASS
+
+### O que foi implementado
 
 - `GetPolicyVersion` + `GetRolePolicy` + `GetUserPolicy` no discovery
 - `policy_permissions: [{source, statements: [{Effect, Action, Resource, Condition}]}]`
   em cada principal do snapshot
 - `StrategicPlanner` recebe documentos reais; system prompt atualizado para raciocinar
   sobre `Action: iam:*`, `Resource: *` sem `Condition` como sinal de exploitabilidade
-- Fallback gracioso: se o client nao tem os novos metodos, discovery retorna sem policy_permissions
-  (compatibilidade retroativa total — 224/224 testes passando)
+- Fallback gracioso: sem os novos metodos no client (testes offline), retorna lista vazia
 - `DiscoveryLimits.max_policies_per_principal = 5` para controlar volume de API calls
+- 224/224 testes passando
 
-### Pendente
+### O que aproximou do polo generalista
 
-Benchmark EXP-104: rodar `scripts/run_bloco4_deep_iam_reasoning.py` contra iam-vulnerable
-e verificar:
-1. Quantos principals tem `policy_permissions` no snapshot
-2. Se o StrategicPlanner usa os documentos para fundamentar hipoteses
-3. Se cobertura de paths sobe alem dos 6-10/run do Bloco 1
+- StrategicPlanner agora fundamenta hipoteses em permissoes reais (Effect/Action/Resource/Condition)
+  em vez de heuristicas baseadas no nome da policy
+- `create-policy-version-privesc` estabilizou: com attack_steps derivados de permissoes concretas,
+  o executor recebe guidance mais especifica e acerta o tool certo
+- 82/88 principals enriquecidos em um ambiente de ~90 identidades
 
-Criterio de saida:
-- StrategicPlanner fundamenta hipoteses em permissoes reais (Action/Resource/Condition), nao em nome de role
-- Engine identifica paths exploitaveis em conta sem padroes iam-vulnerable
+### O que permaneceu dependente de campaigns conhecidas
+
+- Profiles de execucao ainda sao templates pre-definidos
+- O planner raciocina melhor, mas o executor ainda opera dentro de espacos pre-curados por profile
+
+### Proximo experimento de maior leverage
+
+**Bloco 5**: Expansao de chain — entry points reais de internet (EC2 SSRF, Lambda env vars,
+S3 exposto). Engine parte de entry point externo, obtém credencial, completa chain com IAM reasoning.
 
 ---
 
