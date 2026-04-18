@@ -36,8 +36,8 @@ def validate_target(target: TargetConfig) -> list[str]:
         issues.append("target.accounts must not be empty")
     if not target.allowed_regions:
         issues.append("target.allowed_regions must not be empty")
-    if not target.entry_roles:
-        issues.append("target.entry_roles must not be empty")
+    if not target.entry_roles and not target.entry_credential_profiles:
+        issues.append("target.entry_roles must not be empty (or provide entry_credential_profiles)")
     return issues
 
 

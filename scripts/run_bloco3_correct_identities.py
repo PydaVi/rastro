@@ -26,6 +26,10 @@ PERMITTED_PROFILES = [
     "aws-iam-role-chaining",
     "aws-iam-attach-role-policy-privesc",
     "aws-iam-create-policy-version-privesc",
+    "aws-iam-pass-role-privesc",
+    "aws-iam-s3",
+    "aws-iam-secrets",
+    "aws-iam-ssm",
 ]
 
 
