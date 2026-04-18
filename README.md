@@ -46,7 +46,7 @@ Benchmark contra [iam-vulnerable](https://github.com/BishopFox/iam-vulnerable)
 | Bloco 3 — Execução IAM completa | 7/7 campanhas provadas | 3 classes de privesc com mutação real sem SimulatePrincipalPolicy |
 | Bloco 4 — Deep IAM Reasoning | **6/6 campanhas provadas** | Policy documents reais no discovery; planner raciocina sobre Action/Resource/Condition |
 | Bloco 4b — Sintese deterministica | 62 hipoteses sem LLM | `derived_attack_targets` pre-computados; recall 100% para principals com permissoes |
-| Bloco 4c — Privilege Scoring | Targets por blast radius | Engine ranqueia roles por permissoes reais; elimina dependencia de naming convention |
+| Bloco 4c — Privilege Scoring | Targets por blast radius | Score base + recursivo via chains de assume_role (dampen 0.5/hop); elimina naming convention |
 
 ### Capacidade atual
 

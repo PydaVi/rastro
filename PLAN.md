@@ -373,14 +373,24 @@ Benchmark: **6/6 campanhas provadas**. 82/88 principals com `policy_permissions`
 - Em uma conta real com 300 roles, o engine vai selecionar os targets com maior blast radius automaticamente
 - Naming convention (Pass 2 antigo) funciona como fallback, nao como caminho principal
 
+### O que foi implementado (complemento)
+
+- `_apply_recursive_scores()`: DFS com dampen=0.5 propaga scores através de chains de sts:AssumeRole
+  - effective(A) = own(A) + 0.5 * max(effective(B) para cada B assumível por A)
+  - Detecção de ciclo via frozenset; memoização completa
+  - Chamado após _derive_attack_targets (usa suas arestas sts:AssumeRole)
+  - privesc14: base=1300 → efetivo=6299 (UpdateAssumeRolePolicy + chain até admin)
+  - brainctl-user: base=0 → efetivo=3850 (trust_principals em roles score~7700)
+- 224/224 testes passando
+
 ### O que permaneceu dependente de campaigns conhecidas
 
 - Profiles de execucao ainda sao templates pre-definidos
-- Score nao e recursivo (role que pode assumir role admin nao herda o score do admin)
+- Score recursivo limitado a sts:AssumeRole explícito (AttachRolePolicy → assume implícito nao modelado)
 
 ### Proximo experimento de maior leverage
 
-**Bloco 5**: Privilege Scoring recursivo + Expansao de chain.
+**Bloco 5**: Expansao de chain — entry points reais de internet.
 
 ---
 
