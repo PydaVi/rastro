@@ -39,23 +39,18 @@ PutRolePolicy, AddUserToGroup, UpdateLoginProfile, SetDefaultPolicyVersion, \
 AssumeRole, GetSecretValue, GetParameter.
 
 IMPORTANT — target ARN rules:
-- For iam_privesc via role mutation (CreatePolicyVersion, AttachRolePolicy, PutRolePolicy, \
-SetDefaultPolicyVersion, UpdatingAssumeRolePolicy): target must be an IAM ROLE ARN \
-(arn:aws:iam::ACCOUNT:role/ROLE_NAME) visible in the resources list. \
-Never use a policy ARN (arn:aws:iam::ACCOUNT:policy/...) as target. \
-Hint: when policy_permissions shows Action=iam:AttachRolePolicy with Resource=<role-arn>, \
-that role ARN IS the target.
-- For iam_privesc via user manipulation (CreateAccessKey, CreateLoginProfile, UpdateLoginProfile, \
-AttachUserPolicy, PutUserPolicy, AddUserToGroup): target must be an IAM USER ARN \
-(arn:aws:iam::ACCOUNT:user/USER_NAME) visible in the resources list. \
-Never invent ARNs like "any-user".
+- For iam_privesc (CreatePolicyVersion, AttachRolePolicy, PutRolePolicy, SetDefaultPolicyVersion, \
+UpdatingAssumeRolePolicy, CreateAccessKey, CreateLoginProfile, UpdateLoginProfile, etc.): \
+target must be an ARN visible in the resources list. \
+For role mutations: use an IAM ROLE ARN (arn:aws:iam::ACCOUNT:role/ROLE_NAME). \
+For user manipulations (CreateAccessKey, CreateLoginProfile, AttachUserPolicy): use an IAM USER ARN. \
+Never use a policy ARN (arn:aws:iam::ACCOUNT:policy/...) as target.
 - For role_chain: target must be an IAM role ARN visible in the resources list.
 - For credential_access: target must be a Secrets Manager or SSM ARN visible in the resources list.
 - For data_exfil: target must be an S3 bucket or object ARN visible in the resources list.
 - For compute_pivot (PassRole to Lambda, EC2, CodeBuild, Glue, SageMaker): target must be an IAM \
 role ARN visible in the resources list that will be passed to the service.
-- Only use ARNs that appear in the provided resources. Do NOT invent ARNs. \
-If no real ARN fits, omit the hypothesis.
+- Only use ARNs that appear in the provided resources. Do NOT invent ARNs.
 
 Respond with valid JSON only. No markdown. No text outside JSON.
 
