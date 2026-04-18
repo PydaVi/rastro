@@ -241,6 +241,63 @@ Benchmark: **1/3 campanhas provadas** (`aws-iam-attach-role-policy-privesc`).
 
 ---
 
+## Roadmap de medio prazo
+
+### Bloco 4 — Deep IAM Reasoning
+
+**Direcao**: profundidade antes de expansao.
+**Objetivo**: engine entende permissoes reais, nao so nomes de roles.
+
+O gap atual: o StrategicPlanner recebe discovery com *quais* policies estao attached,
+mas nao o *conteudo* das policies. Ele raciocina sobre heuristicas (nome do role,
+tipo de recurso) em vez de permissoes reais.
+
+O que muda:
+- Discovery enriquecido: `GetPolicyVersion` + `GetRolePolicy` + `GetUserPolicy`
+  capturam o JSON bruto das policies de cada principal
+- StrategicPlanner recebe policy documents e raciocina:
+  "esse `Action: iam:*` com `Resource: *` sem `Condition` e exploravel via AttachRolePolicy"
+- Hipoteses geradas sao especificas: entry identity + permissao concreta + path
+
+Criterio de saida:
+- Engine identifica paths exploitaveis em conta sem padroes iam-vulnerable
+- StrategicPlanner fundamenta hipoteses em permissoes reais, nao em nome de role
+
+---
+
+### Bloco 5 — Expansao de Cadeia (Entry Points Reais)
+
+**Direcao**: chains completas, nao so o segmento IAM.
+**Objetivo**: engine parte de entry points reais de internet e completa a chain.
+
+Entry points a cobrir:
+- EC2 instance metadata (SSRF → credencial de instance profile)
+- Lambda environment variables (codigo exposto → AWS credentials)
+- Secrets publicamente acessiveis (S3, GitHub, etc.)
+
+O engine usa IAM reasoning (Bloco 4) para completar a chain apos obter credencial.
+
+Criterio de saida:
+- Pelo menos 1 chain provada: entry point externo → credential theft → IAM privesc → objetivo
+
+---
+
+### Bloco 6 — Outros Servicos como Objetivos
+
+**Direcao**: expansao horizontal controlada apos solidificar raciocinio IAM.
+**Objetivo**: engine raciocina sobre "que chain leva a esse dado/servico", nao so "quem tem acesso".
+
+Nao e adicionar templates de novos servicos.
+E o engine inferir chains multi-servico a partir de permissoes reais:
+- S3 object → quem pode ler → via qual chain de assume_role
+- RDS snapshot → quem pode restaurar → entry point
+- SSM Parameter → quem pode ler → credential theft → pivot
+
+Criterio de saida:
+- Engine mapeia chains ate objetivos em servicos nao-IAM sem profiles pre-definidos
+
+---
+
 ## Gate de medio prazo
 
 ### Blind Hybrid Challenge Readiness (`Wyatt` gate)

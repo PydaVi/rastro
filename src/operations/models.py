@@ -25,6 +25,11 @@ class AuthorizationConfig(BaseModel):
     permitted_profiles: list[str] = Field(default_factory=list)
     excluded_profiles: list[str] = Field(default_factory=list)
     planner_config: dict | None = None
+    # If set, only these entry identity ARNs will be used for campaign generation.
+    permitted_entry_identities: list[str] = Field(default_factory=list)
+    # Per-profile override: maps profile name -> list of entry identity ARNs.
+    # When set for a profile, overrides permitted_entry_identities for that profile.
+    profile_entry_identities: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class ProfileDefinition(BaseModel):

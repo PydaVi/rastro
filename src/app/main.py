@@ -523,7 +523,8 @@ def _validate_run_inputs(fixture, objective: Objective, scope: Scope) -> None:
             observed_resources.add(action.target)
 
     has_aws_identifier = any(_is_aws_identifier(value) for value in observed_resources)
-    has_non_aws_identifier = any(value and not _is_aws_identifier(value) for value in observed_resources)
+    # "*" is a valid AWS wildcard resource specifier, not a non-AWS identifier.
+    has_non_aws_identifier = any(value and value != "*" and not _is_aws_identifier(value) for value in observed_resources)
 
     if scope.target == TargetType.AWS and has_non_aws_identifier:
         raise typer.BadParameter(

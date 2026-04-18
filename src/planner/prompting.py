@@ -34,7 +34,38 @@ If no action is viable, respond with action_index -1 and explain in reason.
 """
 
 
+_MAX_ACTIONS_IN_PROMPT = 20
+
+
+def _prioritize_actions(actions: List[Action], objective_target: str) -> List[Action]:
+    """Cap actions to _MAX_ACTIONS_IN_PROMPT, keeping the most relevant ones first.
+
+    Priority order:
+    1. Non-assume-role actions (enumerate, access_resource for objective)
+    2. Assume-role targeting the objective target directly
+    3. Sample of remaining assume-role actions (up to remaining budget)
+    """
+    if len(actions) <= _MAX_ACTIONS_IN_PROMPT:
+        return actions
+    non_assume = [a for a in actions if a.action_type != ActionType.ASSUME_ROLE]
+    assume_objective = [
+        a for a in actions
+        if a.action_type == ActionType.ASSUME_ROLE and a.target == objective_target
+    ]
+    assume_other = [
+        a for a in actions
+        if a.action_type == ActionType.ASSUME_ROLE and a.target != objective_target
+    ]
+    selected = non_assume + assume_objective
+    remaining = _MAX_ACTIONS_IN_PROMPT - len(selected)
+    if remaining > 0:
+        selected += assume_other[:remaining]
+    return selected[:_MAX_ACTIONS_IN_PROMPT]
+
+
 def build_prompt(snapshot, available_actions: List[Action]) -> str:
+    objective_target = getattr(getattr(snapshot, "objective", None), "target", None) or ""
+    available_actions = _prioritize_actions(available_actions, objective_target)
     actions_repr = [a.model_dump() for a in available_actions]
     candidate_roles = list(getattr(snapshot, "candidate_roles", [])) or list(
         dict.fromkeys(

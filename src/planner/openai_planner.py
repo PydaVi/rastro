@@ -67,14 +67,26 @@ class OpenAIPlanner(Planner):
                 SYSTEM_PROMPT
                 + f"\n\nYou are executing this specific attack path. Prioritize actions that implement these steps:\n{steps_str}"
             )
-        response = self._client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
-            response_format={"type": "json_object"},
-        )
+        import time
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                response = self._client.chat.completions.create(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                    response_format={"type": "json_object"},
+                )
+                break
+            except Exception as exc:
+                msg = str(exc)
+                if "rate_limit_exceeded" in msg and attempt < max_retries - 1:
+                    wait = 2 ** attempt * 5  # 5, 10, 20, 40s
+                    time.sleep(wait)
+                    continue
+                raise
 
         raw = response.choices[0].message.content
         decision = _parse_response(raw, available_actions)

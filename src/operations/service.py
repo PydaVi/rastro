@@ -399,12 +399,22 @@ def _infer_resource_type_from_arn(arn: str) -> str:
 
 def _hypotheses_to_candidates_payload(hypotheses, discovery_snapshot: dict, bundle_name: str) -> dict:
     bundle_profiles = {p.name for p in resolve_bundle(bundle_name)}
+    # Build set of known ARNs from discovery to filter hallucinated targets.
+    known_arns = {
+        r["identifier"]
+        for r in discovery_snapshot.get("resources", [])
+        if r.get("identifier") and r["identifier"].startswith("arn:aws:")
+    }
     candidates = []
     seen: set[tuple[str, str]] = set()
     for hyp in hypotheses:
         profile_family = _attack_class_to_profile(hyp.attack_class, hyp.target, hyp.attack_steps)
         if profile_family not in bundle_profiles:
             logger.debug("Skipping hypothesis: profile %s not in bundle %s", profile_family, bundle_name)
+            continue
+        # Reject targets that are not wildcards and don't exist in the discovery snapshot.
+        if hyp.target and hyp.target != "*" and hyp.target not in known_arns:
+            logger.warning("Skipping hypothesis: target %s not found in discovery snapshot", hyp.target)
             continue
         key = (profile_family, hyp.target)
         if key in seen:
@@ -529,6 +539,8 @@ def run_discovery_driven_assessment(
             bundle_name=bundle_name,
         )
     entry_identities = _blind_real_entry_identities(discovery_snapshot=discovery_snapshot, target=target)
+    if authorization.permitted_entry_identities:
+        entry_identities = [e for e in entry_identities if e in authorization.permitted_entry_identities]
     synthesis_target = target
     if entry_identities and not target.entry_roles:
         synthesis_target = target.model_copy(update={"entry_roles": entry_identities})
@@ -545,7 +557,9 @@ def run_discovery_driven_assessment(
     campaigns: list[CampaignResult] = []
     for plan in campaign_plan_payload["plans"]:
         base_plan_id = plan.get("id") or f"{plan['profile']}:{_slugify(plan.get('resource_arn', plan.get('generated_objective', 'campaign')))}"
-        for entry_identity in entry_identities:
+        profile_ids = authorization.profile_entry_identities.get(plan["profile"])
+        plan_entry_identities = profile_ids if profile_ids is not None else entry_identities
+        for entry_identity in plan_entry_identities:
             actor_slug = _slugify(entry_identity)
             plan_id = f"{base_plan_id}:{actor_slug}"
             campaign_output = output_dir / "campaigns" / plan["profile"] / _slugify(plan_id)
@@ -991,7 +1005,7 @@ def _determine_finding_state(report: dict, campaign: CampaignResult, target_reso
                     role_chaining_simulated_allow = True
             elif granted:
                 has_assume = True
-        if action.get("tool") in {"iam_create_policy_version", "iam_attach_role_policy", "iam_pass_role_service_create"}:
+        if action.get("tool") in {"iam_create_policy_version", "iam_create_policy_version_mutate", "iam_attach_role_policy", "iam_pass_role_service_create"}:
             simulated = observation.get("simulated_policy_result") or {}
             if action.get("target") == target_resource and (simulated.get("decision") or "").lower() == "allowed":
                 policy_probe_simulated_allow = True
@@ -999,7 +1013,7 @@ def _determine_finding_state(report: dict, campaign: CampaignResult, target_reso
             action.get("action_type") == "access_resource"
             and action.get("target") == target_resource
             and action.get("tool")
-            not in {"iam_create_policy_version", "iam_attach_role_policy", "iam_pass_role_service_create"}
+            not in {"iam_create_policy_version", "iam_create_policy_version_mutate", "iam_attach_role_policy", "iam_pass_role_service_create"}
         ):
             if not (observation.get("evidence") or {}).get("simulated"):
                 has_access = True

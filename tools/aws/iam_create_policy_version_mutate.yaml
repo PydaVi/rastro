@@ -1,0 +1,10 @@
+name: iam_create_policy_version_mutate
+description: Execute real iam:CreatePolicyVersion to create an admin policy version on a customer-managed policy attached to the target role, proving privilege escalation
+phase: privilege-escalation
+mitre_id: T1484.001
+platform: AWS IAM
+preconditions: []
+postconditions:
+  - iam_policy_mutation_executed
+implementation: ~
+safe_simulation: false

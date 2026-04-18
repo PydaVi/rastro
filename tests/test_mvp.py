@@ -2726,7 +2726,7 @@ def test_run_generated_campaign_builds_blind_real_runtime_without_fixture_path(
     actions = runtime_fixture.enumerate_actions(None)
     assert any(action.tool == "iam_passrole" for action in actions)
     assert any(action.tool == "s3_read_sensitive" for action in actions)
-    assert any(action.tool == "iam_create_policy_version" for action in actions)
+    assert any(action.tool == "iam_create_policy_version_mutate" for action in actions)
     assert any(action.tool == "iam_attach_role_policy" for action in actions)
     assert any(action.tool == "iam_pass_role_service_create" for action in actions)
     rewritten_scope = json.loads(scope_path.read_text())
@@ -2822,7 +2822,7 @@ def test_run_generated_campaign_blind_real_privesc_profile_limits_policy_probe_t
     assert result.status == "passed"
     runtime_fixture = calls["runtime_fixture"]
     tools = {action.tool for action in runtime_fixture.enumerate_actions(None)}
-    assert "iam_create_policy_version" in tools
+    assert "iam_create_policy_version_mutate" in tools
     assert "iam_attach_role_policy" not in tools
     assert "iam_pass_role_service_create" not in tools
 
@@ -2908,7 +2908,7 @@ def test_run_generated_campaign_uses_discovered_user_entry_identity_for_blind_re
     runtime_fixture = calls["runtime_fixture"]
     actions = runtime_fixture.enumerate_actions(None)
     assert all(action.actor == "arn:aws:iam::123456789012:user/auditor" for action in actions)
-    assert any(action.tool == "iam_simulate_assume_role" for action in actions)
+    assert any(action.tool == "iam_passrole" for action in actions)
     assert any(action.tool == "iam_simulate_target_access" for action in actions)
 
 
@@ -3572,7 +3572,15 @@ def test_hypotheses_to_candidates_payload_maps_attack_classes_to_profiles() -> N
             reasoning="Role can create policy versions.",
         ),
     ]
-    payload = _hypotheses_to_candidates_payload(hypotheses, {"target": "test"}, "aws-iam-heavy")
+    discovery = {
+        "target": "test",
+        "resources": [
+            {"identifier": "arn:aws:iam::123:role/AdminRole", "resource_type": "identity.role"},
+            {"identifier": "arn:aws:secretsmanager:us-east-1:123:secret:prod/key", "resource_type": "secret.secrets_manager"},
+            {"identifier": "arn:aws:iam::123:role/PrivescRole", "resource_type": "identity.role"},
+        ],
+    }
+    payload = _hypotheses_to_candidates_payload(hypotheses, discovery, "aws-iam-heavy")
 
     by_profile = {c["profile_family"]: c for c in payload["candidates"]}
     assert by_profile["aws-iam-role-chaining"]["resource_arn"] == "arn:aws:iam::123:role/AdminRole"
@@ -7845,7 +7853,7 @@ def test_blind_runtime_omits_target_access_probe_for_role_chaining_profile() -> 
 
     actions = runtime.enumerate_actions(snapshot=None)
 
-    assert any(action.tool == "iam_simulate_assume_role" for action in actions)
+    assert any(action.tool == "iam_passrole" for action in actions)
     assert all(action.tool != "iam_simulate_target_access" for action in actions)
 
 
@@ -9284,6 +9292,72 @@ def test_target_config_entry_credential_profiles() -> None:
     )
     assert target.entry_credential_profiles["arn:aws:iam::123456789012:user/privesc9-AttachRolePolicy-user"] == "privesc9-AttachRolePolicy-user"
     assert target.entry_credential_profiles.get("arn:aws:iam::123456789012:user/brainctl-user") is None
+
+
+def test_authorization_config_permitted_entry_identities() -> None:
+    """permitted_entry_identities limits which entry identities are used in campaigns."""
+    from operations.models import AuthorizationConfig
+
+    auth_no_filter = AuthorizationConfig(
+        authorized_by="test",
+        authorized_at="2026-01-01",
+        authorization_document="docs/auth.md",
+    )
+    assert auth_no_filter.permitted_entry_identities == []
+
+    allowed = [
+        "arn:aws:iam::123456789012:user/privesc9-AttachRolePolicy-user",
+        "arn:aws:iam::123456789012:user/brainctl-user",
+    ]
+    auth_with_filter = AuthorizationConfig(
+        authorized_by="test",
+        authorized_at="2026-01-01",
+        authorization_document="docs/auth.md",
+        permitted_entry_identities=allowed,
+    )
+    assert auth_with_filter.permitted_entry_identities == allowed
+
+
+def test_blind_real_entry_identities_filtered_by_authorization(tmp_path: Path) -> None:
+    """_blind_real_entry_identities result is filtered by authorization.permitted_entry_identities."""
+    import json as _json
+    from unittest.mock import MagicMock, patch
+    from operations.models import AuthorizationConfig, TargetConfig
+
+    discovery = {
+        "resources": [
+            {"resource_type": "identity.user", "identifier": "arn:aws:iam::123:user/user-a"},
+            {"resource_type": "identity.user", "identifier": "arn:aws:iam::123:user/user-b"},
+            {"resource_type": "identity.user", "identifier": "arn:aws:iam::123:user/user-c"},
+        ]
+    }
+    target = TargetConfig(
+        name="test",
+        accounts=["123"],
+        allowed_regions=["us-east-1"],
+        entry_credential_profiles={
+            "arn:aws:iam::123:user/user-a": "profile-a",
+            "arn:aws:iam::123:user/user-b": "profile-b",
+        },
+    )
+    auth = AuthorizationConfig(
+        authorized_by="test",
+        authorized_at="2026-01-01",
+        authorization_document="docs/auth.md",
+        permitted_entry_identities=["arn:aws:iam::123:user/user-a"],
+    )
+
+    # Simulate what run_discovery_driven_assessment does
+    import sys
+    sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+    from operations.service import _blind_real_entry_identities
+
+    all_identities = _blind_real_entry_identities(discovery_snapshot=discovery, target=target)
+    filtered = [e for e in all_identities if e in auth.permitted_entry_identities]
+
+    assert filtered == ["arn:aws:iam::123:user/user-a"]
+    assert "arn:aws:iam::123:user/user-b" not in filtered
+    assert "arn:aws:iam::123:user/user-c" not in filtered
 
 
 def test_boto3_aws_client_accepts_profile_name() -> None:

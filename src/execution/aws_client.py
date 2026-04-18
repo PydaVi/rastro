@@ -278,6 +278,46 @@ class AwsClient(Protocol):
         """Executa iam:DetachRolePolicy — rollback de attach_role_policy."""
         ...
 
+    def list_attached_role_policies(
+        self,
+        region: str,
+        role_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[dict]:
+        """Retorna lista de {PolicyArn, PolicyName} attached ao role."""
+        ...
+
+    def create_policy_version(
+        self,
+        region: str,
+        policy_arn: str,
+        policy_document: str,
+        set_as_default: bool = False,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> str:
+        """Cria nova versão da policy. Retorna o VersionId da nova versão."""
+        ...
+
+    def set_default_policy_version(
+        self,
+        region: str,
+        policy_arn: str,
+        version_id: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> None:
+        """Define a versão padrão da policy."""
+        ...
+
+    def delete_policy_version(
+        self,
+        region: str,
+        policy_arn: str,
+        version_id: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> None:
+        """Remove uma versão da policy (rollback)."""
+        ...
+
 
 @dataclass
 class Boto3AwsClient:
@@ -984,6 +1024,62 @@ class Boto3AwsClient:
         try:
             client = self._session(credentials).client("iam", region_name=region)
             client.detach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
+        except Exception:
+            pass  # best-effort rollback
+
+    def list_attached_role_policies(
+        self,
+        region: str,
+        role_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[dict]:
+        client = self._session(credentials).client("iam", region_name=region)
+        paginator = client.get_paginator("list_attached_role_policies")
+        policies: list[dict] = []
+        for page in paginator.paginate(RoleName=role_name):
+            for policy in page.get("AttachedPolicies", []):
+                policies.append({
+                    "PolicyArn": policy["PolicyArn"],
+                    "PolicyName": policy["PolicyName"],
+                })
+        return policies
+
+    def create_policy_version(
+        self,
+        region: str,
+        policy_arn: str,
+        policy_document: str,
+        set_as_default: bool = False,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> str:
+        client = self._session(credentials).client("iam", region_name=region)
+        response = client.create_policy_version(
+            PolicyArn=policy_arn,
+            PolicyDocument=policy_document,
+            SetAsDefault=set_as_default,
+        )
+        return response["PolicyVersion"]["VersionId"]
+
+    def set_default_policy_version(
+        self,
+        region: str,
+        policy_arn: str,
+        version_id: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> None:
+        client = self._session(credentials).client("iam", region_name=region)
+        client.set_default_policy_version(PolicyArn=policy_arn, VersionId=version_id)
+
+    def delete_policy_version(
+        self,
+        region: str,
+        policy_arn: str,
+        version_id: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> None:
+        try:
+            client = self._session(credentials).client("iam", region_name=region)
+            client.delete_policy_version(PolicyArn=policy_arn, VersionId=version_id)
         except Exception:
             pass  # best-effort rollback
 

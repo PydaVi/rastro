@@ -29,6 +29,15 @@ Focus especially on policies whose names contain: CreatePolicyVersion, AttachRol
 CreateAccessKey, PutRolePolicy, AddUserToGroup, UpdateLoginProfile, SetDefaultPolicyVersion, \
 AssumeRole, GetSecretValue, GetParameter.
 
+IMPORTANT — target ARN rules:
+- For iam_privesc (CreatePolicyVersion, AttachRolePolicy, PutRolePolicy, etc.): target must be an IAM \
+ROLE ARN (arn:aws:iam::ACCOUNT:role/ROLE_NAME) visible in the resources list. \
+Never use a policy ARN (arn:aws:iam::ACCOUNT:policy/...) as target.
+- For role_chain: target must be an IAM role ARN visible in the resources list.
+- For credential_access: target must be a Secrets Manager or SSM ARN visible in the resources list.
+- For data_exfil: target must be an S3 bucket or object ARN visible in the resources list.
+- Only use ARNs that appear in the provided resources. Do NOT invent ARNs.
+
 Respond with valid JSON only. No markdown. No text outside JSON.
 
 Response schema:
@@ -36,7 +45,7 @@ Response schema:
   "hypotheses": [
     {
       "entry_identity": "<ARN of attacker-controlled identity>",
-      "target": "<ARN of role, secret, S3 object, or other resource being targeted>",
+      "target": "<ARN from the resources list — role, secret, S3 object, etc.>",
       "attack_class": "<iam_privesc|role_chain|credential_access|data_exfil|compute_pivot>",
       "attack_steps": ["<concrete step 1>", "<concrete step 2>"],
       "confidence": "<high|medium|low>",

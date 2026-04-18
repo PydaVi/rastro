@@ -144,11 +144,10 @@ def _build_generated_success_criteria(candidate: dict) -> dict:
         mode = "assume_role_proved"
     elif profile_family == "aws-iam-attach-role-policy-privesc":
         mode = "policy_mutation_proved"
-    elif profile_family in {
-        "aws-iam-create-policy-version-privesc",
-        "aws-iam-pass-role-privesc",
-    }:
+    elif profile_family == "aws-iam-pass-role-privesc":
         mode = "policy_probe_proved"
+    elif profile_family == "aws-iam-create-policy-version-privesc":
+        mode = "policy_mutation_proved"
     else:
         mode = "target_observed"
     criteria = {
@@ -156,7 +155,7 @@ def _build_generated_success_criteria(candidate: dict) -> dict:
         "mode": mode,
     }
     required_tool_by_profile = {
-        "aws-iam-create-policy-version-privesc": "iam_create_policy_version",
+        "aws-iam-create-policy-version-privesc": "iam_create_policy_version_mutate",
         "aws-iam-attach-role-policy-privesc": "iam_attach_role_policy_mutate",
         "aws-iam-pass-role-privesc": "iam_pass_role_service_create",
     }

@@ -43,6 +43,14 @@ class RollbackTracker:
             "policy_arn": policy_arn,
         })
 
+    def register_delete_policy_version(self, region: str, policy_arn: str, version_id: str) -> None:
+        self._pending.append({
+            "op": "delete_policy_version",
+            "region": region,
+            "policy_arn": policy_arn,
+            "version_id": version_id,
+        })
+
     def execute_all(self, client: AwsClient) -> list[str]:
         """Runs all registered rollbacks. Returns list of errors (best-effort)."""
         errors: list[str] = []
@@ -53,6 +61,12 @@ class RollbackTracker:
                         region=entry["region"],
                         role_name=entry["role_name"],
                         policy_arn=entry["policy_arn"],
+                    )
+                elif entry["op"] == "delete_policy_version":
+                    client.delete_policy_version(
+                        region=entry["region"],
+                        policy_arn=entry["policy_arn"],
+                        version_id=entry["version_id"],
                     )
             except Exception as exc:
                 errors.append(str(exc))
@@ -124,6 +138,8 @@ class AwsRealExecutor:
                 details = self._execute_iam_policy_abuse_probe(client, action, "iam:AttachRolePolicy")
             elif action.tool == "iam_attach_role_policy_mutate":
                 details = self._execute_iam_attach_role_policy_mutate(client, action)
+            elif action.tool == "iam_create_policy_version_mutate":
+                details = self._execute_iam_create_policy_version_mutate(client, action)
             elif action.tool == "iam_pass_role_service_create":
                 details = self._execute_iam_policy_abuse_probe(client, action, "iam:PassRole")
             elif action.tool == "iam_simulate_target_access":
@@ -221,41 +237,48 @@ class AwsRealExecutor:
         self._assumed_role_arn = role_arn
         self._credentials_by_actor[role_arn] = self._assumed_credentials
 
-        policy_action = action.parameters.get("policy_action", "s3:GetObject")
-        policy_resource = action.parameters.get("policy_resource")
-        if not policy_resource:
-            raise ValueError("iam_passrole requires policy_resource")
-        simulation = client.simulate_principal_policy(
-            region=region,
-            policy_source_arn=role_arn,
-            action_names=[policy_action],
-            resource_arns=[policy_resource],
-        )
         caller = client.get_caller_identity(
             region=region,
             credentials=self._assumed_credentials,
         )
-        decision = "implicitDeny"
-        results = simulation.get("EvaluationResults", [])
-        if results:
-            decision = results[0].get("EvalDecision", decision)
+
+        # Attempt simulation post-assume; skip gracefully if actor lacks SimulatePrincipalPolicy.
+        policy_action = action.parameters.get("policy_action", "s3:GetObject")
+        policy_resource = action.parameters.get("policy_resource") or role_arn
+        decision = "unknown"
+        api_calls = ["sts:AssumeRole"]
+        simulated_policy_result: dict = {}
+        try:
+            simulation = client.simulate_principal_policy(
+                region=region,
+                policy_source_arn=role_arn,
+                action_names=[policy_action],
+                resource_arns=[policy_resource],
+            )
+            results = simulation.get("EvaluationResults", [])
+            if results:
+                decision = results[0].get("EvalDecision", decision)
+            api_calls.append("iam:SimulatePrincipalPolicy")
+            simulated_policy_result = {
+                "action": policy_action,
+                "resource": policy_resource,
+                "decision": decision,
+            }
+        except Exception:
+            pass  # Simulation is best-effort; assume succeeded regardless.
 
         return {
             "granted_role": role_arn,
-            "details": "Executed sts:AssumeRole and iam:SimulatePrincipalPolicy against AWS.",
+            "details": "Executed sts:AssumeRole against AWS.",
             "assumed_identity": {
                 "account_id": caller["Account"],
                 "arn": caller["Arn"],
             },
-            "simulated_policy_result": {
-                "action": policy_action,
-                "resource": policy_resource,
-                "decision": decision,
-            },
+            "simulated_policy_result": simulated_policy_result,
             "aws_account_id": caller["Account"],
             "aws_region": region,
             "request_summary": {
-                "api_calls": ["sts:AssumeRole", "iam:SimulatePrincipalPolicy"],
+                "api_calls": api_calls,
                 "role_arn": role_arn,
             },
             "response_summary": {
@@ -630,6 +653,79 @@ class AwsRealExecutor:
             },
             "response_summary": {
                 "attached": True,
+                "rollback_registered": True,
+            },
+            "aws_region": region,
+            "execution_mode": "real",
+            "real_api_called": True,
+        }
+
+    def _execute_iam_create_policy_version_mutate(self, client: AwsClient, action: Action) -> dict:
+        """Executa iam:CreatePolicyVersion real em uma política customer-managed do role alvo.
+
+        Estratégia:
+        1. Lista as políticas attached ao role alvo
+        2. Escolhe a primeira política customer-managed (não AWS-managed)
+        3. Cria nova versão com documento administrativo
+        4. Registra rollback para deletar a versão criada
+        """
+        import json as _json
+
+        region = _required_parameter(action, "region")
+        role_arn = action.parameters.get("role_arn") or action.target
+        if not role_arn:
+            raise ValueError("iam_create_policy_version_mutate requires role_arn or target")
+        role_name = role_arn.split("/")[-1]
+        actor_credentials = self._credentials_for_actor(action.actor)
+
+        # Find customer-managed policies attached to the target role.
+        attached = client.list_attached_role_policies(
+            region=region,
+            role_name=role_name,
+            credentials=actor_credentials,
+        )
+        customer_policies = [
+            p for p in attached
+            if not p["PolicyArn"].startswith("arn:aws:iam::aws:policy/")
+        ]
+        if not customer_policies:
+            raise ValueError(
+                f"No customer-managed policies attached to {role_name}; cannot CreatePolicyVersion"
+            )
+        policy_arn = customer_policies[0]["PolicyArn"]
+        policy_name = customer_policies[0]["PolicyName"]
+
+        # Create a new non-default version with a broad allow document.
+        admin_doc = _json.dumps({
+            "Version": "2012-10-17",
+            "Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}],
+        })
+        new_version_id = client.create_policy_version(
+            region=region,
+            policy_arn=policy_arn,
+            policy_document=admin_doc,
+            set_as_default=False,
+            credentials=actor_credentials,
+        )
+        self.rollback_tracker.register_delete_policy_version(
+            region=region,
+            policy_arn=policy_arn,
+            version_id=new_version_id,
+        )
+        return {
+            "details": (
+                f"Executed iam:CreatePolicyVersion — created {new_version_id} on {policy_name}."
+            ),
+            "mutation_executed": True,
+            "request_summary": {
+                "api_calls": ["iam:ListAttachedRolePolicies", "iam:CreatePolicyVersion"],
+                "role_name": role_name,
+                "policy_arn": policy_arn,
+                "new_version_id": new_version_id,
+            },
+            "response_summary": {
+                "version_created": True,
+                "set_as_default": False,
                 "rollback_registered": True,
             },
             "aws_region": region,

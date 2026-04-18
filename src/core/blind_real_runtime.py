@@ -123,7 +123,7 @@ class BlindRealRuntime:
                         "policy_action": _policy_action_for_target(self.target_arn),
                         "policy_resource": _policy_resource_for_target(self.target_arn),
                     },
-                    tool="iam_simulate_assume_role" if ":user/" in actor else "iam_passrole",
+                    tool="iam_passrole",
                     technique=_technique("T1098", "Account Manipulation"),
                 )
             )
@@ -208,14 +208,19 @@ class BlindRealRuntime:
             return []
         abuse_actions: list[Action] = []
         profile_tools = {
-            "aws-iam-create-policy-version-privesc": ["iam_create_policy_version"],
+            "aws-iam-create-policy-version-privesc": ["iam_create_policy_version_mutate"],
             "aws-iam-attach-role-policy-privesc": ["iam_attach_role_policy_mutate", "iam_attach_role_policy"],
             "aws-iam-pass-role-privesc": ["iam_pass_role_service_create"],
         }.get(
             self.profile_name,
-            ["iam_create_policy_version", "iam_attach_role_policy", "iam_pass_role_service_create"],
+            ["iam_create_policy_version_mutate", "iam_attach_role_policy", "iam_pass_role_service_create"],
         )
-        for role_arn in roles:
+        # Always include the objective target so the required tool appears at step 0,
+        # even before discovered_roles is populated via iam_list_roles.
+        candidate_roles = list(roles)
+        if ":role/" in self.target_arn and self.target_arn not in candidate_roles:
+            candidate_roles = [self.target_arn] + candidate_roles
+        for role_arn in candidate_roles:
             if role_arn == actor or _is_noise_role(role_arn):
                 continue
             for tool in profile_tools:
@@ -265,6 +270,7 @@ def _resource_region(resource_arn: str) -> str | None:
 def _policy_probe_technique(tool: str) -> Technique:
     mapping = {
         "iam_create_policy_version": _technique("T1484.001", "Domain Policy Modification"),
+        "iam_create_policy_version_mutate": _technique("T1484.001", "Domain Policy Modification"),
         "iam_attach_role_policy": _technique("T1098", "Account Manipulation"),
         "iam_attach_role_policy_mutate": _technique("T1098", "Account Manipulation"),
         "iam_pass_role_service_create": _technique("T1098", "Account Manipulation"),
