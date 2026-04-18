@@ -10,7 +10,7 @@ encadeamento, testa cada cadeia e prova o caminho completo de comprometimento.
 
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
-![Tests](https://img.shields.io/badge/tests-211%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-224%20passing-brightgreen)
 ![Status](https://img.shields.io/badge/status-engine%20R%26D-orange)
 
 ---
@@ -22,7 +22,7 @@ precisa de raciocínio automatizado do mesmo nível.
 
 Não um scanner de misconfigurations. Não um playbook de ataques conhecidos.
 Um engine que descobre o ambiente real, raciocina sobre caminhos de ataque
-possíveis, e prova o que funciona.
+possíveis, e prova o que funciona com mutação real e rollback automático.
 
 ### Diferença de abordagem
 
@@ -30,62 +30,96 @@ possíveis, e prova o que funciona.
 **BAS** → testa ataques conhecidos, não raciocina sobre o ambiente  
 **Pentest manual** → não escala com a velocidade de mudança do IAM  
 
-**Rastro** → LLM raciocina sobre o ambiente real → hipóteses → validação → prova
+**Rastro** → LLM raciocina sobre permissões reais → hipóteses → mutação real → prova auditável
 
 ---
 
 ## Estado atual
 
-O engine possui duas camadas funcionais:
+Benchmark contra [iam-vulnerable](https://github.com/BishopFox/iam-vulnerable)
+(31 paths de privilege escalation conhecidos, conta AWS real):
 
-### Camada estratégica — `StrategicPlanner` (Bloco 1, operacional)
+| Bloco | Resultado | O que mudou |
+|-------|-----------|-------------|
+| Bloco 1 — StrategicPlanner | 6–10 paths identificados/run | LLM entra como estrategista antes das campanhas |
+| Bloco 2 — Mutação real | 1/3 campanhas provadas | `iam:AttachRolePolicy` real + rollback automático |
+| Bloco 3 — Execução IAM completa | 7/7 campanhas provadas | 3 classes de privesc com mutação real sem SimulatePrincipalPolicy |
+| Bloco 4 — Deep IAM Reasoning | **6/6 campanhas provadas** | Policy documents reais no discovery; planner raciocina sobre Action/Resource/Condition |
 
-O LLM entra como **estrategista** antes de gerar campanhas:
+### Capacidade atual
+
+O engine parte de um IAM user com permissões restritas e prova chains completas:
 
 ```
-Discovery → LLM raciocina → AttackHypotheses → Campaigns → LLM executa
+discovery (real AWS) → LLM raciocina sobre policy documents reais
+  → AttackHypotheses (entry, target, attack_steps, confidence)
+    → campanha gerada → LLM executa → mutação IAM real
+      → objetivo provado → rollback automático → finding auditável
 ```
 
-`AttackHypothesis` captura: entry identity, target, attack class (iam_privesc,
-role_chain, credential_access...), sequência de passos, confidence e reasoning.
-
-Backends disponíveis: `OpenAICompatibleStrategicPlanner` (OpenAI, Ollama, qualquer
-OpenAI-compatible), `MockStrategicPlanner` para testes offline.
-
-### Camada de execução — engine core (validado em AWS real)
-
-Loop: `enumerate → plan → validate → execute → observe → graph`
-
-- **candidate path tracking** — hipóteses de pivô com status explícito
-- **branch failure memory** — dead-ends marcados, sem revisita
-- **backtracking estruturado** — retorno ao ponto de decisão após falha
-- **action shaping** — policy layer antes do LLM
-- **path scoring com lookahead** — priorização de candidatos
-
-### Infraestrutura de controle
-
-- Scope Enforcer obrigatório em cada ação — sem bypass possível
-- Audit Logger append-only com raciocínio do planner por step
-- Artefatos sanitizados automáticos para compartilhamento
-- Preflight obrigatório antes de qualquer execução real
-- Autorização explícita documentada obrigatória
+Classes de privesc provadas em AWS real:
+- `iam:CreatePolicyVersion` — cria versão admin em customer-managed policy
+- `iam:AttachRolePolicy` — anexa AdministratorAccess a role alvo
+- `sts:AssumeRole` — role chaining até role privilegiado
+- `iam:PassRole` — passa role para serviço com execução privilegiada
 
 ---
 
-## Diagnóstico honesto
+## Arquitetura
 
-Benchmark contra [iam-vulnerable](https://github.com/BishopFox/iam-vulnerable)
-(31 paths de privilege escalation conhecidos):
+```
+                    ┌─────────────────────────────┐
+                    │      StrategicPlanner        │
+                    │  (OpenAI / Ollama / Mock)    │
+                    │  raciocina sobre policy docs │
+                    │  → AttackHypotheses          │
+                    └──────────────┬──────────────┘
+                                   │
+                    ┌──────────────▼──────────────┐
+                    │         RASTRO CORE          │
+                    │                              │
+                    │  Planner ──▶ Tool Executor   │
+                    │  (LLM executa hipóteses)     │
+                    │      ▲           │           │
+                    │      │           ▼           │
+                    │  Attack Graph ◀ Tool Registry│
+                    │  + Candidate Paths           │
+                    │  + Branch Memory             │
+                    │  + Rollback Tracker          │
+                    └──────────────┬──────────────┘
+                                   │
+              ┌────────────────────┼────────────────────┐
+              ▼                    ▼                     ▼
+       Report Engine         Scope Enforcer        Audit Logger
+     (MD + JSON + HTML)       (obrigatório)        (append-only)
+```
 
-**Bloco 1 (StrategicPlanner) — concluído:**
+O LLM é componente de raciocínio — não o orquestrador. Nenhuma lógica de
+controle ou segurança depende do modelo de linguagem.
 
-- gpt-4o identifica 6–10 paths de privesc IAM por run, diretamente do discovery
-- Exemplo: vê `attached_policy_names: ["privesc1-CreateNewPolicyVersion"]` → infere
-  `iam:CreatePolicyVersion` → hipótese estruturada com `attack_steps` e `reasoning`
-- 0 campanhas provaram o path — o executor ainda não muta estado (simula via policy)
+### Discovery enriquecido (Bloco 4)
 
-**Próximo (Bloco 2):** ação de mutação IAM real — chamar `iam:AttachRolePolicy`,
-verificar escalada, fazer rollback. O que fecha a cadeia de comprometimento com evidência.
+O snapshot de discovery agora contém documentos reais de policy por principal:
+
+```json
+{
+  "resource_type": "identity.user",
+  "identifier": "arn:aws:iam::ACCOUNT:user/privesc1-user",
+  "metadata": {
+    "policy_permissions": [
+      {
+        "source": "privesc1-CreateNewPolicyVersion",
+        "statements": [
+          {"Effect": "Allow", "Action": "iam:CreatePolicyVersion", "Resource": "*"}
+        ]
+      }
+    ]
+  }
+}
+```
+
+O `StrategicPlanner` raciocina sobre `Action/Resource/Condition` reais — não sobre
+heurísticas de nome de policy.
 
 ---
 
@@ -99,22 +133,18 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-**Mock — sem LLM, sem AWS:**
+**Testes (sem LLM, sem AWS):**
 
 ```bash
-python -m app.main \
-  --fixture fixtures/iam_lab.json \
-  --objective examples/objective.json \
-  --scope examples/scope.json \
-  --out outputs \
-  --max-steps 5
+pytest                 # 224 testes, sem dependências externas
+pytest -m integration  # requer AWS ou Ollama
 ```
 
-**Assessment discovery-driven com strategic planner (OpenAI/Ollama):**
+**Assessment discovery-driven com strategic planner:**
 
 ```bash
 RASTRO_ENABLE_AWS_REAL=1 python -m app.main assessment run \
-  --bundle aws-foundation \
+  --bundle aws-iam-heavy \
   --target examples/target_aws_foundation.local.json \
   --authorization examples/authorization_aws_foundation.local.json \
   --out outputs \
@@ -123,14 +153,7 @@ RASTRO_ENABLE_AWS_REAL=1 python -m app.main assessment run \
 ```
 
 O `strategic_planner` é configurado via `authorization.json` com `planner_config`
-apontando para o backend LLM desejado.
-
-**Testes:**
-
-```bash
-pytest                 # suite completa — sem dependências externas (211 testes)
-pytest -m integration  # requer AWS ou Ollama
-```
+apontando para o backend LLM desejado (OpenAI, Ollama, ou qualquer OpenAI-compatible).
 
 **CLI operacional:**
 
@@ -139,8 +162,7 @@ python -m app.main profile list
 python -m app.main target validate --target examples/target_aws_foundation.local.json
 python -m app.main preflight validate --scope examples/scope_aws_role_choice_openai.json
 python -m app.main discovery run --scope ...
-python -m app.main assessment run --bundle aws-foundation ...
-python -m app.main assessment run --bundle aws-foundation --discovery-driven ...
+python -m app.main assessment run --bundle aws-iam-heavy --discovery-driven ...
 ```
 
 ---
@@ -163,46 +185,24 @@ authorization_document: "docs/authorization.pdf"
 
 ---
 
-## Arquitetura
+## Experimentos documentados
 
-```
-                    ┌─────────────────────────────┐
-                    │      StrategicPlanner        │
-                    │  (OpenAI / Ollama / Mock)    │
-                    │  raciocina sobre discovery   │
-                    │  → AttackHypotheses          │
-                    └──────────────┬──────────────┘
-                                   │
-                    ┌──────────────▼──────────────┐
-                    │         RASTRO CORE          │
-                    │                              │
-                    │  Planner ──▶ Tool Executor   │
-                    │  (LLM executa hipóteses)     │
-                    │      ▲           │           │
-                    │      │           ▼           │
-                    │  Attack Graph ◀ Tool Registry│
-                    │  + Candidate Paths           │
-                    │  + Branch Memory             │
-                    │  + Path Scoring              │
-                    └──────────────┬──────────────┘
-                                   │
-              ┌────────────────────┼────────────────────┐
-              ▼                    ▼                     ▼
-       Report Engine         Scope Enforcer        Audit Logger
-     (MD + JSON + HTML)       (obrigatório)        (append-only)
-```
-
-O LLM é componente de raciocínio — não o orquestrador. Nenhuma lógica de
-controle ou segurança depende do modelo de linguagem.
+Experimentos em `docs/experiments/` — do primeiro loop real em AWS até o
+benchmark iam-vulnerable. Metodologia: hipótese, metodologia, resultado e
+implicações arquiteturais. Resultados negativos têm documentação igual aos positivos.
 
 ---
 
-## Experimentos documentados
+## Roadmap
 
-99 experimentos em `docs/experiments/` — do primeiro loop real em AWS até
-o benchmark iam-vulnerable. Metodologia científica: hipótese, metodologia,
-resultado e implicações arquiteturais. Resultados negativos têm documentação
-obrigatória igual aos positivos.
+| Bloco | Objetivo |
+|-------|----------|
+| ~~1 — StrategicPlanner~~ | ~~LLM raciocina antes de gerar campanhas~~ |
+| ~~2 — Mutação real~~ | ~~Prova paths com iam:AttachRolePolicy real~~ |
+| ~~3 — IAM completo~~ | ~~3 classes de privesc provadas em AWS real~~ |
+| ~~4 — Deep IAM Reasoning~~ | ~~Policy documents reais no discovery~~ |
+| 5 — Entry Points Reais | EC2 SSRF, Lambda env vars, S3 exposto → chain completa |
+| 6 — Outros serviços como objetivos | Engine infere chains multi-serviço sem templates |
 
 ---
 
@@ -222,9 +222,9 @@ obrigatória igual aos positivos.
 Leia o [PLAN.md](PLAN.md) para o estado atual e direção,
 e o [AGENTS.md](AGENTS.md) para o contrato de desenvolvimento.
 
-O foco atual é o Bloco 2: ação de mutação IAM real para provar paths de privesc
-identificados pelo `StrategicPlanner`. Contribuições alinhadas com generalização
-ofensiva têm prioridade.
+O foco atual é o Bloco 5: entry points reais de internet (EC2 SSRF, Lambda,
+S3 exposto) conectados ao IAM reasoning do Bloco 4 para chains completas.
+Contribuições alinhadas com generalização ofensiva têm prioridade.
 
 ---
 
