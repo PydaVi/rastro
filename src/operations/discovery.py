@@ -314,6 +314,82 @@ def _derive_attack_targets(resources: list[dict]) -> None:
             meta["derived_attack_targets"] = derived
 
 
+_RECURSIVE_DAMPEN = 0.5   # cada hop reduz o score herdado à metade
+
+
+def _apply_recursive_scores(resources: list[dict]) -> None:
+    """Propaga privilege_score através de chains de sts:AssumeRole (determinístico).
+
+    Se o principal A pode assumir o principal B, o score efetivo de A é:
+        effective(A) = own(A) + DAMPEN * max(effective(B) para cada B assumível por A)
+
+    Usa DFS com detecção de ciclo (frozenset de visitados).
+    Chamado DEPOIS de _derive_attack_targets (usa derived_attack_targets como arestas).
+    """
+    # Mapa arn → resource
+    resource_map: dict[str, dict] = {
+        r.get("identifier", ""): r
+        for r in resources
+        if r.get("resource_type") in ("identity.user", "identity.role")
+    }
+
+    # Score base já calculado por _compute_privilege_scores
+    base_score: dict[str, int] = {
+        arn: (r.get("metadata") or {}).get("privilege_score", 0)
+        for arn, r in resource_map.items()
+    }
+
+    # Grafo de assunção: arn → [role arns que pode assumir via sts:AssumeRole]
+    assume_edges: dict[str, list[str]] = {}
+    for arn, r in resource_map.items():
+        meta = r.get("metadata") or {}
+        targets = [
+            d["target_arn"]
+            for d in meta.get("derived_attack_targets", [])
+            if d.get("action", "").lower() == "sts:assumerole"
+            and d.get("target_arn", "") in resource_map
+        ]
+        if targets:
+            assume_edges[arn] = targets
+
+    if not assume_edges:
+        return  # nada a propagar (testes offline, sem derived_attack_targets)
+
+    # DFS com memoização e detecção de ciclo
+    effective: dict[str, int] = {}
+
+    def _compute(arn: str, visiting: frozenset) -> int:
+        if arn in effective:
+            return effective[arn]
+        own = base_score.get(arn, 0)
+        reachable = assume_edges.get(arn, [])
+        if not reachable:
+            effective[arn] = own
+            return own
+        # evita ciclo: se já estamos visitando, retorna score base
+        downstream = [
+            _compute(r, visiting | {arn})
+            for r in reachable
+            if r not in visiting
+        ]
+        bonus = int(_RECURSIVE_DAMPEN * max(downstream)) if downstream else 0
+        result = min(own + bonus, 9999)
+        effective[arn] = result
+        return result
+
+    for arn in resource_map:
+        _compute(arn, frozenset())
+
+    # Atualiza metadata in-place
+    for arn, score in effective.items():
+        r = resource_map[arn]
+        meta = r.get("metadata") or {}
+        if not r.get("metadata"):
+            r["metadata"] = meta
+        meta["privilege_score"] = score
+        meta["is_high_value_target"] = score >= _HIGH_VALUE_THRESHOLD
+
+
 def _ssm_parameter_arn(region: str, account_id: str, name: str) -> str:
     normalized = name if name.startswith("/") else f"/{name}"
     return f"arn:aws:ssm:{region}:{account_id}:parameter{normalized}"
@@ -1027,6 +1103,7 @@ def run_foundation_discovery(
 
     _compute_privilege_scores(resources)
     _derive_attack_targets(resources)
+    _apply_recursive_scores(resources)
 
     summary = {
         "roles": sum(1 for resource in resources if resource["resource_type"] == "identity.role"),
