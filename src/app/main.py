@@ -548,14 +548,20 @@ def _aws_real_execution_enabled() -> bool:
 
 
 def _restore_objective_target_access_actions(snapshot, original_actions, filtered_actions, scope: Scope):
+    """Restore objective-critical actions that may have been removed by ToolRegistry preconditions.
+
+    The ToolRegistry filters actions whose preconditions aren't met yet (e.g. iam_roles_listed).
+    For actions that are directly required to prove the objective, we bypass this gate so the
+    executor can attempt them immediately.
+    """
     if scope.target != TargetType.AWS or scope.dry_run:
         return filtered_actions
     success_mode = getattr(getattr(snapshot, "objective", None), "success_criteria", {}).get("mode")
-    if success_mode not in {"access_proved", "target_observed"}:
+    if not success_mode:
         return filtered_actions
     objective_target = getattr(getattr(snapshot, "objective", None), "target", None)
-    if not objective_target:
-        return filtered_actions
+    success_criteria = getattr(getattr(snapshot, "objective", None), "success_criteria", {})
+
     restored = list(filtered_actions)
     seen = {
         (
@@ -567,7 +573,8 @@ def _restore_objective_target_access_actions(snapshot, original_actions, filtere
         )
         for action in restored
     }
-    for action in original_actions:
+
+    def _add(action):
         key = (
             action.action_type.value,
             action.actor,
@@ -575,8 +582,24 @@ def _restore_objective_target_access_actions(snapshot, original_actions, filtere
             tuple(sorted(action.parameters.items())),
             action.tool,
         )
-        if action.action_type == ActionType.ACCESS_RESOURCE and action.target == objective_target and key not in seen:
+        if key not in seen:
             restored.append(action)
+            seen.add(key)
+
+    for action in original_actions:
+        if success_mode in {"access_proved", "target_observed"}:
+            if action.action_type == ActionType.ACCESS_RESOURCE and action.target == objective_target:
+                _add(action)
+
+        elif success_mode in {"policy_mutation_proved", "policy_probe_proved"}:
+            required_tool = success_criteria.get("required_tool")
+            if required_tool and action.tool == required_tool:
+                _add(action)
+
+        elif success_mode == "assume_role_proved":
+            if action.action_type == ActionType.ASSUME_ROLE and action.target == objective_target:
+                _add(action)
+
     return restored
 
 
