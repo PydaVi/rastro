@@ -38,25 +38,30 @@ Focus especially on: CreatePolicyVersion, AttachRolePolicy, PassRole, CreateAcce
 PutRolePolicy, AddUserToGroup, UpdateLoginProfile, SetDefaultPolicyVersion, \
 AssumeRole, GetSecretValue, GetParameter.
 
-IMPORTANT — target ARN rules:
-- For iam_privesc via role mutation (CreatePolicyVersion, AttachRolePolicy, PutRolePolicy, \
-SetDefaultPolicyVersion, UpdatingAssumeRolePolicy): target must be an IAM ROLE ARN \
-(arn:aws:iam::ACCOUNT:role/ROLE_NAME) visible in the resources list. \
+IMPORTANT — target ARN selection rules:
+
+STEP 1 — Read the Resource field in policy_permissions first:
+- If a statement has a specific Resource ARN (not "*"), that ARN IS the target. Use it directly. \
+Do not substitute a "more privileged-looking" resource. The Resource field tells you exactly \
+what the policy grants access to.
+- Only when Resource = "*" should you choose a target from the resources list.
+
+STEP 2 — When Resource = "*", choose by attack type:
+- iam_privesc via role mutation (CreatePolicyVersion, AttachRolePolicy, PutRolePolicy, \
+SetDefaultPolicyVersion, UpdatingAssumeRolePolicy): pick an IAM ROLE ARN \
+(arn:aws:iam::ACCOUNT:role/ROLE_NAME) from the resources list. \
 Never use a policy ARN (arn:aws:iam::ACCOUNT:policy/...) as target.
-- For iam_privesc via user manipulation (CreateAccessKey, CreateLoginProfile, UpdateLoginProfile, \
-AttachUserPolicy, PutUserPolicy): target must be an IAM USER ARN \
-(arn:aws:iam::ACCOUNT:user/USER_NAME) visible in the resources list. \
-Pick the most privileged-looking user available (e.g. admin, root, or a user with broad permissions). \
+- iam_privesc via user manipulation (CreateAccessKey, CreateLoginProfile, UpdateLoginProfile, \
+AttachUserPolicy, PutUserPolicy): pick an IAM USER ARN \
+(arn:aws:iam::ACCOUNT:user/USER_NAME) from the resources list. \
 Never invent ARNs like "any-user" or "any-admin-user".
-- For iam_privesc via group (AddUserToGroup, AttachGroupPolicy, PutGroupPolicy): target must be \
-an IAM user ARN or role ARN visible in the resources list that will benefit from the group escalation. \
-Never invent ARNs.
-- For role_chain: target must be an IAM role ARN visible in the resources list.
-- For credential_access: target must be a Secrets Manager or SSM ARN visible in the resources list.
-- For data_exfil: target must be an S3 bucket or object ARN visible in the resources list.
-- For compute_pivot (PassRole to Lambda, EC2, CodeBuild, Glue, SageMaker): target must be an IAM \
-role ARN visible in the resources list that will be passed to the service.
-- CRITICAL: Only use ARNs that appear in the provided resources. Do NOT invent ARNs. \
+- role_chain: pick an IAM role ARN from the resources list that the entry identity can assume.
+- credential_access: pick a Secrets Manager or SSM ARN from the resources list.
+- data_exfil: pick an S3 bucket or object ARN from the resources list.
+- compute_pivot (PassRole to Lambda, EC2, CodeBuild, Glue, SageMaker): pick an IAM role ARN \
+from the resources list that will be passed to the service.
+
+CRITICAL: Only use ARNs that appear in the provided resources. Do NOT invent ARNs. \
 If no real ARN fits, omit the hypothesis entirely.
 
 Respond with valid JSON only. No markdown. No text outside JSON.
