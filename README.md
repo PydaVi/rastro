@@ -45,6 +45,8 @@ Benchmark contra [iam-vulnerable](https://github.com/BishopFox/iam-vulnerable)
 | Bloco 2 — Mutação real | 1/3 campanhas provadas | `iam:AttachRolePolicy` real + rollback automático |
 | Bloco 3 — Execução IAM completa | 7/7 campanhas provadas | 3 classes de privesc com mutação real sem SimulatePrincipalPolicy |
 | Bloco 4 — Deep IAM Reasoning | **6/6 campanhas provadas** | Policy documents reais no discovery; planner raciocina sobre Action/Resource/Condition |
+| Bloco 4b — Sintese deterministica | 62 hipoteses sem LLM | `derived_attack_targets` pre-computados; recall 100% para principals com permissoes |
+| Bloco 4c — Privilege Scoring | Targets por blast radius | Engine ranqueia roles por permissoes reais; elimina dependencia de naming convention |
 
 ### Capacidade atual
 
@@ -222,7 +224,8 @@ implicações arquiteturais. Resultados negativos têm documentação igual aos 
 Leia o [PLAN.md](PLAN.md) para o estado atual e direção,
 e o [AGENTS.md](AGENTS.md) para o contrato de desenvolvimento.
 
-O foco atual é o Bloco 5: entry points reais de internet (EC2 SSRF, Lambda,
+O foco atual é o Bloco 5: privilege scoring recursivo (roles que podem assumir
+roles admin herdam score) e entry points reais de internet (EC2 SSRF, Lambda,
 S3 exposto) conectados ao IAM reasoning do Bloco 4 para chains completas.
 Contribuições alinhadas com generalização ofensiva têm prioridade.
 

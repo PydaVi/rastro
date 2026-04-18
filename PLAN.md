@@ -330,8 +330,57 @@ Benchmark: **6/6 campanhas provadas**. 82/88 principals com `policy_permissions`
 
 ### Proximo experimento de maior leverage
 
-**Bloco 5**: Expansao de chain — entry points reais de internet (EC2 SSRF, Lambda env vars,
-S3 exposto). Engine parte de entry point externo, obtém credencial, completa chain com IAM reasoning.
+**Bloco 4c**: Privilege Scoring — engine ranqueia targets por blast radius sem naming convention.
+
+---
+
+## Bloco 4b — derived_attack_targets + Sintese Deterministica (FECHADO, 2026-04-18)
+
+**Objetivo**: eliminar nao-determinismo do LLM na selecao de targets.
+
+### O que foi implementado
+
+- `_derive_attack_targets()`: 3 passes determinísticos
+  - Pass 1: ARN especifico no Resource field → target direto
+  - Pass 2: Resource=* + naming convention (user-X-user → role-X-role) — lab fallback
+  - Pass 3: trust inversion (user em trust_principals do role → sts:AssumeRole)
+- `_derive_hypotheses_from_snapshot()`: 62 hipoteses `confidence=high` sem LLM
+  a partir de `derived_attack_targets` — garante recall = 100% para usuarios com targets pre-computados
+- Merge strategy em `run_discovery_driven_assessment`: LLM first (steps ricos), determinístico preenche lacunas
+- 224/224 testes passando
+
+---
+
+## Bloco 4c — Privilege Scoring (FECHADO, 2026-04-18)
+
+**Direcao**: generalismo ofensivo — engine descobre alvos valiosos em qualquer conta AWS.
+**Objetivo**: substituir heuristica de naming convention por score baseado em permissoes reais.
+
+### Resultado
+
+- `_score_principal()`: soma pesos por acao IAM perigosa × multiplicador de escopo de resource
+- `_compute_privilege_scores()`: `privilege_score` + `is_high_value_target` em cada principal
+- Pass 2 atualizado: `_best_role_by_score()` substitui name-match — prefere roles assumiveis
+  pelo attacker; fallback para maior score global; name-match apenas como ultimo recurso
+- No lab: `brainctl-gh-actions` (score 9999) selecionado como target para privesc1 e privesc9
+  — target correto em qualquer conta, nao apenas no lab com naming convention
+- `privilege_score` exposto ao LLM via `strategic_prompting._compact_resource`
+- 224/224 testes passando
+
+### O que aproximou do polo generalista
+
+- Engine agora identifica os roles mais valiosos de uma conta sem depender de nomes de recursos
+- Em uma conta real com 300 roles, o engine vai selecionar os targets com maior blast radius automaticamente
+- Naming convention (Pass 2 antigo) funciona como fallback, nao como caminho principal
+
+### O que permaneceu dependente de campaigns conhecidas
+
+- Profiles de execucao ainda sao templates pre-definidos
+- Score nao e recursivo (role que pode assumir role admin nao herda o score do admin)
+
+### Proximo experimento de maior leverage
+
+**Bloco 5**: Privilege Scoring recursivo + Expansao de chain.
 
 ---
 
