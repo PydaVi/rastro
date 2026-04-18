@@ -224,17 +224,34 @@ class BlindRealRuntime:
             if role_arn == actor or _is_noise_role(role_arn):
                 continue
             for tool in profile_tools:
+                params: dict[str, Any] = {"service": "iam", "region": region, "role_arn": role_arn}
+                # For CreatePolicyVersion mutations, pre-resolve the policy ARN from discovery
+                # so the executor does not need iam:ListAttachedRolePolicies at runtime.
+                if tool == "iam_create_policy_version_mutate":
+                    policy_arn = self._customer_policy_arn_for_role(role_arn)
+                    if policy_arn:
+                        params["policy_arn"] = policy_arn
                 abuse_actions.append(
                     Action(
                         action_type=ActionType.ACCESS_RESOURCE,
                         actor=actor,
                         target=role_arn,
-                        parameters={"service": "iam", "region": region, "role_arn": role_arn},
+                        parameters=params,
                         tool=tool,
                         technique=_policy_probe_technique(tool),
                     )
                 )
         return abuse_actions
+
+    def _customer_policy_arn_for_role(self, role_arn: str) -> str | None:
+        """Returns the first customer-managed policy ARN attached to the role from discovery."""
+        for resource in self.discovery_snapshot.get("resources", []):
+            if resource.get("identifier") == role_arn:
+                arns = (resource.get("metadata") or {}).get("attached_policy_arns", [])
+                for arn in arns:
+                    if not arn.startswith("arn:aws:iam::aws:policy/"):
+                        return arn
+        return None
 
     def _account_id(self) -> str:
         return (

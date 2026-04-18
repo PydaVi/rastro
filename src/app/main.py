@@ -149,7 +149,12 @@ def execute_run(
     audit = AuditLogger(output_dir / "audit.jsonl")
     reporter = ReportGenerator(output_dir)
 
-    effective_max_steps = min(max_steps, scope.max_steps)
+    if max_steps is None:
+        effective_max_steps = scope.max_steps or 10
+    elif scope.max_steps is None:
+        effective_max_steps = max_steps
+    else:
+        effective_max_steps = min(max_steps, scope.max_steps)
 
     execution_policy = _build_execution_policy(scope)
 

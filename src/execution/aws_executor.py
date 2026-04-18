@@ -678,22 +678,28 @@ class AwsRealExecutor:
         role_name = role_arn.split("/")[-1]
         actor_credentials = self._credentials_for_actor(action.actor)
 
-        # Find customer-managed policies attached to the target role.
-        attached = client.list_attached_role_policies(
-            region=region,
-            role_name=role_name,
-            credentials=actor_credentials,
-        )
-        customer_policies = [
-            p for p in attached
-            if not p["PolicyArn"].startswith("arn:aws:iam::aws:policy/")
-        ]
-        if not customer_policies:
-            raise ValueError(
-                f"No customer-managed policies attached to {role_name}; cannot CreatePolicyVersion"
+        # Use pre-resolved policy ARN from discovery (preferred — avoids iam:ListAttachedRolePolicies).
+        policy_arn = action.parameters.get("policy_arn")
+        policy_name: str
+        if policy_arn:
+            policy_name = policy_arn.split("/")[-1]
+        else:
+            # Fallback: list attached policies at runtime (requires iam:ListAttachedRolePolicies).
+            attached = client.list_attached_role_policies(
+                region=region,
+                role_name=role_name,
+                credentials=actor_credentials,
             )
-        policy_arn = customer_policies[0]["PolicyArn"]
-        policy_name = customer_policies[0]["PolicyName"]
+            customer_policies = [
+                p for p in attached
+                if not p["PolicyArn"].startswith("arn:aws:iam::aws:policy/")
+            ]
+            if not customer_policies:
+                raise ValueError(
+                    f"No customer-managed policies attached to {role_name}; cannot CreatePolicyVersion"
+                )
+            policy_arn = customer_policies[0]["PolicyArn"]
+            policy_name = customer_policies[0]["PolicyName"]
 
         # Create a new non-default version with a broad allow document.
         admin_doc = _json.dumps({
