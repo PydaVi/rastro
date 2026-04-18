@@ -13,6 +13,9 @@ class TargetConfig(BaseModel):
     allowed_regions: list[str] = Field(default_factory=list)
     entry_roles: list[str] = Field(default_factory=list)
     discovery_ssm_prefixes: list[str] = Field(default_factory=list)
+    # Maps identity ARN -> AWS named profile for campaign execution.
+    # Discovery always uses the default profile (admin user).
+    entry_credential_profiles: dict[str, str] = Field(default_factory=dict)
 
 
 class AuthorizationConfig(BaseModel):

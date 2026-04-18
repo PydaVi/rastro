@@ -281,6 +281,8 @@ class AwsClient(Protocol):
 
 @dataclass
 class Boto3AwsClient:
+    profile_name: Optional[str] = None
+
     def __post_init__(self) -> None:
         try:
             import boto3  # noqa: F401
@@ -989,7 +991,7 @@ class Boto3AwsClient:
         import boto3
 
         if not credentials:
-            return boto3.session.Session()
+            return boto3.session.Session(profile_name=self.profile_name or None)
         return boto3.session.Session(
             aws_access_key_id=credentials.get("AccessKeyId"),
             aws_secret_access_key=credentials.get("SecretAccessKey"),

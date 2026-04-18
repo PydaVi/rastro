@@ -233,6 +233,12 @@ def run_generated_campaign(
         and resolved_fixture_path is not None
     ):
         raise ValueError("blind real campaigns derived from discovery must not use fixture_path")
+    # Resolve AWS credential profile for the entry identity of this campaign.
+    entry_identities = plan.get("entry_identities") or []
+    entry_profile: str | None = None
+    if entry_identities and target.entry_credential_profiles:
+        entry_profile = target.entry_credential_profiles.get(entry_identities[0])
+
     try:
         runner_kwargs = dict(
             fixture_path=resolved_fixture_path,
@@ -246,6 +252,8 @@ def run_generated_campaign(
             runner_kwargs["runtime_fixture"] = runtime_fixture
         if attack_steps:
             runner_kwargs["attack_steps"] = attack_steps
+        if entry_profile:
+            runner_kwargs["entry_profile"] = entry_profile
         result = runner(**runner_kwargs)
     except Exception as exc:
         message = str(exc)

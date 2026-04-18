@@ -96,6 +96,7 @@ def execute_run(
     seed: Optional[int] = None,
     runtime_fixture=None,
     attack_steps: list[str] | None = None,
+    entry_profile: str | None = None,
 ) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -142,7 +143,7 @@ def execute_run(
 
     planner: Planner = get_planner(backend=backend, **planner_kwargs)
     scope_enforcer = ScopeEnforcer(scope)
-    execution_surface = _build_execution_surface(environment, scope)
+    execution_surface = _build_execution_surface(environment, scope, entry_profile=entry_profile)
     executor = Executor(execution_surface)
     graph = AttackGraph()
     audit = AuditLogger(output_dir / "audit.jsonl")
@@ -451,9 +452,9 @@ def _build_environment(fixture: Fixture, scope: Scope):
     return fixture
 
 
-def _build_execution_surface(environment, scope: Scope):
+def _build_execution_surface(environment, scope: Scope, entry_profile: str | None = None):
     if scope.target == TargetType.AWS and not scope.dry_run:
-        return AwsRealExecutor(environment, scope)
+        return AwsRealExecutor(environment, scope, entry_profile=entry_profile)
     return environment
 
 

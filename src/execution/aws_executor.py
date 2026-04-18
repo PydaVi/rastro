@@ -68,6 +68,7 @@ class AwsRealExecutor:
     fixture: object
     scope: Scope
     client: AwsClient | None = None
+    entry_profile: str | None = None
     _assumed_credentials: AwsCredentials | None = field(default=None, init=False)
     _assumed_role_arn: str | None = field(default=None, init=False)
     _credentials_by_actor: dict[str, AwsCredentials] = field(default_factory=dict, init=False)
@@ -76,7 +77,7 @@ class AwsRealExecutor:
     rollback_tracker: RollbackTracker = field(default_factory=RollbackTracker, init=False)
 
     def execute(self, action: Action) -> Observation:
-        client = self.client or Boto3AwsClient()
+        client = self.client or Boto3AwsClient(profile_name=self.entry_profile)
         if self._base_actor_arn is None:
             self._base_actor_arn = action.actor
         self._ensure_entry_actor_credentials(client, action)

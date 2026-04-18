@@ -9266,3 +9266,184 @@ def test_action_shaping_prefers_required_tool_for_policy_mutation_proved() -> No
 
     assert len(shaped) == 1
     assert shaped[0].tool == "iam_attach_role_policy_mutate"
+
+
+def test_target_config_entry_credential_profiles() -> None:
+    """entry_credential_profiles maps identity ARN -> AWS profile name."""
+    from operations.models import TargetConfig
+
+    target = TargetConfig(
+        name="test",
+        accounts=["123456789012"],
+        allowed_regions=["us-east-1"],
+        entry_roles=[],
+        entry_credential_profiles={
+            "arn:aws:iam::123456789012:user/privesc9-AttachRolePolicy-user": "privesc9-AttachRolePolicy-user",
+            "arn:aws:iam::123456789012:user/privesc1-CreateNewPolicyVersion-user": "privesc1-CreateNewPolicyVersion-user",
+        },
+    )
+    assert target.entry_credential_profiles["arn:aws:iam::123456789012:user/privesc9-AttachRolePolicy-user"] == "privesc9-AttachRolePolicy-user"
+    assert target.entry_credential_profiles.get("arn:aws:iam::123456789012:user/brainctl-user") is None
+
+
+def test_boto3_aws_client_accepts_profile_name() -> None:
+    """Boto3AwsClient stores profile_name and uses it in session."""
+    from execution.aws_client import Boto3AwsClient
+
+    client_default = Boto3AwsClient()
+    assert client_default.profile_name is None
+
+    client_with_profile = Boto3AwsClient(profile_name="privesc9-AttachRolePolicy-user")
+    assert client_with_profile.profile_name == "privesc9-AttachRolePolicy-user"
+
+
+def test_run_generated_campaign_passes_entry_profile(tmp_path: Path) -> None:
+    """run_generated_campaign resolves entry_profile from target.entry_credential_profiles."""
+    import json as _json
+    from operations.models import TargetConfig, AuthorizationConfig
+    from operations.service import run_generated_campaign
+    from core.domain import Objective, Scope
+
+    # Build minimal generated objective + scope files
+    obj_path = tmp_path / "objective.json"
+    scope_path = tmp_path / "scope.json"
+    obj_path.write_text(_json.dumps({
+        "description": "test",
+        "target": "arn:aws:iam::123456789012:role/privesc9-role",
+        "success_criteria": {"mode": "assume_role_proved"},
+    }))
+    scope_path.write_text(_json.dumps({
+        "target": "fixture",
+        "allowed_actions": ["enumerate", "assume_role"],
+        "allowed_resources": ["arn:aws:iam::123456789012:role/privesc9-role"],
+        "dry_run": True,
+        "aws_account_ids": ["123456789012"],
+        "allowed_regions": ["us-east-1"],
+        "allowed_services": ["iam"],
+        "authorized_by": "tester",
+        "authorized_at": "2026-04-04",
+        "authorization_document": "doc",
+    }))
+
+    target = TargetConfig(
+        name="test",
+        accounts=["123456789012"],
+        allowed_regions=["us-east-1"],
+        entry_roles=["arn:aws:iam::123456789012:user/privesc9-AttachRolePolicy-user"],
+        entry_credential_profiles={
+            "arn:aws:iam::123456789012:user/privesc9-AttachRolePolicy-user": "privesc9-profile"
+        },
+    )
+    authorization = AuthorizationConfig(
+        authorized_by="tester",
+        authorized_at="2026-01-01",
+        authorization_document="doc.pdf",
+        permitted_profiles=["aws-iam-attach-role-policy-privesc"],
+    )
+    plan = {
+        "id": "test-plan",
+        "profile": "aws-iam-attach-role-policy-privesc",
+        "resource_arn": "arn:aws:iam::123456789012:role/privesc9-role",
+        "generated_objective": str(obj_path),
+        "generated_scope": str(scope_path),
+        "fixture_path": None,
+        "scope_template_path": None,
+        "execution_fixture_set": None,
+        "entry_identities": ["arn:aws:iam::123456789012:user/privesc9-AttachRolePolicy-user"],
+        "signals": {},
+    }
+
+    captured_kwargs: dict = {}
+
+    def fake_runner(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {
+            "objective_met": False,
+            "report_json": str(tmp_path / "r.json"),
+            "report_md": str(tmp_path / "r.md"),
+            "preflight": {"ok": True, "details": {}},
+        }
+
+    run_generated_campaign(
+        plan=plan,
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "out",
+        runner=fake_runner,
+    )
+
+    assert captured_kwargs.get("entry_profile") == "privesc9-profile"
+
+
+def test_run_generated_campaign_no_entry_profile_when_not_mapped(tmp_path: Path) -> None:
+    """When identity not in entry_credential_profiles, entry_profile is not passed."""
+    import json as _json
+    from operations.models import TargetConfig, AuthorizationConfig
+    from operations.service import run_generated_campaign
+
+    obj_path = tmp_path / "objective.json"
+    scope_path = tmp_path / "scope.json"
+    obj_path.write_text(_json.dumps({
+        "description": "test",
+        "target": "arn:aws:iam::123456789012:role/some-role",
+        "success_criteria": {"mode": "assume_role_proved"},
+    }))
+    scope_path.write_text(_json.dumps({
+        "target": "fixture",
+        "allowed_actions": ["enumerate"],
+        "allowed_resources": ["arn:aws:iam::123456789012:role/some-role"],
+        "dry_run": True,
+        "aws_account_ids": ["123456789012"],
+        "allowed_regions": ["us-east-1"],
+        "allowed_services": ["iam"],
+        "authorized_by": "tester",
+        "authorized_at": "2026-04-04",
+        "authorization_document": "doc",
+    }))
+
+    target = TargetConfig(
+        name="test",
+        accounts=["123456789012"],
+        allowed_regions=["us-east-1"],
+        entry_roles=["arn:aws:iam::123456789012:user/brainctl-user"],
+        entry_credential_profiles={},  # no mapping for brainctl-user
+    )
+    authorization = AuthorizationConfig(
+        authorized_by="tester",
+        authorized_at="2026-01-01",
+        authorization_document="doc.pdf",
+        permitted_profiles=["aws-iam-role-chaining"],
+    )
+    plan = {
+        "id": "test-plan",
+        "profile": "aws-iam-role-chaining",
+        "resource_arn": "arn:aws:iam::123456789012:role/some-role",
+        "generated_objective": str(obj_path),
+        "generated_scope": str(scope_path),
+        "fixture_path": None,
+        "scope_template_path": None,
+        "execution_fixture_set": None,
+        "entry_identities": ["arn:aws:iam::123456789012:user/brainctl-user"],
+        "signals": {},
+    }
+
+    captured_kwargs: dict = {}
+
+    def fake_runner(**kwargs):
+        captured_kwargs.update(kwargs)
+        return {
+            "objective_met": False,
+            "report_json": str(tmp_path / "r.json"),
+            "report_md": str(tmp_path / "r.md"),
+            "preflight": {"ok": True, "details": {}},
+        }
+
+    run_generated_campaign(
+        plan=plan,
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "out",
+        runner=fake_runner,
+    )
+
+    assert "entry_profile" not in captured_kwargs
