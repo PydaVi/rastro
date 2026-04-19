@@ -455,51 +455,140 @@ Derived targets mapeados por usuario:
 
 ---
 
-### Bloco 6 — Chains Multi-Servico
+### Bloco 6a — Discovery Multi-Servico (FECHADO, 2026-04-19)
 
-**Direcao**: profundidade de chain — blast radius real, nao so escalada de acesso.
-**Objetivo**: engine prova chains que atravessam Secrets Manager, SSM e S3 como elos intermediarios.
+**Direcao**: generalismo ofensivo — o engine precisa enxergar dados antes de raciocinar sobre eles.
+**Objetivo**: snapshot de discovery passa a incluir recursos de dados (Secrets Manager, SSM, S3)
+como entidades de primeira classe, com metadados de quem pode acessar cada um.
 
-Exemplos de chain a provar:
-- `iam:CreateAccessKey` em user alvo → extrai credenciais → assume role privilegiado
-- `secretsmanager:GetSecretValue` → segredo contem credenciais → usa para assume role
-- `s3:GetObject` em bucket especifico → arquivo contem token AWS → privesc
+### Resultado
+
+239/239 testes passando (+15 novos).
+
+### O que foi implementado
+
+- `_DATA_READ_ACTIONS`: mapa `resource_type → frozenset` de acoes de leitura (GetSecretValue,
+  GetParameter, GetParametersByPath, s3:GetObject, e wildcards de servico)
+- `_action_grants_read(action_lower, read_actions)`: 3 casos — exact match, wildcard total (`*`),
+  e sub-wildcard na policy (e.g. `secretsmanager:Get*` cobre GetSecretValue)
+- `_resource_covers_arn(resource_field, target_arn)`: cobre Resource=*, prefix wildcard e exact match
+- `_compute_data_resource_access(resources)`: cross-referencia principals × recursos de dados.
+  Para cada secret/SSM/S3 no snapshot, determina quais principals tem permissao de leitura
+  e adiciona `readable_by: [arn, ...]` ao metadata do recurso.
+  Chamado apos `_apply_recursive_scores` no pipeline de discovery.
+- `strategic_prompting.py`: `_compact_resource` expoe `readable_by`; system prompt instrui o
+  StrategicPlanner a gerar hipoteses de `credential_access` quando entry_identity aparece em
+  `readable_by` de um secret ou parametro.
+
+### Criterios de saida
+
+1. ~~`_compute_data_resource_access` adiciona `readable_by` quando principal tem GetSecretValue~~ PASS
+2. ~~Scopo de Resource especifico (arn:aws:secretsmanager:.../prod/*) nao cobre outros secrets~~ PASS
+3. ~~Effect=Deny nao conta como leitura~~ PASS
+4. ~~Multiplos leitores listados corretamente~~ PASS
+5. ~~StrategicPlanner recebe `readable_by` no prompt compactado~~ PASS
+
+---
+
+### Bloco 6b — Credential Access Passivo (novo vetor)
+
+**Direcao**: nova classe de ataque — leitura de dado como vetor, nao so mutacao IAM.
+**Objetivo**: engine prova que um attacker com permissao de leitura extrai credenciais de dados.
+
+O que muda:
+- Novo tool: `read_secret` (`secretsmanager:GetSecretValue`) com parser de credenciais AWS
+  (`AccessKeyId` / `SecretAccessKey` no valor do secret → detectado automaticamente)
+- Novo tool: `read_ssm_parameter` (`ssm:GetParameter`)
+- Novo profile de campanha: `aws-credential-access-secret`
+- Observation: `credential_extracted: true` quando o secret contem chaves AWS validas
+- Sem rollback (read-only); scope enforcer exige autorizacao explicita para reads de secrets
 
 Criterio de saida:
-- Pelo menos 1 chain provada que atravessa um servico de dados (secrets/SSM/S3) como elo
+- Campanha prova: `user com secretsmanager:GetSecretValue` lê secret → `credential_extracted: true`
+- Finding gerado com `finding_state: proved`, classe `credential_access`
+
+---
+
+### Bloco 6c — Identity Pivot Mid-Chain (salto arquitetural)
+
+**Direcao**: profundidade de chain — o engine passa de "um identity, um path" para "multi-hop real".
+**Objetivo**: engine prova chain completa que atravessa um servico de dados como elo intermediario.
+
+O que muda (arquitetural):
+- `StateSnapshot` ganha `available_identities: list[ExtractedIdentity]` — identidades descobertas
+  durante a campanha (via read_secret, read_ssm, etc.) que ainda nao estavam no discovery inicial
+- Runtime cria sessao boto3 com credenciais extraidas quando o planner decide usar a nova identity
+- `attack_graph` registra o pivot: `node A → [read_secret] → node B (extracted) → [assume_role] → node C`
+- StrategicPlanner recebe sinal de identidades extraidas disponiveis para proximos passos
+
+Chain a provar:
+```
+entry_user (secretsmanager:GetSecretValue)
+  → lê secret com credenciais de service_account_user
+    → assume role privilegiado como service_account_user
+```
+
+Criterio de saida:
+- 1 chain completa provada: read_secret → extracted_identity → assume_role_privileged
+- Attack graph com 3 nos distintos (entry → extracted → privileged)
+
+---
+
+### Bloco 6d — CreateAccessKey Chain (complemento IAM)
+
+**Direcao**: cobertura completa de credential creation — IAM como fonte de nova identidade.
+**Objetivo**: engine prova pivot via criacao de access key em user alvo.
+
+O que muda:
+- Novo tool: `create_access_key` (`iam:CreateAccessKey` em user alvo)
+- Rollback obrigatorio: `delete_access_key` no teardown (qualquer outcome)
+- Nova classe de privesc IAM: `iam_create_access_key` → encaixa no mesmo pipeline de identity pivot do 6c
+- Novo profile de campanha: `aws-iam-create-access-key-pivot`
+
+Chain a provar:
+```
+entry_user (iam:CreateAccessKey no target_user)
+  → cria access key do target_user
+    → assume role privilegiado como target_user
+```
+
+Criterio de saida:
+- Chain provada com rollback automatico (access key deletada apos proof)
+- `derived_attack_targets` detecta `iam:CreateAccessKey` como sinal de pivot path
 
 ---
 
 ### Bloco 7 — Entry Points Externos
 
-**Direcao**: chains completas, nao so o segmento IAM.
-**Objetivo**: engine parte de entry points reais de internet e completa a chain.
+**Direcao**: chains completas partindo do mundo externo — nao so de dentro da conta.
+**Objetivo**: engine parte de entry points de internet e completa a chain ate objetivo privilegiado.
 
 Entry points a cobrir:
-- EC2 instance metadata (SSRF → credencial de instance profile)
-- Lambda environment variables (codigo exposto → AWS credentials)
-- Secrets publicamente acessiveis (S3, GitHub, etc.)
+- EC2 instance metadata service (SSRF → credencial de instance profile → IAM chain)
+- Lambda environment variables (`GetFunctionConfiguration` → AWS_ACCESS_KEY_ID exposta)
+- Secrets publicamente acessiveis (S3 bucket publico, GitHub leak simulado)
 
-O engine usa IAM reasoning (Bloco 4+5) para completar a chain apos obter credencial.
+Dependencia: Bloco 6c (identity pivot) deve estar fechado antes.
+O engine usa o mesmo pipeline de identity pivot do 6c — so muda a fonte da credencial.
 
 Criterio de saida:
-- Pelo menos 1 chain provada: entry point externo → credential theft → IAM privesc → objetivo
+- 1 chain provada: entry point externo → credential theft → IAM privesc → objetivo
 
 ---
 
-### Bloco 6 — Outros Servicos como Objetivos
+### Bloco 8 — Objetivos Nao-IAM (dados e servicos como alvo final)
 
-**Direcao**: expansao horizontal controlada apos solidificar raciocinio IAM.
-**Objetivo**: engine raciocina sobre "que chain leva a esse dado/servico", nao so "quem tem acesso".
+**Direcao**: expansao horizontal — IAM e o caminho, nao o destino.
+**Objetivo**: engine raciocina sobre "que chain leva a esse dado", nao so "quem consegue mais acesso IAM".
 
-Nao e adicionar templates de novos servicos.
-E o engine inferir chains multi-servico a partir de permissoes reais:
-- S3 object → quem pode ler → via qual chain de assume_role
-- RDS snapshot → quem pode restaurar → entry point
-- SSM Parameter → quem pode ler → credential theft → pivot
+O que muda:
+- Objetivos passam a incluir: exfiltrar secret especifico, ler objeto S3 sensivel, dump de RDS snapshot
+- Discovery mapeia "quem pode chegar a esse dado via chain de N passos"
+- StrategicPlanner formula hipoteses com objetivo final sendo dado, nao role
 
 Criterio de saida:
-- Engine mapeia chains ate objetivos em servicos nao-IAM sem profiles pre-definidos
+- Engine mapeia chain ate objetivo de dado (ex: `s3:GetObject` em bucket sensivel)
+  partindo de entry identity sem acesso direto — via chain IAM intermediaria
 
 ---
 

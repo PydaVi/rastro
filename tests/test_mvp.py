@@ -29,7 +29,15 @@ from operations.service import (
 )
 from operations.models import AssessmentResult, CampaignResult
 from operations.models import ProfileDefinition
-from operations.discovery import run_foundation_discovery
+from operations.discovery import (
+    run_foundation_discovery,
+    _compute_data_resource_access,
+    _action_grants_read,
+    _resource_covers_arn,
+    _SECRET_READ_ACTIONS,
+    _SSM_READ_ACTIONS,
+    _S3_READ_ACTIONS,
+)
 from operations.campaign_synthesis import synthesize_foundation_campaigns
 from operations.synthetic_catalog import get_mixed_synthetic_profile, get_synthetic_profile
 from operations.target_selection import select_foundation_targets
@@ -4254,6 +4262,240 @@ def test_run_foundation_discovery_uses_profile_default_ssm_prefixes(tmp_path: Pa
 
     assert client.parameter_path_calls == ["/app", "/finance", "/prod", "/shared"]
     assert snapshot["discovery_config"]["ssm_prefixes"] == ["/app", "/finance", "/prod", "/shared"]
+
+
+# ---------------------------------------------------------------------------
+# Bloco 6a — _compute_data_resource_access
+# ---------------------------------------------------------------------------
+
+def _make_user(arn: str, policy_permissions: list[dict]) -> dict:
+    return {
+        "resource_type": "identity.user",
+        "identifier": arn,
+        "metadata": {"policy_permissions": policy_permissions},
+    }
+
+
+def _make_secret(arn: str) -> dict:
+    return {
+        "resource_type": "secret.secrets_manager",
+        "identifier": arn,
+        "metadata": {"name": arn.rsplit(":", 1)[-1]},
+    }
+
+
+def _make_ssm_param(arn: str) -> dict:
+    return {
+        "resource_type": "secret.ssm_parameter",
+        "identifier": arn,
+        "metadata": {"name": arn.rsplit(":", 1)[-1]},
+    }
+
+
+def _make_s3_bucket(arn: str) -> dict:
+    return {
+        "resource_type": "data_store.s3_bucket",
+        "identifier": arn,
+        "metadata": {},
+    }
+
+
+def test_action_grants_read_exact_match() -> None:
+    assert _action_grants_read("secretsmanager:getsecretvalue", _SECRET_READ_ACTIONS)
+    assert _action_grants_read("ssm:getparameter", _SSM_READ_ACTIONS)
+    assert _action_grants_read("s3:getobject", _S3_READ_ACTIONS)
+
+
+def test_action_grants_read_wildcard_service() -> None:
+    assert _action_grants_read("secretsmanager:*", _SECRET_READ_ACTIONS)
+    assert _action_grants_read("ssm:*", _SSM_READ_ACTIONS)
+    assert _action_grants_read("s3:*", _S3_READ_ACTIONS)
+    assert _action_grants_read("*", _SECRET_READ_ACTIONS)
+
+
+def test_action_grants_read_subwildcard_in_policy() -> None:
+    # Policy diz "secretsmanager:Get*" → cobre GetSecretValue
+    assert _action_grants_read("secretsmanager:get*", _SECRET_READ_ACTIONS)
+    # Policy diz "ssm:GetP*" → cobre GetParameter
+    assert _action_grants_read("ssm:getp*", _SSM_READ_ACTIONS)
+
+
+def test_action_grants_read_no_match() -> None:
+    assert not _action_grants_read("secretsmanager:putsecretvalue", _SECRET_READ_ACTIONS)
+    assert not _action_grants_read("iam:createpolicyversion", _SECRET_READ_ACTIONS)
+    assert not _action_grants_read("ssm:putparameter", _SSM_READ_ACTIONS)
+    assert not _action_grants_read("s3:putobject", _S3_READ_ACTIONS)
+
+
+def test_resource_covers_arn_wildcard() -> None:
+    assert _resource_covers_arn(["*"], "arn:aws:secretsmanager:us-east-1:123:secret:prod/key")
+    assert _resource_covers_arn(
+        ["arn:aws:secretsmanager:us-east-1:123:secret:prod/*"],
+        "arn:aws:secretsmanager:us-east-1:123:secret:prod/key",
+    )
+
+
+def test_resource_covers_arn_exact() -> None:
+    arn = "arn:aws:secretsmanager:us-east-1:123:secret:prod/key"
+    assert _resource_covers_arn([arn], arn)
+    assert not _resource_covers_arn(
+        ["arn:aws:secretsmanager:us-east-1:123:secret:other/key"], arn
+    )
+
+
+def test_compute_data_resource_access_user_can_read_secret() -> None:
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:prod/api-key"
+    user_arn = "arn:aws:iam::123:user/app-user"
+    resources = [
+        _make_user(user_arn, [
+            {"source": "AppPolicy", "statements": [
+                {"Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": "*"},
+            ]},
+        ]),
+        _make_secret(secret_arn),
+    ]
+    _compute_data_resource_access(resources)
+    secret = next(r for r in resources if r["resource_type"] == "secret.secrets_manager")
+    assert user_arn in secret["metadata"]["readable_by"]
+
+
+def test_compute_data_resource_access_user_can_read_ssm_param() -> None:
+    param_arn = "arn:aws:ssm:us-east-1:123:parameter/prod/db/password"
+    user_arn = "arn:aws:iam::123:user/svc-user"
+    resources = [
+        _make_user(user_arn, [
+            {"source": "SSMPolicy", "statements": [
+                {"Effect": "Allow", "Action": "ssm:GetParameter", "Resource": "*"},
+            ]},
+        ]),
+        _make_ssm_param(param_arn),
+    ]
+    _compute_data_resource_access(resources)
+    param = next(r for r in resources if r["resource_type"] == "secret.ssm_parameter")
+    assert user_arn in param["metadata"]["readable_by"]
+
+
+def test_compute_data_resource_access_user_can_read_s3_bucket() -> None:
+    bucket_arn = "arn:aws:s3:::finance-reports"
+    user_arn = "arn:aws:iam::123:user/analyst"
+    resources = [
+        _make_user(user_arn, [
+            {"source": "S3Policy", "statements": [
+                {"Effect": "Allow", "Action": "s3:GetObject", "Resource": "*"},
+            ]},
+        ]),
+        _make_s3_bucket(bucket_arn),
+    ]
+    _compute_data_resource_access(resources)
+    bucket = next(r for r in resources if r["resource_type"] == "data_store.s3_bucket")
+    assert user_arn in bucket["metadata"]["readable_by"]
+
+
+def test_compute_data_resource_access_no_permission_no_readable_by() -> None:
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:prod/api-key"
+    user_arn = "arn:aws:iam::123:user/readonly-user"
+    resources = [
+        _make_user(user_arn, [
+            {"source": "ReadOnlyPolicy", "statements": [
+                {"Effect": "Allow", "Action": "iam:ListRoles", "Resource": "*"},
+            ]},
+        ]),
+        _make_secret(secret_arn),
+    ]
+    _compute_data_resource_access(resources)
+    secret = next(r for r in resources if r["resource_type"] == "secret.secrets_manager")
+    assert "readable_by" not in secret["metadata"]
+
+
+def test_compute_data_resource_access_deny_not_counted() -> None:
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:prod/api-key"
+    user_arn = "arn:aws:iam::123:user/denied-user"
+    resources = [
+        _make_user(user_arn, [
+            {"source": "DenyPolicy", "statements": [
+                {"Effect": "Deny", "Action": "secretsmanager:GetSecretValue", "Resource": "*"},
+            ]},
+        ]),
+        _make_secret(secret_arn),
+    ]
+    _compute_data_resource_access(resources)
+    secret = next(r for r in resources if r["resource_type"] == "secret.secrets_manager")
+    assert "readable_by" not in secret["metadata"]
+
+
+def test_compute_data_resource_access_specific_arn_scope() -> None:
+    secret_a = "arn:aws:secretsmanager:us-east-1:123:secret:prod/key"
+    secret_b = "arn:aws:secretsmanager:us-east-1:123:secret:dev/key"
+    user_arn = "arn:aws:iam::123:user/prod-user"
+    resources = [
+        _make_user(user_arn, [
+            {"source": "ProdPolicy", "statements": [
+                {
+                    "Effect": "Allow",
+                    "Action": "secretsmanager:GetSecretValue",
+                    # só cobre o secret prod
+                    "Resource": "arn:aws:secretsmanager:us-east-1:123:secret:prod/*",
+                },
+            ]},
+        ]),
+        _make_secret(secret_a),
+        _make_secret(secret_b),
+    ]
+    _compute_data_resource_access(resources)
+    prod_secret = next(r for r in resources if r["identifier"] == secret_a)
+    dev_secret = next(r for r in resources if r["identifier"] == secret_b)
+    assert user_arn in prod_secret["metadata"]["readable_by"]
+    assert "readable_by" not in dev_secret["metadata"]
+
+
+def test_compute_data_resource_access_wildcard_service_action() -> None:
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:prod/api-key"
+    user_arn = "arn:aws:iam::123:user/admin-user"
+    resources = [
+        _make_user(user_arn, [
+            {"source": "AdminPolicy", "statements": [
+                {"Effect": "Allow", "Action": "secretsmanager:*", "Resource": "*"},
+            ]},
+        ]),
+        _make_secret(secret_arn),
+    ]
+    _compute_data_resource_access(resources)
+    secret = next(r for r in resources if r["resource_type"] == "secret.secrets_manager")
+    assert user_arn in secret["metadata"]["readable_by"]
+
+
+def test_compute_data_resource_access_multiple_readers() -> None:
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:shared/creds"
+    user_a = "arn:aws:iam::123:user/user-a"
+    user_b = "arn:aws:iam::123:user/user-b"
+    user_c = "arn:aws:iam::123:user/user-c"
+    stmt = {"Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": "*"}
+    resources = [
+        _make_user(user_a, [{"source": "P", "statements": [stmt]}]),
+        _make_user(user_b, [{"source": "P", "statements": [stmt]}]),
+        _make_user(user_c, [{"source": "P", "statements": [
+            {"Effect": "Allow", "Action": "iam:ListRoles", "Resource": "*"},
+        ]}]),
+        _make_secret(secret_arn),
+    ]
+    _compute_data_resource_access(resources)
+    secret = next(r for r in resources if r["resource_type"] == "secret.secrets_manager")
+    assert user_a in secret["metadata"]["readable_by"]
+    assert user_b in secret["metadata"]["readable_by"]
+    assert user_c not in secret["metadata"]["readable_by"]
+
+
+def test_compute_data_resource_access_no_data_resources() -> None:
+    """Sem recursos de dados: nenhum erro, nenhuma mudança."""
+    resources = [
+        _make_user("arn:aws:iam::123:user/u", [
+            {"source": "P", "statements": [
+                {"Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": "*"},
+            ]},
+        ]),
+    ]
+    _compute_data_resource_access(resources)  # deve ser no-op silencioso
+    assert "readable_by" not in resources[0].get("metadata", {})
 
 
 def test_state_snapshot_derives_tool_postcondition_flags() -> None:

@@ -56,6 +56,138 @@ _USER_TARGET_ACTIONS = frozenset({
     "iam:deleteaccesskey",
 })
 
+# ---------------------------------------------------------------------------
+# Bloco 6a — Data Resource Access (readable_by)
+# ---------------------------------------------------------------------------
+
+# Exact actions (lowercase) that grant read access to each data resource type.
+# Wildcard sub-patterns in the *policy action* are handled in _action_grants_read.
+_SECRET_READ_ACTIONS = frozenset({
+    "secretsmanager:getsecretvalue",
+    "secretsmanager:*",
+    "*",
+})
+_SSM_READ_ACTIONS = frozenset({
+    "ssm:getparameter",
+    "ssm:getparameters",
+    "ssm:getparametersbypath",
+    "ssm:*",
+    "*",
+})
+_S3_READ_ACTIONS = frozenset({
+    "s3:getobject",
+    "s3:get*",
+    "s3:*",
+    "*",
+})
+
+# resource_type → set of actions that grant read
+_DATA_READ_ACTIONS: dict[str, frozenset] = {
+    "secret.secrets_manager": _SECRET_READ_ACTIONS,
+    "secret.ssm_parameter":   _SSM_READ_ACTIONS,
+    "data_store.s3_bucket":   _S3_READ_ACTIONS,
+    "data_store.s3_object":   _S3_READ_ACTIONS,
+}
+
+
+def _action_grants_read(action_lower: str, read_actions: frozenset) -> bool:
+    """Verifica se uma ação IAM concede leitura para o tipo de recurso.
+
+    Cobre três casos:
+    1. Exact match: action_lower in read_actions (e.g. secretsmanager:getsecretvalue)
+    2. Policy wildcard: action_lower termina com * (e.g. secretsmanager:Get*)
+       → verifica se alguma ação concreta de read_actions começa com o prefixo.
+    3. Ação na policy é * → coberta pelo exact match (\"*\" está em read_actions).
+    """
+    if action_lower in read_actions:
+        return True
+    if action_lower.endswith("*"):
+        prefix = action_lower[:-1]
+        for ta in read_actions:
+            if ta != "*" and not ta.endswith("*") and ta.startswith(prefix):
+                return True
+    return False
+
+
+def _resource_covers_arn(resource_field: list[str], target_arn: str) -> bool:
+    """Verifica se o campo Resource de um statement IAM cobre o target ARN.
+
+    Suporta Resource=* (curinga total), prefixos com * (e.g. arn:aws:s3:::bucket/*)
+    e match exato.
+    """
+    for res in resource_field:
+        if res == "*":
+            return True
+        if res.endswith("*") and target_arn.startswith(res[:-1]):
+            return True
+        if res == target_arn:
+            return True
+    return False
+
+
+def _compute_data_resource_access(resources: list[dict]) -> None:
+    """Bloco 6a: adiciona readable_by a cada recurso de dado no snapshot.
+
+    Para secrets (Secrets Manager, SSM) e S3 (buckets e objetos): determina
+    quais principals têm permissão de leitura com base em policy_permissions
+    já enriquecidas no discovery.
+
+    readable_by: [arn, ...] — principals com acesso de leitura direto.
+    Chamado após _apply_recursive_scores (policy_permissions já populadas).
+    """
+    data_resources = [
+        r for r in resources if r.get("resource_type") in _DATA_READ_ACTIONS
+    ]
+    principals = [
+        r for r in resources
+        if r.get("resource_type") in ("identity.user", "identity.role")
+    ]
+
+    if not data_resources or not principals:
+        return
+
+    for data_res in data_resources:
+        rt = data_res.get("resource_type", "")
+        target_arn = data_res.get("identifier", "")
+        read_actions = _DATA_READ_ACTIONS[rt]
+        readable_by: list[str] = []
+
+        for principal in principals:
+            principal_arn = principal.get("identifier", "")
+            meta = principal.get("metadata") or {}
+            can_read = False
+
+            for perm in meta.get("policy_permissions", []):
+                if can_read:
+                    break
+                for stmt in perm.get("statements", []):
+                    if stmt.get("Effect") != "Allow":
+                        continue
+                    actions = stmt.get("Action", [])
+                    if isinstance(actions, str):
+                        actions = [actions]
+                    resource_field = stmt.get("Resource", "*")
+                    if isinstance(resource_field, str):
+                        resource_field = [resource_field]
+
+                    for action in actions:
+                        if _action_grants_read(action.lower(), read_actions):
+                            if _resource_covers_arn(resource_field, target_arn):
+                                can_read = True
+                                break
+                    if can_read:
+                        break
+
+            if can_read:
+                readable_by.append(principal_arn)
+
+        if readable_by:
+            meta = data_res.get("metadata")
+            if meta is None:
+                data_res["metadata"] = {}
+                meta = data_res["metadata"]
+            meta["readable_by"] = readable_by
+
 
 def _resolve_target_for_action(
     action: str,
@@ -1137,6 +1269,7 @@ def run_foundation_discovery(
     _compute_privilege_scores(resources)
     _derive_attack_targets(resources)
     _apply_recursive_scores(resources)
+    _compute_data_resource_access(resources)
 
     summary = {
         "roles": sum(1 for resource in resources if resource["resource_type"] == "identity.role"),

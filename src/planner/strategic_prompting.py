@@ -30,11 +30,15 @@ Instructions:
    - Effect=Allow, Action=iam:CreatePolicyVersion/AttachRolePolicy/PutRolePolicy + Resource=* → \
      iam_privesc, pick a role ARN from the resources list as target.
    - Effect=Allow, Action=sts:AssumeRole + Resource=<role ARN> → role_chain to that role.
-   - Effect=Allow, Action=secretsmanager:GetSecretValue or ssm:GetParameter → credential_access.
+   - Effect=Allow, Action=secretsmanager:GetSecretValue or ssm:GetParameter → credential_access \
+     (target = the secret/parameter ARN).
    - A Condition block may restrict the exploit — note it in reasoning.
-4. If neither is available, infer from policy names (e.g. "iam-CreatePolicyVersion" → iam:CreatePolicyVersion).
-5. Generate one hypothesis per (entry_identity, attack_path) pair.
-6. Prefer hypotheses with concrete IAM API calls in attack_steps.
+4. For credential_access: also check data resources with `readable_by` in their metadata. \
+   If an entry_identity ARN appears in `readable_by` of a secret or SSM parameter, \
+   that is a confirmed credential_access path — generate a hypothesis with that resource as target.
+5. If neither is available, infer from policy names (e.g. "iam-CreatePolicyVersion" → iam:CreatePolicyVersion).
+6. Generate one hypothesis per (entry_identity, attack_path) pair.
+7. Prefer hypotheses with concrete IAM API calls in attack_steps.
 
 Focus especially on: CreatePolicyVersion, AttachRolePolicy, PassRole, CreateAccessKey, \
 PutRolePolicy, AddUserToGroup, UpdateLoginProfile, SetDefaultPolicyVersion, \
@@ -119,6 +123,8 @@ def _compact_resource(r: dict) -> dict:
         "policy_names",
         "attached_policies",
         "inline_policies",
+        # Bloco 6a — data resource access (who can read this secret/param/bucket)
+        "readable_by",
     ):
         if key in meta and meta[key]:
             selected_meta[key] = meta[key]
