@@ -1,19 +1,20 @@
 """
-Bloco 4c benchmark: Privilege Scoring em conta sem naming convention.
+Bloco 5 benchmark: Full Account Scan — todos os entry identities.
 
-Objetivo: validar que o engine seleciona platform-admin-role como target
-para ops-deploy-user (que tem iam:AttachRolePolicy + CreatePolicyVersion
-em Resource:*) com base no privilege_score — sem naming convention como hint.
+Objetivo: demonstrar que o engine descobre e prova TODOS os attack paths
+da conta realistic-iam autonomamente, sem configuração por usuário.
 
-Conta: terraform-realistic-iam (acme enterprise simulada)
-  - ops-deploy-user: iam:AttachRolePolicy, CreatePolicyVersion, PutRolePolicy em *
-  - platform-admin-role: iam:* em * (score esperado ~9999, target correto)
-  - 9 outros roles com permissões menores (cicd-deploy, data-pipeline, etc.)
+Entry identities (5 usuários):
+  - ops-deploy-user:    iam:AttachRolePolicy + CreatePolicyVersion + sts:AssumeRole → platform-admin-role
+  - data-engineer-user: iam:PassRole → data-pipeline-role; s3:* no data bucket
+  - sre-oncall-user:    sts:AssumeRole → sre-ops-role (EC2+SSM)
+  - dev-backend-user:   iam:CreateAccessKey em * (credenciais); secretsmanager em app secret
+  - readonly-audit-user:sts:AssumeRole → audit-readonly-role
 
 Critério de sucesso:
-  - derived_attack_targets de ops-deploy-user aponta para platform-admin-role
-  - privilege_score de platform-admin-role > todos os outros roles
-  - Pelo menos 1 campanha de iam_privesc provada contra platform-admin-role
+  - Pelo menos 1 campanha provada por entry identity que tenha alguma capability perigosa
+  - Total de campanhas provadas >= 5 (ao menos 1 por vetor principal)
+  - Engine seleciona alvos por privilege_score sem naming hints
 """
 from __future__ import annotations
 
@@ -31,7 +32,7 @@ from operations.models import AuthorizationConfig, TargetConfig
 from operations.service import run_discovery_driven_assessment
 from app.main import execute_run
 
-OUTPUT = Path("outputs_bloco4c_privilege_scoring")
+OUTPUT = Path("outputs_bloco5_full_account_scan")
 TARGET_JSON = Path("examples/target_realistic_iam.json")
 ACCOUNT = "550192603632"
 
@@ -45,17 +46,13 @@ PERMITTED_PROFILES = [
     "aws-iam-ssm",
 ]
 
-PROFILE_ENTRY_IDENTITIES = {
-    "aws-iam-attach-role-policy-privesc": [
-        f"arn:aws:iam::{ACCOUNT}:user/ops-deploy-user",
-    ],
-    "aws-iam-create-policy-version-privesc": [
-        f"arn:aws:iam::{ACCOUNT}:user/ops-deploy-user",
-    ],
-    "aws-iam-role-chaining": [
-        f"arn:aws:iam::{ACCOUNT}:user/ops-deploy-user",
-    ],
-}
+ALL_USERS = [
+    f"arn:aws:iam::{ACCOUNT}:user/ops-deploy-user",
+    f"arn:aws:iam::{ACCOUNT}:user/data-engineer-user",
+    f"arn:aws:iam::{ACCOUNT}:user/sre-oncall-user",
+    f"arn:aws:iam::{ACCOUNT}:user/dev-backend-user",
+    f"arn:aws:iam::{ACCOUNT}:user/readonly-audit-user",
+]
 
 
 def main() -> None:
@@ -64,11 +61,11 @@ def main() -> None:
 
     authorization = AuthorizationConfig(
         authorized_by="PydaVi",
-        authorized_at="2026-04-18",
+        authorized_at="2026-04-19",
         authorization_document="docs/authorization-blind-real.md",
         permitted_profiles=PERMITTED_PROFILES,
-        permitted_entry_identities=[f"arn:aws:iam::{ACCOUNT}:user/ops-deploy-user"],
-        profile_entry_identities=PROFILE_ENTRY_IDENTITIES,
+        permitted_entry_identities=ALL_USERS,
+        profile_entry_identities={},   # engine escolhe entry por hipótese
         planner_config={"backend": "openai", "model": "gpt-4o"},
     )
 
@@ -82,10 +79,10 @@ def main() -> None:
         output_dir=OUTPUT,
         runner=execute_run,
         max_steps=9,
-        max_plans_per_profile=1,
+        max_plans_per_profile=3,      # até 3 alvos por perfil
         dedupe_resource_targets=False,
         strategic_planner=strategic_planner,
-        max_hypotheses=20,
+        max_hypotheses=40,            # conta maior, mais hipóteses
     )
 
     campaigns = result.campaigns
@@ -124,16 +121,16 @@ def main() -> None:
             hvt = "★" if meta.get("is_high_value_target") else " "
             print(f"  {score:5d} {hvt} {name}")
 
-        print("\n=== DERIVED ATTACK TARGETS (ops-deploy-user) ===")
-        for r in resources:
-            if "ops-deploy-user" in r.get("identifier", ""):
-                meta = r.get("metadata") or {}
-                dat = meta.get("derived_attack_targets", [])
-                if dat:
-                    for d in dat:
-                        print(f"  {d['action']} → {d['target_arn'].split('/')[-1]}")
-                else:
-                    print("  (nenhum derived_attack_target)")
+        print("\n=== DERIVED TARGETS POR USUÁRIO ===")
+        users = [r for r in resources if r.get("resource_type") == "identity.user"]
+        for r in users:
+            name = r["identifier"].split("/")[-1]
+            dat = (r.get("metadata") or {}).get("derived_attack_targets", [])
+            if dat:
+                for d in dat:
+                    action = d["action"]
+                    tgt = d["target_arn"].split("/")[-1]
+                    print(f"  {name:25s} {action} → {tgt}")
 
         principals_with_docs = sum(
             1 for r in resources
@@ -145,6 +142,18 @@ def main() -> None:
             if r.get("resource_type") in ("identity.user", "identity.role")
         )
         print(f"\ndiscovery: {principals_with_docs}/{total_principals} principals com policy_permissions")
+
+        # Resumo por entry identity
+        print("\n=== CAMPANHAS POR ENTRY IDENTITY ===")
+        by_entry: dict[str, list] = {}
+        for c in campaigns:
+            entry = getattr(c, "identity_arn", None) or "unknown"
+            by_entry.setdefault(entry, []).append(c)
+        for entry, cs in sorted(by_entry.items()):
+            name = entry.split("/")[-1]
+            p = sum(1 for c in cs if c.objective_met)
+            f = sum(1 for c in cs if not c.objective_met and not c.error)
+            print(f"  {name:25s} {p} passed / {f} failed / {len(cs)} total")
 
 
 if __name__ == "__main__":

@@ -359,6 +359,9 @@ def _attack_class_to_profile(attack_class: str, target_arn: str, attack_steps: l
             return "aws-iam-create-policy-version-privesc"
         if "attachrolepolicy" in steps_lower or "attach_role_policy" in steps_lower:
             return "aws-iam-attach-role-policy-privesc"
+        if "putrolepolicy" in steps_lower or "put_role_policy" in steps_lower:
+            # iam:PutRolePolicy injeta policy inline em role — mesmo efeito que AttachRolePolicy
+            return "aws-iam-attach-role-policy-privesc"
         if "passrole" in steps_lower or "pass_role" in steps_lower:
             return "aws-iam-pass-role-privesc"
         return "aws-iam-role-chaining"
@@ -509,12 +512,18 @@ def _infer_resource_type_from_arn(arn: str) -> str:
 
 def _hypotheses_to_candidates_payload(hypotheses, discovery_snapshot: dict, bundle_name: str) -> dict:
     bundle_profiles = {p.name for p in resolve_bundle(bundle_name)}
-    # Build set of known ARNs from discovery to filter hallucinated targets.
-    known_arns = {
-        r["identifier"]
-        for r in discovery_snapshot.get("resources", [])
-        if r.get("identifier") and r["identifier"].startswith("arn:aws:")
-    }
+    # Build set of known ARNs and privilege scores for target resolution.
+    known_arns: set[str] = set()
+    target_priv_scores: dict[str, int] = {}
+    for r in discovery_snapshot.get("resources", []):
+        arn = r.get("identifier", "")
+        if arn and arn.startswith("arn:aws:"):
+            known_arns.add(arn)
+        if r.get("resource_type") in ("identity.user", "identity.role"):
+            priv_score = (r.get("metadata") or {}).get("privilege_score", 0)
+            if priv_score:
+                target_priv_scores[arn] = priv_score
+
     candidates = []
     seen: set[tuple[str, str]] = set()
     for hyp in hypotheses:
@@ -530,7 +539,12 @@ def _hypotheses_to_candidates_payload(hypotheses, discovery_snapshot: dict, bund
         if key in seen:
             continue
         seen.add(key)
-        score = _confidence_to_score(hyp.confidence)
+        base_score = _confidence_to_score(hyp.confidence)
+        # Tiebreaker: adiciona bônus baseado no privilege_score do alvo (0-15 pts).
+        # Garante que roles de alto valor (iam:*, score elevado) sejam priorizados
+        # sobre alvos menos relevantes com mesma confidence.
+        priv_bonus = min(15, target_priv_scores.get(hyp.target, 0) // 600)
+        score = base_score + priv_bonus
         candidates.append({
             "id": f"{profile_family}:{_slugify(hyp.target)}",
             "resource_arn": hyp.target,
@@ -540,7 +554,7 @@ def _hypotheses_to_candidates_payload(hypotheses, discovery_snapshot: dict, bund
             "confidence": hyp.confidence,
             "selection_reason": [f"strategic:{hyp.attack_class}", *hyp.attack_steps[:2]],
             "signals": {"reasoning": hyp.reasoning, "entry_identity": hyp.entry_identity, "attack_steps": hyp.attack_steps},
-            "score_components": {"lexical": 0, "structural": score},
+            "score_components": {"lexical": 0, "structural": base_score, "privilege_bonus": priv_bonus},
             "execution_fixture_set": None,
             "fixture_path": None,
             "scope_template_path": None,
@@ -634,12 +648,17 @@ def run_discovery_driven_assessment(
                 discovery_snapshot, effective_entry_identities, scope_for_strategic
             )
 
-            # Merge: LLM first (may have richer steps), then fill in any missed with deterministic
+            # Merge: LLM first (may have richer steps), then fill in any missed with deterministic.
+            # Dedup key usa profile_family (não attack_class) para que AttachRolePolicy,
+            # CreatePolicyVersion e PutRolePolicy gerem candidatos em perfis distintos.
             seen_keys: set[tuple] = {
-                (h.entry_identity, h.target, h.attack_class) for h in llm_hypotheses
+                (h.entry_identity, h.target,
+                 _attack_class_to_profile(h.attack_class, h.target, h.attack_steps))
+                for h in llm_hypotheses
             }
             for h in det_hypotheses:
-                key = (h.entry_identity, h.target, h.attack_class)
+                key = (h.entry_identity, h.target,
+                       _attack_class_to_profile(h.attack_class, h.target, h.attack_steps))
                 if key not in seen_keys:
                     seen_keys.add(key)
                     llm_hypotheses.append(h)
@@ -687,7 +706,16 @@ def run_discovery_driven_assessment(
     for plan in campaign_plan_payload["plans"]:
         base_plan_id = plan.get("id") or f"{plan['profile']}:{_slugify(plan.get('resource_arn', plan.get('generated_objective', 'campaign')))}"
         profile_ids = authorization.profile_entry_identities.get(plan["profile"])
-        plan_entry_identities = profile_ids if profile_ids is not None else entry_identities
+        # Prioridade: 1) profile_entry_identities explícito, 2) signals.entry_identity
+        # da hipótese (sabe qual user tem a capability), 3) todos os entry_identities.
+        if profile_ids is not None:
+            plan_entry_identities = profile_ids
+        else:
+            hypothesis_entry = (plan.get("signals") or {}).get("entry_identity")
+            if hypothesis_entry and hypothesis_entry in entry_identities:
+                plan_entry_identities = [hypothesis_entry]
+            else:
+                plan_entry_identities = entry_identities
         for entry_identity in plan_entry_identities:
             actor_slug = _slugify(entry_identity)
             plan_id = f"{base_plan_id}:{actor_slug}"

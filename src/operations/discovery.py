@@ -92,9 +92,16 @@ def _resolve_target_for_action(
 # ---------------------------------------------------------------------------
 
 # Pesos base por ação. Resource=* aplica multiplicador 2x.
+# IMPORTANTE: o prefixo "*" NÃO é usado em prefix-matching (evita false positives).
+# Prefix-matching só roda quando a própria ação na policy termina com "*"
+# (e.g. iam:Create*, s3:*) — ações específicas (sem *) usam apenas exact-lookup.
 _PRIV_ACTION_SCORES: dict[str, int] = {
-    "iam:*":                          1000,
-    "*":                              1000,
+    # Wildcards exatos — ação literalmente "*" ou "svc:*"
+    # iam:* e * valem muito mais que ações individuais: representa TODAS as permissões.
+    # Score alto o suficiente para sempre superar combinações de ações específicas.
+    "iam:*":                          4000,
+    "*":                              4500,   # usado apenas em exact-match, não em prefix
+    # IAM mutation — altamente perigosas
     "iam:createpolicyversion":         500,
     "iam:attachrolepolicy":            500,
     "iam:putrolepolicy":               500,
@@ -104,18 +111,39 @@ _PRIV_ACTION_SCORES: dict[str, int] = {
     "iam:passrole":                    350,
     "iam:attachuserpolicy":            350,
     "iam:attachgrouppolicy":           300,
-    "iam:addusertgroup":               300,
+    "iam:addusertogroup":              300,
     "iam:putuserpolicy":               300,
     "iam:createloginprofile":          250,
     "iam:updateloginprofile":          250,
+    # IAM mutation wildcard sub-patterns (e.g. policy usa "iam:Create*")
+    "iam:create*":                     400,
+    "iam:attach*":                     400,
+    "iam:put*":                        350,
+    "iam:update*":                     300,
+    "iam:delete*":                     150,
+    # IAM read-only sub-patterns — baixíssimo risco
+    "iam:list*":                         5,
+    "iam:get*":                          5,
+    "iam:describe*":                     0,
+    "iam:generate*":                     0,
+    "iam:simulate*":                     0,
+    # STS
     "sts:assumerole":                  200,
+    # Secrets
     "secretsmanager:*":               150,
     "secretsmanager:getsecretvalue":  120,
+    # SSM
     "ssm:*":                          120,
     "ssm:getparameter":                80,
     "ssm:getparametersbypath":         80,
+    # S3 — wildcard sub-patterns
     "s3:*":                           150,
     "s3:getobject":                    50,
+    "s3:putobject":                    40,
+    "s3:deleteobject":                 40,
+    "s3:get*":                         10,
+    "s3:list*":                         5,
+    # Compute / data
     "ec2:*":                          100,
     "lambda:*":                       100,
     "glue:*":                         100,
@@ -150,11 +178,13 @@ def _score_principal(r: dict) -> int:
             for action in actions:
                 al = action.lower()
                 action_score = _PRIV_ACTION_SCORES.get(al, 0)
-                if not action_score:
-                    # prefixo (e.g. iam:create* → iam:createpolicyversion)
+                if not action_score and al.endswith("*") and al != "*":
+                    # Ação na policy é um wildcard sub-pattern (e.g. iam:Create*, s3:*)
+                    # Busca o padrão mais específico que contenha este prefixo.
+                    # Exclui "*" do matching (prefixo vazio causaria false positives).
                     for pat, ps in _PRIV_ACTION_SCORES.items():
-                        if pat.endswith("*") and al.startswith(pat[:-1]):
-                            action_score = max(action_score, ps // 2)
+                        if pat != "*" and pat.endswith("*") and al.startswith(pat[:-1]):
+                            action_score = max(action_score, ps)
                 score += int(action_score * multiplier)
 
     return min(score, 9999)
@@ -285,10 +315,13 @@ def _derive_attack_targets(resources: list[dict]) -> None:
                             seen_targets.add(key)
                             derived.append({"action": action, "target_arn": target_arn})
 
-        # Pass 2: privilege-score para Resource=* quando Pass 1 não encontrou targets.
-        # Prefere roles que o user já pode assumir (trust policy); fallback para maior
-        # score global; último recurso: name-match (lab convention).
-        if not derived and wildcard_privesc_actions:
+        # Pass 2: wildcard IAM mutation (Resource=*) → escolhe melhor alvo por score.
+        # Roda SEMPRE que há ações de mutação wildcard (independente do Pass 1).
+        # sts:AssumeRole wildcard é excluído aqui — tratado no Pass 3 via trust inversion.
+        # Prefere roles que o user já pode assumir; fallback para maior score global;
+        # último recurso: name-match (lab convention).
+        non_sts_wildcard = [a for a in wildcard_privesc_actions if a.lower() != "sts:assumerole"]
+        if non_sts_wildcard:
             assumable_here = user_assumable_roles.get(user_arn, [])
             best_role = _best_role_by_score(
                 role_arns_in_snapshot, resources, prefer_arns=assumable_here or None
@@ -296,7 +329,7 @@ def _derive_attack_targets(resources: list[dict]) -> None:
             if best_role is None:
                 best_role = _name_match_role(user_arn, role_arns_in_snapshot)
             if best_role:
-                for action in wildcard_privesc_actions:
+                for action in non_sts_wildcard:
                     key = (action.lower(), best_role)
                     if key not in seen_targets:
                         seen_targets.add(key)

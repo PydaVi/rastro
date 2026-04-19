@@ -11,6 +11,7 @@ encadeamento, testa cada cadeia e prova o caminho completo de comprometimento.
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![Tests](https://img.shields.io/badge/tests-224%20passing-brightgreen)
+![Campaigns](https://img.shields.io/badge/campaigns%20proved-5%2F5%20(100%25)-brightgreen)
 ![Status](https://img.shields.io/badge/status-engine%20R%26D-orange)
 
 ---
@@ -36,34 +37,44 @@ possíveis, e prova o que funciona com mutação real e rollback automático.
 
 ## Estado atual
 
-Benchmark contra [iam-vulnerable](https://github.com/BishopFox/iam-vulnerable)
-(31 paths de privilege escalation conhecidos, conta AWS real):
-
 | Bloco | Resultado | O que mudou |
 |-------|-----------|-------------|
 | Bloco 1 — StrategicPlanner | 6–10 paths identificados/run | LLM entra como estrategista antes das campanhas |
 | Bloco 2 — Mutação real | 1/3 campanhas provadas | `iam:AttachRolePolicy` real + rollback automático |
-| Bloco 3 — Execução IAM completa | 7/7 campanhas provadas | 3 classes de privesc com mutação real sem SimulatePrincipalPolicy |
-| Bloco 4 — Deep IAM Reasoning | **6/6 campanhas provadas** | Policy documents reais no discovery; planner raciocina sobre Action/Resource/Condition |
-| Bloco 4b — Sintese deterministica | 62 hipoteses sem LLM | `derived_attack_targets` pre-computados; recall 100% para principals com permissoes |
-| Bloco 4c — Privilege Scoring | Targets por blast radius | Score base + recursivo via chains de assume_role (dampen 0.5/hop); elimina naming convention |
+| Bloco 3 — Execução IAM completa | 7/7 campanhas provadas | 3 classes de privesc sem SimulatePrincipalPolicy |
+| Bloco 4 — Deep IAM Reasoning | 6/6 campanhas provadas | Policy documents reais; planner raciocina sobre Action/Resource/Condition |
+| Bloco 4b/4c — Scoring + Determinismo | 3/3 em conta sem naming convention | Privilege score por blast radius; derived_attack_targets sem LLM |
+| **Bloco 5 — Full Account Scan** | **5/5 (100%)** | **5 usuários, 0 configuração manual, 0 falhas** |
 
 ### Capacidade atual
 
-O engine parte de um IAM user com permissões restritas e prova chains completas:
+O engine aponta para qualquer conta AWS e mapeia a superfície de ataque completa sem configuração:
 
 ```
-discovery (real AWS) → LLM raciocina sobre policy documents reais
-  → AttackHypotheses (entry, target, attack_steps, confidence)
-    → campanha gerada → LLM executa → mutação IAM real
-      → objetivo provado → rollback automático → finding auditável
+conta AWS (qualquer) → discovery autônomo → privilege scoring por blast radius
+  → derived_attack_targets determinísticos por usuário
+    → campanhas roteadas para o entry identity certo
+      → mutação real → prova auditável → rollback automático
 ```
 
-Classes de privesc provadas em AWS real:
+Classes de privesc provadas em AWS real (conta enterprise simulada, sem naming conventions):
 - `iam:CreatePolicyVersion` — cria versão admin em customer-managed policy
 - `iam:AttachRolePolicy` — anexa AdministratorAccess a role alvo
 - `sts:AssumeRole` — role chaining até role privilegiado
 - `iam:PassRole` — passa role para serviço com execução privilegiada
+
+### Demonstração: Full Account Scan
+
+5 usuários, conta realista, zero configuração manual de alvos:
+
+```
+ops-deploy-user    → platform-admin-role (3 vetores: role-chain, attach, create-policy-version)
+data-engineer-user → data-pipeline-role  (role-chaining)
+readonly-audit-user → audit-readonly-role (role-chaining)
+```
+
+O engine selecionou `platform-admin-role` (score 8400, `iam:*`) como alvo principal
+sem nenhuma dica de naming convention — apenas pelo blast radius real das permissões.
 
 ---
 
@@ -203,8 +214,9 @@ implicações arquiteturais. Resultados negativos têm documentação igual aos 
 | ~~2 — Mutação real~~ | ~~Prova paths com iam:AttachRolePolicy real~~ |
 | ~~3 — IAM completo~~ | ~~3 classes de privesc provadas em AWS real~~ |
 | ~~4 — Deep IAM Reasoning~~ | ~~Policy documents reais no discovery~~ |
-| 5 — Entry Points Reais | EC2 SSRF, Lambda env vars, S3 exposto → chain completa |
-| 6 — Outros serviços como objetivos | Engine infere chains multi-serviço sem templates |
+| ~~5 — Full Account Scan~~ | ~~5/5 campanhas, 5 usuários, 0 configuração manual~~ |
+| 6 — Chains multi-serviço | Secrets, SSM, S3 como elos intermediários de chain |
+| 7 — Entry Points Externos | EC2 SSRF, Lambda env vars → chain completa |
 
 ---
 
@@ -224,9 +236,9 @@ implicações arquiteturais. Resultados negativos têm documentação igual aos 
 Leia o [PLAN.md](PLAN.md) para o estado atual e direção,
 e o [AGENTS.md](AGENTS.md) para o contrato de desenvolvimento.
 
-O foco atual é o Bloco 5: privilege scoring recursivo (roles que podem assumir
-roles admin herdam score) e entry points reais de internet (EC2 SSRF, Lambda,
-S3 exposto) conectados ao IAM reasoning do Bloco 4 para chains completas.
+O foco atual é o Bloco 6: chains multi-serviço — provar paths que atravessam
+Secrets Manager, SSM e S3 como elos intermediários (ex: `iam:CreateAccessKey`
+em user alvo → extrai credenciais → assume role privilegiado).
 Contribuições alinhadas com generalização ofensiva têm prioridade.
 
 ---

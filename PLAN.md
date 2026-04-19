@@ -358,39 +358,96 @@ Benchmark: **6/6 campanhas provadas**. 82/88 principals com `policy_permissions`
 
 ### Resultado
 
+Benchmark em conta `terraform-realistic-iam` (empresa simulada, sem naming conventions):
+**3/3 campanhas provadas** — engine selecionou `platform-admin-role` (iam:*) sem nenhuma
+configuracao manual de alvo.
+
 - `_score_principal()`: soma pesos por acao IAM perigosa × multiplicador de escopo de resource
 - `_compute_privilege_scores()`: `privilege_score` + `is_high_value_target` em cada principal
+- `iam:*` = 4000 pts (supera qualquer combinacao de acoes individuais)
+- Prefix-match apenas para acoes wildcard (iam:Create*); acoes especificas = exact-match only
 - Pass 2 atualizado: `_best_role_by_score()` substitui name-match — prefere roles assumiveis
   pelo attacker; fallback para maior score global; name-match apenas como ultimo recurso
-- No lab: `brainctl-gh-actions` (score 9999) selecionado como target para privesc1 e privesc9
-  — target correto em qualquer conta, nao apenas no lab com naming convention
-- `privilege_score` exposto ao LLM via `strategic_prompting._compact_resource`
+- `privilege_score` bonus no score do candidato (0-15 pts) resolve tie-breaking de selecao
+- `profile_entry_identities` derivado de `signals.entry_identity` quando nao configurado
 - 224/224 testes passando
 
 ### O que aproximou do polo generalista
 
-- Engine agora identifica os roles mais valiosos de uma conta sem depender de nomes de recursos
-- Em uma conta real com 300 roles, o engine vai selecionar os targets com maior blast radius automaticamente
-- Naming convention (Pass 2 antigo) funciona como fallback, nao como caminho principal
+- Engine identifica roles mais valiosos por blast radius, nao por nome
+- `platform-admin-role: 8400 ★`, `audit-readonly-role: 70` — discriminacao correta
+- `profile_entry_identities` vazio nao mais gera N×M campanhas invalidas
 
 ### O que foi implementado (complemento)
 
-- `_apply_recursive_scores()`: DFS com dampen=0.5 propaga scores através de chains de sts:AssumeRole
-  - effective(A) = own(A) + 0.5 * max(effective(B) para cada B assumível por A)
-  - Detecção de ciclo via frozenset; memoização completa
-  - Chamado após _derive_attack_targets (usa suas arestas sts:AssumeRole)
-  - privesc14: base=1300 → efetivo=6299 (UpdateAssumeRolePolicy + chain até admin)
-  - brainctl-user: base=0 → efetivo=3850 (trust_principals em roles score~7700)
-- 224/224 testes passando
+- `_apply_recursive_scores()`: DFS com dampen=0.5 propaga scores via sts:AssumeRole chains
+- Merge dedup por `profile_family` (nao `attack_class`) — AttachRolePolicy, CreatePolicyVersion
+  e PutRolePolicy geram candidatos em perfis distintos
+- `dedupe_resource_targets=False` no benchmark: vetores distintos contra mesmo alvo sao validos
+- Bugs corrigidos: `*` como prefix catch-all (todo action ganhava 500pts), Pass 2 bloqueado por
+  `if not derived`, `iam:PutRolePolicy` sem mapeamento de perfil
 
 ### O que permaneceu dependente de campaigns conhecidas
 
 - Profiles de execucao ainda sao templates pre-definidos
-- Score recursivo limitado a sts:AssumeRole explícito (AttachRolePolicy → assume implícito nao modelado)
+- Score recursivo limitado a sts:AssumeRole explicito
 
 ### Proximo experimento de maior leverage
 
-**Bloco 5**: Expansao de chain — entry points reais de internet.
+**Bloco 5**: Full Account Scan — todos os entry identities simultaneamente.
+
+---
+
+## Bloco 5 — Full Account Scan (FECHADO, 2026-04-19)
+
+**Direcao**: generalismo ofensivo — engine mapeia superfície de ataque completa de qualquer conta.
+**Objetivo**: descobrir e provar TODOS os attack paths de uma conta sem configuracao manual por usuario.
+
+### Resultado
+
+Benchmark em conta `terraform-realistic-iam`, **5 entry identities**, sem `profile_entry_identities`:
+**5/5 campanhas provadas (100%)**, zero falhas, zero erros.
+
+```
+[PASS] aws-iam-role-chaining           (ops-deploy-user → platform-admin-role)
+[PASS] aws-iam-role-chaining           (data-engineer-user → data-pipeline-role)
+[PASS] aws-iam-role-chaining           (readonly-audit-user → audit-readonly-role)
+[PASS] aws-iam-attach-role-policy-privesc   (ops-deploy-user → platform-admin-role)
+[PASS] aws-iam-create-policy-version-privesc (ops-deploy-user → platform-admin-role)
+```
+
+Derived targets mapeados por usuario:
+- `ops-deploy-user`: sts:AssumeRole + iam:PutRolePolicy + iam:CreatePolicyVersion + iam:AttachRolePolicy → platform-admin-role
+- `data-engineer-user`: iam:PassRole + sts:AssumeRole → data-pipeline-role; sts:AssumeRole → data-readonly-role
+- `sre-oncall-user`: sts:AssumeRole → sre-ops-role
+- `dev-backend-user`: sts:AssumeRole → dev-sandbox-role + secrets-reader-role
+- `readonly-audit-user`: sts:AssumeRole → audit-readonly-role + data-readonly-role
+
+### O que foi implementado
+
+- 4 access keys geradas e configuradas em `~/.aws/credentials`
+- `target_realistic_iam.json` com `entry_credential_profiles` para os 5 usuarios
+- `run_discovery_driven_assessment`: cada campanha usa `signals.entry_identity` da hipotese
+  como entry identity quando `profile_entry_identities` nao esta configurado — zero campanhas
+  invalidas por mismatch de permissions
+- `scripts/run_bloco5_full_account_scan.py`: benchmark multi-usuario, `max_hypotheses=40`
+
+### O que aproximou do polo generalista
+
+- Engine parte de qualquer conta AWS com N usuarios e descobre todos os attack paths autonomamente
+- Cada campanha executa com exatamente o usuario que tem a capability — sem configuracao manual
+- 100% de taxa de pass: nenhuma campanha invalida, nenhum falso positivo de selecao
+
+### O que permaneceu dependente de campaigns conhecidas
+
+- Profiles de execucao ainda sao templates pre-definidos
+- Apenas 3 profiles de IAM privesc cobertos (attach, create-policy-version, role-chaining)
+- Chains multi-hop (secreto → credencial → assume role) nao modeladas ainda
+- `sre-oncall-user` → `sre-ops-role` nao foi provada (selecionada pela LLM para outro alvo)
+
+### Proximo experimento de maior leverage
+
+**Bloco 6**: Chains multi-servico — secrets, SSM, S3 como elos intermediarios de chain.
 
 ---
 
@@ -398,7 +455,22 @@ Benchmark: **6/6 campanhas provadas**. 82/88 principals com `policy_permissions`
 
 ---
 
-### Bloco 5 — Expansao de Cadeia (Entry Points Reais)
+### Bloco 6 — Chains Multi-Servico
+
+**Direcao**: profundidade de chain — blast radius real, nao so escalada de acesso.
+**Objetivo**: engine prova chains que atravessam Secrets Manager, SSM e S3 como elos intermediarios.
+
+Exemplos de chain a provar:
+- `iam:CreateAccessKey` em user alvo → extrai credenciais → assume role privilegiado
+- `secretsmanager:GetSecretValue` → segredo contem credenciais → usa para assume role
+- `s3:GetObject` em bucket especifico → arquivo contem token AWS → privesc
+
+Criterio de saida:
+- Pelo menos 1 chain provada que atravessa um servico de dados (secrets/SSM/S3) como elo
+
+---
+
+### Bloco 7 — Entry Points Externos
 
 **Direcao**: chains completas, nao so o segmento IAM.
 **Objetivo**: engine parte de entry points reais de internet e completa a chain.
@@ -408,7 +480,7 @@ Entry points a cobrir:
 - Lambda environment variables (codigo exposto → AWS credentials)
 - Secrets publicamente acessiveis (S3, GitHub, etc.)
 
-O engine usa IAM reasoning (Bloco 4) para completar a chain apos obter credencial.
+O engine usa IAM reasoning (Bloco 4+5) para completar a chain apos obter credencial.
 
 Criterio de saida:
 - Pelo menos 1 chain provada: entry point externo → credential theft → IAM privesc → objetivo

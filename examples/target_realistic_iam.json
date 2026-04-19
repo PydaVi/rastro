@@ -9,6 +9,10 @@
   ],
   "entry_roles": [],
   "entry_credential_profiles": {
-    "arn:aws:iam::550192603632:user/ops-deploy-user": "ops-deploy-user"
+    "arn:aws:iam::550192603632:user/ops-deploy-user":    "ops-deploy-user",
+    "arn:aws:iam::550192603632:user/data-engineer-user": "data-engineer-user",
+    "arn:aws:iam::550192603632:user/sre-oncall-user":    "sre-oncall-user",
+    "arn:aws:iam::550192603632:user/dev-backend-user":   "dev-backend-user",
+    "arn:aws:iam::550192603632:user/readonly-audit-user":"readonly-audit-user"
   }
 }
