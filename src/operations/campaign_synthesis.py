@@ -138,7 +138,7 @@ def _build_generated_objective_description(profile_name: str, candidate: dict) -
 
 def _build_generated_success_criteria(candidate: dict) -> dict:
     profile_family = candidate.get("profile_family")
-    if profile_family in {"aws-iam-s3", "aws-iam-secrets", "aws-iam-ssm"}:
+    if profile_family in {"aws-iam-s3", "aws-iam-secrets", "aws-iam-ssm", "aws-credential-access-secret"}:
         mode = "access_proved"
     elif profile_family == "aws-iam-role-chaining":
         mode = "assume_role_proved"

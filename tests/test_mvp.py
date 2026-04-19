@@ -10,7 +10,7 @@ from core.audit import AuditLogger
 from core.domain import Action, ActionType, Decision, Objective, Observation, Scope
 from core.aws_dry_run_lab import AwsDryRunLab
 from core.blind_real_runtime import BlindRealRuntime
-from execution.aws_executor import AwsRealExecutor, AwsRealExecutorStub
+from execution.aws_executor import AwsRealExecutor, AwsRealExecutorStub, _detect_aws_credentials
 from core.state import StateManager
 from reporting.report import ReportGenerator
 from execution.scope_enforcer import ScopeEnforcer
@@ -26,6 +26,7 @@ from operations.service import (
     run_discovery_driven_assessment,
     run_generated_campaign,
     write_assessment_summary,
+    _derive_credential_access_hypotheses,
 )
 from operations.models import AssessmentResult, CampaignResult
 from operations.models import ProfileDefinition
@@ -4496,6 +4497,211 @@ def test_compute_data_resource_access_no_data_resources() -> None:
     ]
     _compute_data_resource_access(resources)  # deve ser no-op silencioso
     assert "readable_by" not in resources[0].get("metadata", {})
+
+
+# ---------------------------------------------------------------------------
+# Bloco 6b — _detect_aws_credentials
+# ---------------------------------------------------------------------------
+
+def test_detect_aws_credentials_json_with_access_key() -> None:
+    import json
+    secret = json.dumps({
+        "AccessKeyId": "AKIAIOSFODNN7EXAMPLE",
+        "SecretAccessKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    })
+    result = _detect_aws_credentials(secret)
+    assert result["credential_extracted"] is True
+    assert result["credential_type"] == "aws_access_key"
+    assert result["key_id_prefix"].startswith("AKIAIOSF")
+
+
+def test_detect_aws_credentials_json_case_insensitive_keys() -> None:
+    import json
+    secret = json.dumps({
+        "aws_access_key_id": "ASIAIOSFODNN7EXAMPLE",
+        "aws_secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    })
+    result = _detect_aws_credentials(secret)
+    assert result["credential_extracted"] is True
+    assert result["credential_type"] == "aws_access_key"
+
+
+def test_detect_aws_credentials_plain_text_key_pattern() -> None:
+    # Texto plano com padrão AKIA
+    result = _detect_aws_credentials("key=AKIAIOSFODNN7EXAMPLE other=stuff")
+    assert result["credential_extracted"] is True
+    assert result["credential_type"] == "aws_access_key"
+
+
+def test_detect_aws_credentials_no_credentials() -> None:
+    result = _detect_aws_credentials("just-a-database-password: hunter2")
+    assert result["credential_extracted"] is False
+    assert "credential_type" not in result
+
+
+def test_detect_aws_credentials_empty_string() -> None:
+    result = _detect_aws_credentials("")
+    assert result["credential_extracted"] is False
+
+
+def test_detect_aws_credentials_json_no_aws_keys() -> None:
+    import json
+    secret = json.dumps({"db_password": "s3cr3t", "db_host": "localhost"})
+    result = _detect_aws_credentials(secret)
+    assert result["credential_extracted"] is False
+
+
+# ---------------------------------------------------------------------------
+# Bloco 6b — _derive_credential_access_hypotheses
+# ---------------------------------------------------------------------------
+
+def test_derive_credential_access_hypotheses_basic() -> None:
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:prod/creds"
+    user_arn = "arn:aws:iam::123:user/svc-user"
+    snapshot = {
+        "resources": [
+            {
+                "resource_type": "secret.secrets_manager",
+                "identifier": secret_arn,
+                "metadata": {"readable_by": [user_arn]},
+            }
+        ]
+    }
+    hypotheses = _derive_credential_access_hypotheses(snapshot, [user_arn])
+    assert len(hypotheses) == 1
+    h = hypotheses[0]
+    assert h.entry_identity == user_arn
+    assert h.target == secret_arn
+    assert h.attack_class == "credential_access_direct"
+    assert h.confidence == "high"
+    assert any("GetSecretValue" in step for step in h.attack_steps)
+
+
+def test_derive_credential_access_hypotheses_entry_not_in_readable_by() -> None:
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:prod/creds"
+    user_arn = "arn:aws:iam::123:user/svc-user"
+    other_user = "arn:aws:iam::123:user/other-user"
+    snapshot = {
+        "resources": [
+            {
+                "resource_type": "secret.secrets_manager",
+                "identifier": secret_arn,
+                "metadata": {"readable_by": [other_user]},
+            }
+        ]
+    }
+    hypotheses = _derive_credential_access_hypotheses(snapshot, [user_arn])
+    assert hypotheses == []
+
+
+def test_derive_credential_access_hypotheses_no_readable_by() -> None:
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:prod/creds"
+    user_arn = "arn:aws:iam::123:user/svc-user"
+    snapshot = {
+        "resources": [
+            {
+                "resource_type": "secret.secrets_manager",
+                "identifier": secret_arn,
+                "metadata": {},  # sem readable_by
+            }
+        ]
+    }
+    hypotheses = _derive_credential_access_hypotheses(snapshot, [user_arn])
+    assert hypotheses == []
+
+
+def test_derive_credential_access_hypotheses_ssm_param() -> None:
+    param_arn = "arn:aws:ssm:us-east-1:123:parameter/prod/db/password"
+    user_arn = "arn:aws:iam::123:user/app-user"
+    snapshot = {
+        "resources": [
+            {
+                "resource_type": "secret.ssm_parameter",
+                "identifier": param_arn,
+                "metadata": {"readable_by": [user_arn]},
+            }
+        ]
+    }
+    hypotheses = _derive_credential_access_hypotheses(snapshot, [user_arn])
+    assert len(hypotheses) == 1
+    h = hypotheses[0]
+    assert h.attack_class == "credential_access_direct"
+    assert any("GetParameter" in step for step in h.attack_steps)
+
+
+# ---------------------------------------------------------------------------
+# Bloco 6b — BlindRealRuntime: direct read para aws-credential-access-secret
+# ---------------------------------------------------------------------------
+
+def test_blind_real_runtime_credential_access_secret_user_actor_gets_read_action() -> None:
+    """Para profile aws-credential-access-secret, user actor deve receber
+    secretsmanager_read_secret diretamente (não iam_simulate_target_access)."""
+    from core.blind_real_runtime import BlindRealRuntime
+    from core.domain import Scope
+
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:prod/creds"
+    user_arn = "arn:aws:iam::123:user/svc-user"
+    plan = {
+        "profile": "aws-credential-access-secret",
+        "resource_arn": secret_arn,
+    }
+    scope = Scope.model_validate({
+        "target": "aws",
+        "allowed_services": ["secretsmanager", "iam"],
+        "allowed_actions": ["enumerate", "assume_role", "access_resource"],
+        "allowed_resources": [secret_arn],
+        "aws_account_ids": ["123"],
+        "allowed_regions": ["us-east-1"],
+        "authorized_by": "test",
+        "authorized_at": "2026-01-01",
+        "authorization_document": "docs/auth.pdf",
+        "dry_run": False,
+    })
+    runtime = BlindRealRuntime.build(
+        plan=plan,
+        discovery_snapshot={"resources": []},
+        scope=scope,
+        entry_identities=[user_arn],
+    )
+    actions = runtime.enumerate_actions(None)
+    tool_names = [a.tool for a in actions]
+    assert "secretsmanager_read_secret" in tool_names
+    assert "iam_simulate_target_access" not in tool_names
+
+
+def test_blind_real_runtime_other_profile_user_actor_gets_simulate_action() -> None:
+    """Para profiles não-credential_access_direct, user actor continua recebendo
+    iam_simulate_target_access (comportamento anterior preservado)."""
+    from core.blind_real_runtime import BlindRealRuntime
+    from core.domain import Scope
+
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:prod/creds"
+    user_arn = "arn:aws:iam::123:user/svc-user"
+    plan = {
+        "profile": "aws-iam-secrets",
+        "resource_arn": secret_arn,
+    }
+    scope = Scope.model_validate({
+        "target": "aws",
+        "allowed_services": ["secretsmanager", "iam"],
+        "allowed_actions": ["enumerate", "assume_role", "access_resource"],
+        "allowed_resources": [secret_arn],
+        "aws_account_ids": ["123"],
+        "allowed_regions": ["us-east-1"],
+        "authorized_by": "test",
+        "authorized_at": "2026-01-01",
+        "authorization_document": "docs/auth.pdf",
+        "dry_run": False,
+    })
+    runtime = BlindRealRuntime.build(
+        plan=plan,
+        discovery_snapshot={"resources": []},
+        scope=scope,
+        entry_identities=[user_arn],
+    )
+    actions = runtime.enumerate_actions(None)
+    tool_names = [a.tool for a in actions]
+    assert "iam_simulate_target_access" in tool_names
 
 
 def test_state_snapshot_derives_tool_postcondition_flags() -> None:

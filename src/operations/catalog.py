@@ -76,6 +76,15 @@ FOUNDATION_PROFILES: dict[str, ProfileDefinition] = {
         scope_path=_real_path("terraform_local_lab", "rastro_local", "scope_aws_role_chaining_openai.local.json"),
         discovery_ssm_prefixes=["/prod", "/app", "/finance", "/shared"],
     ),
+    "aws-credential-access-secret": ProfileDefinition(
+        name="aws-credential-access-secret",
+        bundle="aws-iam-heavy",
+        description="Direct credential extraction from Secrets Manager — entry identity reads secret without role chain.",
+        fixture_path=_real_path("terraform_local_lab", "rastro_local", "aws_role_chaining_lab.local.json"),
+        objective_path=_real_path("terraform_local_lab", "rastro_local", "objective_aws_role_chaining.local.json"),
+        scope_path=_real_path("terraform_local_lab", "rastro_local", "scope_aws_role_chaining_openai.local.json"),
+        discovery_ssm_prefixes=["/prod", "/app", "/finance", "/shared"],
+    ),
 }
 
 
@@ -100,6 +109,7 @@ BUNDLES: dict[str, list[str]] = {
         "aws-iam-s3",
         "aws-iam-secrets",
         "aws-iam-ssm",
+        "aws-credential-access-secret",
     ],
 }
 

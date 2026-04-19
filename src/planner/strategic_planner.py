@@ -15,6 +15,7 @@ class AttackHypothesis(BaseModel):
         "iam_privesc",
         "role_chain",
         "credential_access",
+        "credential_access_direct",  # entry identity reads secret/SSM without role chain
         "data_exfil",
         "compute_pivot",
     ]

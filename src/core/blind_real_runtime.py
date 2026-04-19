@@ -133,7 +133,12 @@ class BlindRealRuntime:
         target = self.target_arn
         if self.profile_name == "aws-iam-role-chaining":
             return []
-        if ":user/" in actor:
+        # Bloco 6b: credential_access_direct — entry user reads secret/SSM directly.
+        # Skip the simulation probe and fall through to the type-based real read actions.
+        is_direct_credential_access = self.profile_name in (
+            "aws-credential-access-secret",
+        )
+        if ":user/" in actor and not is_direct_credential_access:
             return [
                 Action(
                     action_type=ActionType.ACCESS_RESOURCE,

@@ -490,22 +490,38 @@ como entidades de primeira classe, com metadados de quem pode acessar cada um.
 
 ---
 
-### Bloco 6b — Credential Access Passivo (novo vetor)
+### Bloco 6b — Credential Access Passivo (FECHADO, 2026-04-19)
 
 **Direcao**: nova classe de ataque — leitura de dado como vetor, nao so mutacao IAM.
 **Objetivo**: engine prova que um attacker com permissao de leitura extrai credenciais de dados.
 
-O que muda:
-- Novo tool: `read_secret` (`secretsmanager:GetSecretValue`) com parser de credenciais AWS
-  (`AccessKeyId` / `SecretAccessKey` no valor do secret → detectado automaticamente)
-- Novo tool: `read_ssm_parameter` (`ssm:GetParameter`)
-- Novo profile de campanha: `aws-credential-access-secret`
-- Observation: `credential_extracted: true` quando o secret contem chaves AWS validas
-- Sem rollback (read-only); scope enforcer exige autorizacao explicita para reads de secrets
+### Resultado
 
-Criterio de saida:
-- Campanha prova: `user com secretsmanager:GetSecretValue` lê secret → `credential_extracted: true`
-- Finding gerado com `finding_state: proved`, classe `credential_access`
+251/251 testes passando (+12 novos).
+
+### O que foi implementado
+
+- `AttackHypothesis.attack_class`: novo valor `credential_access_direct` — separa "user le direto"
+  (sem role chain) de `credential_access` (IAM → assume role → le secret).
+- `_detect_aws_credentials(secret_string)`: parser em `aws_executor.py` — detecta
+  `AccessKeyId`/`SecretAccessKey` em JSON ou padrao AKIA/ASIA em texto plano.
+  Retorna `credential_extracted: true`, `credential_type: aws_access_key`, `key_id_prefix` (parcial).
+- `_execute_secretsmanager_read_secret`: agora inclui `credential_extracted` no `response_summary`.
+- Profile `aws-credential-access-secret` adicionado ao `catalog.py` + `aws-iam-heavy` bundle.
+- `_build_generated_success_criteria`: `aws-credential-access-secret` → `access_proved`.
+- `_attack_class_to_profile("credential_access_direct", ...)` → `aws-credential-access-secret`.
+- `_derive_credential_access_hypotheses(snapshot, entry_identities)`: hipoteses deterministicas
+  a partir de `readable_by` (Bloco 6a). Roda como parte do merge determinístico no planner path.
+- `BlindRealRuntime._target_access_actions`: para `aws-credential-access-secret`, user actors
+  recebem `secretsmanager_read_secret` diretamente (skip `iam_simulate_target_access`).
+
+### Criterios de saida
+
+1. ~~`_detect_aws_credentials` detecta keys em JSON com qualquer case (AccessKeyId, aws_access_key_id)~~ PASS
+2. ~~`_detect_aws_credentials` detecta padrao AKIA/ASIA em texto plano~~ PASS
+3. ~~`_derive_credential_access_hypotheses` gera hipoteses `credential_access_direct` via readable_by~~ PASS
+4. ~~`BlindRealRuntime` oferece `secretsmanager_read_secret` para user com profile `aws-credential-access-secret`~~ PASS
+5. ~~Outros profiles preservam comportamento anterior (iam_simulate_target_access para users)~~ PASS
 
 ---
 

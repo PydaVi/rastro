@@ -410,6 +410,8 @@ class AwsRealExecutor:
             secret_id=secret_id,
             credentials=self._credentials_for_actor(action.actor),
         )
+        secret_string = response.get("SecretString") or ""
+        credential_info = _detect_aws_credentials(secret_string)
         return {
             "details": f"Executed secretsmanager:GetSecretValue against {secret_id}.",
             "evidence": {
@@ -425,7 +427,8 @@ class AwsRealExecutor:
                 "arn": response.get("ARN"),
                 "name": response.get("Name"),
                 "version_id": response.get("VersionId"),
-                "preview": (response.get("SecretString") or "")[:256],
+                "preview": secret_string[:256],
+                **credential_info,
             },
         }
 
@@ -1265,6 +1268,63 @@ class AwsRealExecutor:
                 "arn": assumed_identity["Arn"],
             },
         }
+
+
+def _detect_aws_credentials(secret_string: str) -> dict:
+    """Bloco 6b: detecta credenciais AWS no valor de um secret.
+
+    Verifica padrões de AccessKeyId e SecretAccessKey em JSON ou texto plano.
+    Retorna dict com credential_extracted, credential_type e (se encontrado) key_id parcial.
+    """
+    import json as _json
+
+    if not secret_string:
+        return {"credential_extracted": False}
+
+    # Tenta parsear como JSON primeiro
+    parsed: dict | None = None
+    try:
+        candidate = _json.loads(secret_string)
+        if isinstance(candidate, dict):
+            parsed = candidate
+    except Exception:
+        pass
+
+    access_key_id: str | None = None
+    has_secret_key = False
+
+    if parsed is not None:
+        # Busca case-insensitive nas chaves do JSON
+        lower_keys = {k.lower(): v for k, v in parsed.items()}
+        access_key_id = (
+            lower_keys.get("accesskeyid")
+            or lower_keys.get("access_key_id")
+            or lower_keys.get("aws_access_key_id")
+        )
+        has_secret_key = bool(
+            lower_keys.get("secretaccesskey")
+            or lower_keys.get("secret_access_key")
+            or lower_keys.get("aws_secret_access_key")
+        )
+    else:
+        # Texto plano: busca padrão AKIA*/ASIA* (20 chars alfanuméricos maiúsculos)
+        key_match = re.search(r"\b(AKIA|ASIA|AROA|AIDA|ANPA|ANVA|APKA)[A-Z0-9]{16}\b", secret_string)
+        if key_match:
+            access_key_id = key_match.group(0)
+        # Heurística de presença de secret key: string base64 longa após "Secret"
+        has_secret_key = bool(re.search(r"[A-Za-z0-9+/]{40}", secret_string))
+
+    if access_key_id or has_secret_key:
+        result: dict = {
+            "credential_extracted": True,
+            "credential_type": "aws_access_key",
+        }
+        if access_key_id:
+            # Expõe apenas prefixo (não a chave completa) para o log de auditoria
+            result["key_id_prefix"] = access_key_id[:8] + "..."
+        return result
+
+    return {"credential_extracted": False}
 
 
 def _required_parameter(action: Action, key: str) -> str:

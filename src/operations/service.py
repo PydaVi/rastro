@@ -371,6 +371,12 @@ def _attack_class_to_profile(attack_class: str, target_arn: str, attack_steps: l
         if ":ssm:" in target_arn or "/parameter/" in target_arn:
             return "aws-iam-ssm"
         return "aws-iam-secrets"
+    if attack_class == "credential_access_direct":
+        if "secretsmanager" in target_arn:
+            return "aws-credential-access-secret"
+        if ":ssm:" in target_arn or "/parameter/" in target_arn:
+            return "aws-iam-ssm"
+        return "aws-credential-access-secret"
     if attack_class == "data_exfil":
         return "aws-iam-s3"
     if attack_class == "compute_pivot":
@@ -485,6 +491,61 @@ def _derive_hypotheses_from_snapshot(
                     reasoning=(
                         f"Deterministic: policy_permissions grants {action} with "
                         f"resolved target {target_arn} (derived_attack_targets)."
+                    ),
+                )
+            )
+
+    return hypotheses
+
+
+# Data resource types that carry readable_by (Bloco 6a)
+_DIRECT_READ_RESOURCE_TYPES = {
+    "secret.secrets_manager",
+    "secret.ssm_parameter",
+}
+
+
+def _derive_credential_access_hypotheses(
+    discovery_snapshot: dict,
+    entry_identities: list[str],
+) -> list:
+    """Bloco 6b: hipóteses determinísticas de leitura direta de segredos.
+
+    Para cada recurso de dado no snapshot com readable_by preenchido (Bloco 6a),
+    se o entry_identity aparece em readable_by, gera uma hipótese credential_access_direct
+    com confidence=high (não depende de LLM).
+    """
+    from planner.strategic_planner import AttackHypothesis
+
+    identity_set = set(entry_identities)
+    hypotheses: list[AttackHypothesis] = []
+
+    for resource in discovery_snapshot.get("resources", []):
+        if resource.get("resource_type") not in _DIRECT_READ_RESOURCE_TYPES:
+            continue
+        resource_arn = resource.get("identifier", "")
+        meta = resource.get("metadata") or {}
+        readable_by: list[str] = meta.get("readable_by", [])
+
+        for principal_arn in readable_by:
+            if principal_arn not in identity_set:
+                continue
+
+            is_secret = "secretsmanager" in resource_arn
+            action = "secretsmanager:GetSecretValue" if is_secret else "ssm:GetParameter"
+            hypotheses.append(
+                AttackHypothesis(
+                    entry_identity=principal_arn,
+                    target=resource_arn,
+                    attack_class="credential_access_direct",
+                    attack_steps=[
+                        f"Call {action} on {resource_arn} to extract stored credentials",
+                        "Parse returned value for AWS access keys or other credentials",
+                    ],
+                    confidence="high",
+                    reasoning=(
+                        f"Deterministic: readable_by confirms {principal_arn} has {action} "
+                        f"on {resource_arn} (computed by _compute_data_resource_access)."
                     ),
                 )
             )
@@ -643,6 +704,17 @@ def run_discovery_driven_assessment(
             logger.info(
                 "Deterministic hypotheses from derived_attack_targets: %d", len(det_hypotheses)
             )
+
+            # Bloco 6b: hipóteses de leitura direta de segredos (readable_by)
+            cred_access_hypotheses = _derive_credential_access_hypotheses(
+                discovery_snapshot, effective_entry_identities
+            )
+            if cred_access_hypotheses:
+                logger.info(
+                    "Credential access direct hypotheses from readable_by: %d",
+                    len(cred_access_hypotheses),
+                )
+                det_hypotheses.extend(cred_access_hypotheses)
 
             llm_hypotheses = strategic_planner.plan_attacks(
                 discovery_snapshot, effective_entry_identities, scope_for_strategic
