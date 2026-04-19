@@ -610,37 +610,270 @@ como entidades de primeira classe, com metadados de quem pode acessar cada um.
 
 ---
 
-### Bloco 7 — Entry Points Externos
+## Proximo salto arquitetural — Do reconhecimento de padroes ao raciocínio sobre grafos
 
-**Direcao**: chains completas partindo do mundo externo — nao so de dentro da conta.
-**Objetivo**: engine parte de entry points de internet e completa a chain ate objetivo privilegiado.
+### Diagnostico (2026-04-19)
 
-Entry points a cobrir:
-- EC2 instance metadata service (SSRF → credencial de instance profile → IAM chain)
-- Lambda environment variables (`GetFunctionConfiguration` → AWS_ACCESS_KEY_ID exposta)
-- Secrets publicamente acessiveis (S3 bucket publico, GitHub leak simulado)
+O Bloco 6d expôs o problema central do produto: **para cada novo cenário o código precisa crescer**.
+Codex criou 3 labs e foram necessárias 7 classes de mudança manual para o engine os cobrir.
 
-Dependencia: Bloco 6c (identity pivot) deve estar fechado antes.
-O engine usa o mesmo pipeline de identity pivot do 6c — so muda a fonte da credencial.
+O engine hoje opera em **mundo fechado**: executa bem os ataques que reconhece, mas não infere.
+Cada novo vetor de ataque requer: nova função de hipótese, novo método de enumeração, novo profile,
+novo roteador, nova lógica de executor. Isso é incompatível com a escala de um produto generalista.
 
-Criterio de saida:
-- 1 chain provada: entry point externo → credential theft → IAM privesc → objetivo
+A causa raiz está em três camadas:
+
+```
+Camada 1 — Discovery incompleto
+  readable_by / createkey_by ainda dependem de anotações manuais em fixtures.
+  O engine não deriva automaticamente "quem pode fazer o quê sobre cada recurso"
+  diretamente dos documentos de policy IAM que já busca.
+
+Camada 2 — Hipóteses por template, não por traversal
+  _derive_credential_pivot_hypotheses, _derive_create_access_key_hypotheses, etc.
+  são funções hardcoded para padrões nomeados.
+  Um engine cego precisa de traversal de grafo, não de reconhecimento de padrão.
+
+Camada 3 — Efeitos de ação hardcoded no executor
+  O que cada tool produz (uma nova identidade, uma credencial extraída) está
+  hardcoded por profile no aws_executor.py.
+  Um engine cego precisa que cada tool declare seus efeitos — não que o executor
+  os conheça antecipadamente.
+```
+
+O alvo: dado qualquer conta AWS, o engine entra, constrói o grafo de capacidades,
+encontra caminhos por traversal e executa sem nenhuma adaptação de código.
 
 ---
 
-### Bloco 8 — Objetivos Nao-IAM (dados e servicos como alvo final)
+### Bloco 7 — Capability Graph Completo
 
-**Direcao**: expansao horizontal — IAM e o caminho, nao o destino.
-**Objetivo**: engine raciocina sobre "que chain leva a esse dado", nao so "quem consegue mais acesso IAM".
+**Direcao**: discovery produz grafo de capacidades completo — sem anotações manuais.
+**Objetivo**: ao final do discovery, cada recurso sabe quais principals podem fazer o quê sobre ele,
+derivado automaticamente dos documentos de policy IAM já coletados.
 
-O que muda:
-- Objetivos passam a incluir: exfiltrar secret especifico, ler objeto S3 sensivel, dump de RDS snapshot
-- Discovery mapeia "quem pode chegar a esse dado via chain de N passos"
-- StrategicPlanner formula hipoteses com objetivo final sendo dado, nao role
+**O problema hoje**
 
-Criterio de saida:
-- Engine mapeia chain ate objetivo de dado (ex: `s3:GetObject` em bucket sensivel)
-  partindo de entry identity sem acesso direto — via chain IAM intermediaria
+`_compute_data_resource_access` calcula `readable_by` para secrets/SSM/S3 a partir de policies.
+Mas `createkey_by` foi adicionado manualmente ao fixture. E ações IAM sobre outros principals
+(AttachRolePolicy, CreatePolicyVersion, PutRolePolicy) não têm campo equivalente nos recursos.
+
+O resultado: cada novo vetor de pivot requer uma nova anotação manual de metadados.
+
+**O que implementar**
+
+Generalizar `_compute_data_resource_access` para um `_compute_capability_graph(resources)` que:
+
+1. Para cada par (principal, recurso), verifica se alguma policy do principal contém
+   uma ação relevante sobre o recurso — usando o mesmo `_action_grants_read` já existente,
+   generalizado para qualquer action.
+
+2. Popula campos calculados em cada recurso:
+   - `readable_by`: já existe para secret/SSM/S3 — manter
+   - `createkey_by`: quem tem `iam:CreateAccessKey` sobre `identity.user`
+   - `assumable_by`: quem tem `sts:AssumeRole` sobre `identity.role` via permission policy
+     (além do trust policy que já existe em `trust_principals`)
+   - `mutable_by`: quem tem `iam:AttachRolePolicy`, `iam:PutRolePolicy`,
+     `iam:CreatePolicyVersion` sobre `identity.role` — por ação separada
+
+3. O campo `mutable_by` é um dict: `{"iam:AttachRolePolicy": [arn, ...], ...}` — não collapsa
+   ações distintas num único campo.
+
+**Por que isso resolve o problema da Camada 1**
+
+Após este bloco, criar um novo lab (como Codex fez) não requer anotação manual de metadados.
+O discovery computa o grafo de capacidades diretamente das policies reais.
+
+**Critérios de saída**
+
+1. `_compute_capability_graph` substitui `_compute_data_resource_access` e cobre todos os tipos acima
+2. Lab do Bloco 6d (create_access_key_pivot) rodado sem `createkey_by` no fixture — derivado automaticamente
+3. Lab do Bloco 5 (terraform-realistic-iam) com `mutable_by` correto para os 5 users
+4. 288+ testes passando, sem regressão
+
+---
+
+### Bloco 8 — Tool Effects Declarativos
+
+**Direcao**: tools declaram seus efeitos; executor para de ser o repositório de conhecimento de ataque.
+**Objetivo**: adicionar um novo tool = escrever um YAML. Sem mudança de código no executor.
+
+**O problema hoje**
+
+`_execute_iam_create_access_key`, `_execute_ssm_read_parameter` (com detecção de credencial),
+`_execute_s3_read_sensitive` — cada um tem lógica hardcoded para:
+- detectar se o output contém credenciais
+- criar um `synthetic_actor` com a chave correta
+- armazenar em `_credentials_by_actor`
+- registrar rollback
+
+Para cada novo tool com efeito de pivot, alguém precisa escrever esse handler no executor.
+
+**O que implementar**
+
+Adicionar seção `produces:` nos YAMLs de tools:
+
+```yaml
+# iam_create_access_key.yaml
+produces:
+  - effect: synthetic_actor
+    condition: success == true
+    actor_key_template: "extracted://iam_user/{parameters.user_arn}"
+    credential_source: response.credentials
+    rollback:
+      op: delete_access_key
+      params: [parameters.user_arn, response.access_key_id]
+
+# ssm_read_parameter.yaml
+produces:
+  - effect: synthetic_actor
+    condition: response.credential_extracted == true
+    actor_key_template: "extracted://{parameters.parameter_arn}"
+    credential_source: response.extracted_credentials
+```
+
+O executor passa a ter um `_apply_produces(tool_yaml, action, result)` genérico que:
+1. Lê `produces:` do YAML do tool
+2. Avalia a `condition`
+3. Cria o `synthetic_actor` com o template
+4. Armazena em `_credentials_by_actor`
+5. Registra rollback se declarado
+
+**Por que isso resolve o problema da Camada 3**
+
+Após este bloco, um novo tool com efeito de pivot requer apenas o YAML.
+O executor não precisa crescer. O `BlindRealRuntime.observe_real` também pode
+ser generalizado para ler `produces:` em vez de checar `action.tool in (lista hardcoded)`.
+
+**Critérios de saída**
+
+1. `_apply_produces` implementado no executor, lendo `produces:` do YAML
+2. Handlers hardcoded de create_access_key, ssm_read_parameter, s3_read_sensitive,
+   secretsmanager_read_secret removidos — substituídos por declaração no YAML
+3. `observe_real` usa `produces:` para registrar synthetic actors
+4. 288+ testes passando, sem regressão
+
+---
+
+### Bloco 9 — Graph Traversal Hypothesis Engine
+
+**Direcao**: hipóteses derivadas por traversal de grafo, não por funções por padrão.
+**Objetivo**: dado o capability graph (Bloco 7), o engine encontra todos os caminhos
+possíveis por BFS — sem funções específicas por classe de ataque.
+
+**O problema hoje**
+
+```python
+_derive_credential_pivot_hypotheses()   # para secret/SSM/S3
+_derive_create_access_key_hypotheses()  # para iam:CreateAccessKey
+_derive_hypotheses_from_snapshot()      # para IAM direto
+_derive_credential_access_hypotheses()  # para leitura direta de secret
+```
+
+Cada nova classe de ataque requer uma nova função de derivação.
+
+**O que implementar**
+
+Um `CapabilityGraph` formal com três tipos de nó e dois tipos de aresta:
+
+```
+Nós:
+  IdentityNode(arn)          — principal (user, role, extracted)
+  ResourceNode(arn, type)    — recurso (secret, ssm, s3, role)
+  StateNode                  — estado abstrato (e.g. "holds_credentials_for X")
+
+Arestas (derivadas do Bloco 7):
+  CanRead(identity → resource)           — via readable_by
+  CanMutate(identity → resource, action) — via mutable_by
+  CanCreateKey(identity → user)          — via createkey_by
+  CanAssume(identity → role)             — via trust_principals + assumable_by
+  ProducesActor(resource → identity)     — quando resource contém credenciais
+```
+
+`derive_all_hypotheses(graph, entry_identities, objectives)`:
+- BFS/DFS de cada entry identity
+- Cada traversal de aresta = um passo da chain
+- Caminho que termina em `CanAssume(X → objective_role)` = hipótese válida
+- Retorna hipóteses com `path: list[Step]` completo — não só entry + target
+
+**Por que isso resolve o problema da Camada 2**
+
+Após este bloco, um novo vetor de ataque = um novo tipo de aresta no grafo.
+Não requer nova função de derivação. O engine encontra caminhos que atravessam
+qualquer combinação de serviços e permissões — incluindo chains de 3+ saltos.
+
+**Dependência**: Bloco 7 (capability graph completo) deve estar fechado.
+
+**Critérios de saída**
+
+1. `CapabilityGraph` construído a partir do discovery snapshot
+2. `derive_all_hypotheses` substitui as 4 funções `_derive_*` atuais
+3. Lab do Bloco 6d (3 cenários) com hipóteses geradas por traversal sem funções hardcoded
+4. Lab do Bloco 5 (5 users, empresa simulada) com hipóteses corretas por traversal
+5. 288+ testes passando
+
+---
+
+### Bloco 10 — Execução por Caminho
+
+**Direcao**: executor segue o caminho da hipótese, não o template do profile.
+**Objetivo**: o profile deixa de ser o repositório de conhecimento de ataque.
+O executor recebe um `path: list[Step]` e o executa passo a passo.
+
+**O problema hoje**
+
+`BlindRealRuntime` tem métodos específicos por profile:
+`_pivot_ssm_read_actions`, `_pivot_s3_read_actions`, `_create_access_key_actions`, etc.
+Cada profile tem uma lógica de enumeração diferente — a superfície de ação disponível
+depende de qual profile está ativo, não do estado atual da execução.
+
+**O que implementar**
+
+O caminho completo da hipótese (Bloco 9) é injetado na execução:
+
+```python
+plan["path"] = [
+  Step(actor=entry_arn, tool="ssm_read_parameter", resource=param_arn),
+  Step(actor="extracted://...", tool="iam_passrole", resource=role_arn),
+]
+```
+
+`BlindRealRuntime.enumerate_actions` passa a derivar as ações disponíveis do próximo
+passo pendente no path, em vez de chamar um método por profile:
+
+```python
+def enumerate_actions(self, state):
+    next_step = self._next_pending_step(state)
+    if next_step:
+        return [self._step_to_action(next_step, state)]
+    return []  # sem path pendente = sem ações
+```
+
+O executor torna-se um "path follower" — inteligente sobre estado (detecta se precondições
+foram atendidas, se um passo falhou e precisa de alternativa), mas não precisa conhecer
+o semântico de cada profile.
+
+**Dependência**: Blocos 8 e 9 devem estar fechados.
+
+**Critérios de saída**
+
+1. `BlindRealRuntime.enumerate_actions` deriva ações do path, não do profile
+2. Métodos `_pivot_*_actions` e `_create_access_key_actions` removidos
+3. Bloco 6d (3 cenários), Bloco 5 (5 users) e Bloco 2 (IAM privesc) ainda passam
+4. Novo cenário arbitrário rodado sem nenhuma adaptação de código além de YAML de tool
+5. 288+ testes passando
+
+---
+
+### O que fica para depois dos Blocos 7–10
+
+Após o salto arquitetural, o roadmap de expansão horizontal volta a fazer sentido:
+
+- **Entry Points Externos**: EC2 IMDS, Lambda env vars, S3 público — apenas novos tipos de
+  aresta no grafo (`ExposedTo(internet → resource)`). Sem mudança de arquitetura.
+- **Objetivos Não-IAM**: exfiltrar dado específico como objetivo final — apenas novo tipo de
+  nó destino no traversal. Sem mudança de arquitetura.
+- **Multi-cloud**: Azure RBAC, GCP IAM — novos grafos, mesmo engine de traversal.
 
 ---
 
