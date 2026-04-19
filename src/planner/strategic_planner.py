@@ -16,12 +16,14 @@ class AttackHypothesis(BaseModel):
         "role_chain",
         "credential_access",
         "credential_access_direct",  # entry identity reads secret/SSM without role chain
+        "credential_pivot",          # entry reads secret → extracted identity assumes role
         "data_exfil",
         "compute_pivot",
     ]
     attack_steps: list[str] = Field(min_length=1)
     confidence: Literal["high", "medium", "low"]
     reasoning: str
+    intermediate_resource: str | None = None  # Bloco 6c: secret/param ARN used as pivot
 
 
 class StrategicPlanner(ABC):

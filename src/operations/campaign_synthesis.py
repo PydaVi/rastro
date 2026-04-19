@@ -140,7 +140,7 @@ def _build_generated_success_criteria(candidate: dict) -> dict:
     profile_family = candidate.get("profile_family")
     if profile_family in {"aws-iam-s3", "aws-iam-secrets", "aws-iam-ssm", "aws-credential-access-secret"}:
         mode = "access_proved"
-    elif profile_family == "aws-iam-role-chaining":
+    elif profile_family in {"aws-iam-role-chaining", "aws-credential-pivot"}:
         mode = "assume_role_proved"
     elif profile_family == "aws-iam-attach-role-policy-privesc":
         mode = "policy_mutation_proved"

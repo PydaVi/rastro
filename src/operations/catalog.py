@@ -85,6 +85,15 @@ FOUNDATION_PROFILES: dict[str, ProfileDefinition] = {
         scope_path=_real_path("terraform_local_lab", "rastro_local", "scope_aws_role_chaining_openai.local.json"),
         discovery_ssm_prefixes=["/prod", "/app", "/finance", "/shared"],
     ),
+    "aws-credential-pivot": ProfileDefinition(
+        name="aws-credential-pivot",
+        bundle="aws-iam-heavy",
+        description="Credential pivot — extract AWS credentials from a secret, then assume a privileged role.",
+        fixture_path=_real_path("terraform_local_lab", "credential_pivot_real", "rastro_local", "aws_credential_pivot_lab.local.json"),
+        objective_path=_real_path("terraform_local_lab", "credential_pivot_real", "rastro_local", "objective_aws_credential_pivot.local.json"),
+        scope_path=_real_path("terraform_local_lab", "credential_pivot_real", "rastro_local", "scope_aws_credential_pivot_openai.local.json"),
+        discovery_ssm_prefixes=[],
+    ),
 }
 
 
@@ -110,6 +119,7 @@ BUNDLES: dict[str, list[str]] = {
         "aws-iam-secrets",
         "aws-iam-ssm",
         "aws-credential-access-secret",
+        "aws-credential-pivot",
     ],
 }
 

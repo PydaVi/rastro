@@ -10,7 +10,7 @@ from core.audit import AuditLogger
 from core.domain import Action, ActionType, Decision, Objective, Observation, Scope
 from core.aws_dry_run_lab import AwsDryRunLab
 from core.blind_real_runtime import BlindRealRuntime
-from execution.aws_executor import AwsRealExecutor, AwsRealExecutorStub, _detect_aws_credentials
+from execution.aws_executor import AwsRealExecutor, AwsRealExecutorStub, _detect_aws_credentials, _extract_full_aws_credentials
 from core.state import StateManager
 from reporting.report import ReportGenerator
 from execution.scope_enforcer import ScopeEnforcer
@@ -27,6 +27,7 @@ from operations.service import (
     run_generated_campaign,
     write_assessment_summary,
     _derive_credential_access_hypotheses,
+    _derive_credential_pivot_hypotheses,
 )
 from operations.models import AssessmentResult, CampaignResult
 from operations.models import ProfileDefinition
@@ -9969,3 +9970,344 @@ def test_run_generated_campaign_no_entry_profile_when_not_mapped(tmp_path: Path)
     )
 
     assert "entry_profile" not in captured_kwargs
+
+
+# ---------------------------------------------------------------------------
+# Bloco 6c — _extract_full_aws_credentials
+# ---------------------------------------------------------------------------
+
+def test_extract_full_aws_credentials_json_complete() -> None:
+    """Extrai AccessKeyId + SecretAccessKey de JSON bem formado."""
+    import json
+    secret = json.dumps({
+        "AccessKeyId": "AKIAIOSFODNN7EXAMPLE",
+        "SecretAccessKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    })
+    result = _extract_full_aws_credentials(secret)
+    assert result is not None
+    assert result["AccessKeyId"] == "AKIAIOSFODNN7EXAMPLE"
+    assert result["SecretAccessKey"] == "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    assert result["SessionToken"] is None
+
+
+def test_extract_full_aws_credentials_with_session_token() -> None:
+    """Extrai também o SessionToken quando presente."""
+    import json
+    secret = json.dumps({
+        "AccessKeyId": "ASIAIOSFODNN7EXAMPLE",
+        "SecretAccessKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        "SessionToken": "AQoXnyc4lcK4w9alCSR//TOKEN==",
+    })
+    result = _extract_full_aws_credentials(secret)
+    assert result is not None
+    assert result["SessionToken"] == "AQoXnyc4lcK4w9alCSR//TOKEN=="
+
+
+def test_extract_full_aws_credentials_case_insensitive() -> None:
+    """Chaves JSON são case-insensitive: aws_access_key_id etc."""
+    import json
+    secret = json.dumps({
+        "aws_access_key_id": "AKIAIOSFODNN7EXAMPLE",
+        "aws_secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    })
+    result = _extract_full_aws_credentials(secret)
+    assert result is not None
+    assert result["AccessKeyId"] == "AKIAIOSFODNN7EXAMPLE"
+
+
+def test_extract_full_aws_credentials_missing_secret_key() -> None:
+    """Sem SecretAccessKey, retorna None — só AccessKeyId não é suficiente."""
+    import json
+    secret = json.dumps({"AccessKeyId": "AKIAIOSFODNN7EXAMPLE"})
+    result = _extract_full_aws_credentials(secret)
+    assert result is None
+
+
+def test_extract_full_aws_credentials_plain_text_returns_none() -> None:
+    """Texto plano (não-JSON) retorna None — só JSON é suportado para full extraction."""
+    result = _extract_full_aws_credentials("AKIAIOSFODNN7EXAMPLE some-secret-key")
+    assert result is None
+
+
+def test_extract_full_aws_credentials_empty() -> None:
+    """String vazia retorna None."""
+    assert _extract_full_aws_credentials("") is None
+
+
+# ---------------------------------------------------------------------------
+# Bloco 6c — _derive_credential_pivot_hypotheses
+# ---------------------------------------------------------------------------
+
+def test_derive_credential_pivot_hypotheses_basic() -> None:
+    """Gera hipóteses credential_pivot para cada (entry, secret, role) elegível."""
+    user_arn = "arn:aws:iam::123:user/privesc-1-user"
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:embedded-creds"
+    role_arn = "arn:aws:iam::123:role/target-role"
+    discovery = {
+        "resources": [
+            _make_user(user_arn, []),
+            {"resource_type": "secret.secrets_manager", "identifier": secret_arn, "metadata": {"readable_by": [user_arn]}},
+            {"resource_type": "identity.role", "identifier": role_arn, "metadata": {}},
+        ]
+    }
+    hypotheses = _derive_credential_pivot_hypotheses(discovery, [user_arn])
+    assert len(hypotheses) == 1
+    h = hypotheses[0]
+    assert h.attack_class == "credential_pivot"
+    assert h.entry_identity == user_arn
+    assert h.target == role_arn
+    assert h.intermediate_resource == secret_arn
+    assert h.confidence == "medium"
+
+
+def test_derive_credential_pivot_hypotheses_no_readable_by() -> None:
+    """Sem readable_by no secret, nenhuma hipótese é gerada."""
+    user_arn = "arn:aws:iam::123:user/privesc-1-user"
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:embedded-creds"
+    role_arn = "arn:aws:iam::123:role/target-role"
+    discovery = {
+        "resources": [
+            _make_user(user_arn, []),
+            {"resource_type": "secret.secrets_manager", "identifier": secret_arn, "metadata": {"readable_by": []}},
+            {"resource_type": "identity.role", "identifier": role_arn, "metadata": {}},
+        ]
+    }
+    hypotheses = _derive_credential_pivot_hypotheses(discovery, [user_arn])
+    assert hypotheses == []
+
+
+def test_derive_credential_pivot_hypotheses_entry_not_in_readable_by() -> None:
+    """Entry identity não está em readable_by: nenhuma hipótese."""
+    user_arn = "arn:aws:iam::123:user/privesc-1-user"
+    other_arn = "arn:aws:iam::123:user/other-user"
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:embedded-creds"
+    role_arn = "arn:aws:iam::123:role/target-role"
+    discovery = {
+        "resources": [
+            {"resource_type": "secret.secrets_manager", "identifier": secret_arn, "metadata": {"readable_by": [other_arn]}},
+            {"resource_type": "identity.role", "identifier": role_arn, "metadata": {}},
+        ]
+    }
+    hypotheses = _derive_credential_pivot_hypotheses(discovery, [user_arn])
+    assert hypotheses == []
+
+
+def test_derive_credential_pivot_hypotheses_no_roles() -> None:
+    """Sem roles no snapshot, nenhuma hipótese pode ser gerada."""
+    user_arn = "arn:aws:iam::123:user/privesc-1-user"
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:embedded-creds"
+    discovery = {
+        "resources": [
+            {"resource_type": "secret.secrets_manager", "identifier": secret_arn, "metadata": {"readable_by": [user_arn]}},
+        ]
+    }
+    hypotheses = _derive_credential_pivot_hypotheses(discovery, [user_arn])
+    assert hypotheses == []
+
+
+def test_derive_credential_pivot_hypotheses_excludes_service_roles() -> None:
+    """aws-service-role/ roles são excluídos como alvos de pivot."""
+    user_arn = "arn:aws:iam::123:user/privesc-1-user"
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:embedded-creds"
+    svc_role_arn = "arn:aws:iam::123:role/aws-service-role/elasticbeanstalk.amazonaws.com/AWSServiceRoleForElasticBeanstalk"
+    discovery = {
+        "resources": [
+            {"resource_type": "secret.secrets_manager", "identifier": secret_arn, "metadata": {"readable_by": [user_arn]}},
+            {"resource_type": "identity.role", "identifier": svc_role_arn, "metadata": {}},
+        ]
+    }
+    hypotheses = _derive_credential_pivot_hypotheses(discovery, [user_arn])
+    assert hypotheses == []
+
+
+def test_derive_credential_pivot_hypotheses_multiple_roles() -> None:
+    """Dois roles geram duas hipóteses para o mesmo segredo."""
+    user_arn = "arn:aws:iam::123:user/privesc-1-user"
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:embedded-creds"
+    role_a = "arn:aws:iam::123:role/role-a"
+    role_b = "arn:aws:iam::123:role/role-b"
+    discovery = {
+        "resources": [
+            {"resource_type": "secret.secrets_manager", "identifier": secret_arn, "metadata": {"readable_by": [user_arn]}},
+            {"resource_type": "identity.role", "identifier": role_a, "metadata": {}},
+            {"resource_type": "identity.role", "identifier": role_b, "metadata": {}},
+        ]
+    }
+    hypotheses = _derive_credential_pivot_hypotheses(discovery, [user_arn])
+    assert len(hypotheses) == 2
+    targets = {h.target for h in hypotheses}
+    assert targets == {role_a, role_b}
+
+
+# ---------------------------------------------------------------------------
+# Bloco 6c — BlindRealRuntime: synthetic actor registration and action offers
+# ---------------------------------------------------------------------------
+
+def test_blind_real_runtime_observe_real_registers_synthetic_actor() -> None:
+    """observe_real com secretsmanager_read_secret + credential_extracted=True
+    deve registrar o synthetic_actor em state['identities']."""
+    from core.blind_real_runtime import BlindRealRuntime
+    from core.domain import Action, ActionType, Scope
+
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:prod/creds"
+    role_arn = "arn:aws:iam::123:role/target-role"
+    user_arn = "arn:aws:iam::123:user/svc-user"
+    synthetic = "extracted://prod/creds"
+
+    plan = {"profile": "aws-credential-pivot", "resource_arn": role_arn}
+    scope = Scope.model_validate({
+        "target": "aws",
+        "allowed_services": ["secretsmanager", "iam"],
+        "allowed_actions": ["enumerate", "assume_role", "access_resource"],
+        "allowed_resources": [role_arn, secret_arn],
+        "aws_account_ids": ["123"],
+        "allowed_regions": ["us-east-1"],
+        "authorized_by": "test",
+        "authorized_at": "2026-01-01",
+        "authorization_document": "docs/auth.pdf",
+        "dry_run": False,
+    })
+    runtime = BlindRealRuntime.build(
+        plan=plan,
+        discovery_snapshot={"resources": []},
+        scope=scope,
+        entry_identities=[user_arn],
+    )
+
+    action = Action(
+        action_type=ActionType.ACCESS_RESOURCE,
+        actor=user_arn,
+        target=secret_arn,
+        parameters={},
+        tool="secretsmanager_read_secret",
+        technique=None,
+    )
+    details = {
+        "response_summary": {"credential_extracted": True},
+        "synthetic_actor": synthetic,
+    }
+    runtime.observe_real(action, details)
+
+    assert synthetic in runtime.state["identities"]
+    assert runtime.state["identities"][synthetic]["active"] is True
+    assert runtime.state["identities"][synthetic]["extracted"] is True
+
+
+def test_blind_real_runtime_extracted_actor_gets_assume_role_actions() -> None:
+    """Após registrar synthetic actor, enumerate_actions deve oferecer
+    assume_role para ele, mas não enumeration ou policy_abuse."""
+    from core.blind_real_runtime import BlindRealRuntime
+    from core.domain import Action, ActionType, Scope
+
+    role_arn = "arn:aws:iam::123:role/target-role"
+    user_arn = "arn:aws:iam::123:user/svc-user"
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:prod/creds"
+    synthetic = "extracted://prod/creds"
+
+    plan = {"profile": "aws-credential-pivot", "resource_arn": role_arn}
+    scope = Scope.model_validate({
+        "target": "aws",
+        "allowed_services": ["secretsmanager", "iam"],
+        "allowed_actions": ["enumerate", "assume_role", "access_resource"],
+        "allowed_resources": [role_arn, secret_arn],
+        "aws_account_ids": ["123"],
+        "allowed_regions": ["us-east-1"],
+        "authorized_by": "test",
+        "authorized_at": "2026-01-01",
+        "authorization_document": "docs/auth.pdf",
+        "dry_run": False,
+    })
+    runtime = BlindRealRuntime.build(
+        plan=plan,
+        discovery_snapshot={"resources": [
+            {"resource_type": "identity.role", "identifier": role_arn, "metadata": {}},
+        ]},
+        scope=scope,
+        entry_identities=[user_arn],
+    )
+    # Manually register synthetic actor
+    runtime.state["identities"][synthetic] = {"active": True, "extracted": True}
+
+    actions = runtime.enumerate_actions(None)
+    synthetic_actions = [a for a in actions if a.actor == synthetic]
+    assert len(synthetic_actions) >= 1
+    assert all(a.action_type == ActionType.ASSUME_ROLE for a in synthetic_actions)
+    # No enumeration or policy abuse from extracted actor
+    synthetic_tool_names = {a.tool for a in synthetic_actions}
+    assert "iam_list_roles" not in synthetic_tool_names
+    assert "iam_create_policy_version_mutate" not in synthetic_tool_names
+
+
+def test_blind_real_runtime_observe_real_no_registration_without_credential_extracted() -> None:
+    """observe_real sem credential_extracted=True não registra synthetic actor."""
+    from core.blind_real_runtime import BlindRealRuntime
+    from core.domain import Action, ActionType, Scope
+
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:prod/creds"
+    role_arn = "arn:aws:iam::123:role/target-role"
+    user_arn = "arn:aws:iam::123:user/svc-user"
+
+    plan = {"profile": "aws-credential-pivot", "resource_arn": role_arn}
+    scope = Scope.model_validate({
+        "target": "aws",
+        "allowed_services": ["secretsmanager", "iam"],
+        "allowed_actions": ["enumerate", "assume_role", "access_resource"],
+        "allowed_resources": [role_arn, secret_arn],
+        "aws_account_ids": ["123"],
+        "allowed_regions": ["us-east-1"],
+        "authorized_by": "test",
+        "authorized_at": "2026-01-01",
+        "authorization_document": "docs/auth.pdf",
+        "dry_run": False,
+    })
+    runtime = BlindRealRuntime.build(
+        plan=plan,
+        discovery_snapshot={"resources": []},
+        scope=scope,
+        entry_identities=[user_arn],
+    )
+    action = Action(
+        action_type=ActionType.ACCESS_RESOURCE,
+        actor=user_arn,
+        target=secret_arn,
+        parameters={},
+        tool="secretsmanager_read_secret",
+        technique=None,
+    )
+    runtime.observe_real(action, {"response_summary": {"credential_extracted": False}})
+    # Only the original user should be in identities
+    assert all("extracted://" not in k for k in runtime.state["identities"])
+
+
+# ---------------------------------------------------------------------------
+# Bloco 6c — catalog + campaign_synthesis: aws-credential-pivot
+# ---------------------------------------------------------------------------
+
+def test_catalog_has_credential_pivot_profile() -> None:
+    """FOUNDATION_PROFILES contém aws-credential-pivot."""
+    from operations.catalog import FOUNDATION_PROFILES, BUNDLES
+    assert "aws-credential-pivot" in FOUNDATION_PROFILES
+    assert "aws-credential-pivot" in BUNDLES["aws-iam-heavy"]
+
+
+def test_campaign_synthesis_credential_pivot_mode_is_assume_role_proved() -> None:
+    """_build_generated_success_criteria para aws-credential-pivot → assume_role_proved."""
+    from operations.campaign_synthesis import _build_generated_success_criteria
+    candidate = {
+        "id": "cand-pivot-001",
+        "resource_arn": "arn:aws:iam::123:role/target-role",
+        "profile_family": "aws-credential-pivot",
+    }
+    criteria = _build_generated_success_criteria(candidate)
+    assert criteria["mode"] == "assume_role_proved"
+
+
+def test_attack_class_to_profile_credential_pivot() -> None:
+    """_attack_class_to_profile('credential_pivot', ...) → 'aws-credential-pivot'."""
+    from operations.service import _attack_class_to_profile
+    result = _attack_class_to_profile(
+        "credential_pivot",
+        "arn:aws:iam::123:role/target-role",
+        ["Read secret", "AssumeRole"],
+    )
+    assert result == "aws-credential-pivot"

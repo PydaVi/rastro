@@ -412,7 +412,16 @@ class AwsRealExecutor:
         )
         secret_string = response.get("SecretString") or ""
         credential_info = _detect_aws_credentials(secret_string)
-        return {
+
+        # Bloco 6c: se credential_extracted, armazena creds completas para pivot de identidade
+        synthetic_actor: str | None = None
+        if credential_info.get("credential_extracted"):
+            full_creds = _extract_full_aws_credentials(secret_string)
+            if full_creds is not None:
+                synthetic_actor = f"extracted://{secret_id}"
+                self._credentials_by_actor[synthetic_actor] = full_creds
+
+        result: dict = {
             "details": f"Executed secretsmanager:GetSecretValue against {secret_id}.",
             "evidence": {
                 "secret_id": secret_id,
@@ -431,6 +440,9 @@ class AwsRealExecutor:
                 **credential_info,
             },
         }
+        if synthetic_actor:
+            result["synthetic_actor"] = synthetic_actor
+        return result
 
     def _execute_ssm_list_parameters(self, client: AwsClient, action: Action) -> dict:
         region = _required_parameter(action, "region")
@@ -1325,6 +1337,54 @@ def _detect_aws_credentials(secret_string: str) -> dict:
         return result
 
     return {"credential_extracted": False}
+
+
+def _extract_full_aws_credentials(secret_string: str) -> dict | None:
+    """Bloco 6c: extrai credenciais AWS completas de um secret para pivot de identidade.
+
+    Retorna dict com AccessKeyId, SecretAccessKey (e SessionToken se presente), ou None.
+    Usado exclusivamente pela executor para armazenar em _credentials_by_actor.
+    """
+    import json as _json
+
+    if not secret_string:
+        return None
+
+    parsed: dict | None = None
+    try:
+        candidate = _json.loads(secret_string)
+        if isinstance(candidate, dict):
+            parsed = candidate
+    except Exception:
+        pass
+
+    if parsed is None:
+        return None
+
+    lower_keys = {k.lower(): v for k, v in parsed.items()}
+    access_key_id: str | None = (
+        lower_keys.get("accesskeyid")
+        or lower_keys.get("access_key_id")
+        or lower_keys.get("aws_access_key_id")
+    )
+    secret_access_key: str | None = (
+        lower_keys.get("secretaccesskey")
+        or lower_keys.get("secret_access_key")
+        or lower_keys.get("aws_secret_access_key")
+    )
+    if not access_key_id or not secret_access_key:
+        return None
+
+    session_token: str | None = (
+        lower_keys.get("sessiontoken")
+        or lower_keys.get("session_token")
+        or lower_keys.get("aws_session_token")
+    )
+    return {
+        "AccessKeyId": access_key_id,
+        "SecretAccessKey": secret_access_key,
+        "SessionToken": session_token,
+    }
 
 
 def _required_parameter(action: Action, key: str) -> str:

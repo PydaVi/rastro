@@ -377,6 +377,8 @@ def _attack_class_to_profile(attack_class: str, target_arn: str, attack_steps: l
         if ":ssm:" in target_arn or "/parameter/" in target_arn:
             return "aws-iam-ssm"
         return "aws-credential-access-secret"
+    if attack_class == "credential_pivot":
+        return "aws-credential-pivot"
     if attack_class == "data_exfil":
         return "aws-iam-s3"
     if attack_class == "compute_pivot":
@@ -553,6 +555,60 @@ def _derive_credential_access_hypotheses(
     return hypotheses
 
 
+def _derive_credential_pivot_hypotheses(
+    discovery_snapshot: dict,
+    entry_identities: list[str],
+) -> list:
+    """Bloco 6c: hipóteses de pivot via credencial extraída de segredo.
+
+    Para cada entry identity que pode ler um segredo (readable_by), gera hipótese
+    credential_pivot com target=role e intermediate_resource=secret.
+    """
+    from planner.strategic_planner import AttackHypothesis
+
+    identity_set = set(entry_identities)
+    resources = discovery_snapshot.get("resources", [])
+
+    # Coleta roles disponíveis (exclui service roles)
+    role_arns = [
+        r["identifier"]
+        for r in resources
+        if r.get("resource_type") == "identity.role"
+        and ":role/aws-service-role/" not in r.get("identifier", "")
+    ]
+    if not role_arns:
+        return []
+
+    hypotheses: list[AttackHypothesis] = []
+    for resource in resources:
+        if resource.get("resource_type") not in _DIRECT_READ_RESOURCE_TYPES:
+            continue
+        resource_arn = resource.get("identifier", "")
+        readable_by: list[str] = (resource.get("metadata") or {}).get("readable_by", [])
+        for principal_arn in readable_by:
+            if principal_arn not in identity_set:
+                continue
+            for role_arn in role_arns:
+                hypotheses.append(
+                    AttackHypothesis(
+                        entry_identity=principal_arn,
+                        target=role_arn,
+                        attack_class="credential_pivot",
+                        intermediate_resource=resource_arn,
+                        attack_steps=[
+                            f"Read {resource_arn} to extract embedded AWS credentials",
+                            f"Use extracted identity to call sts:AssumeRole on {role_arn}",
+                        ],
+                        confidence="medium",
+                        reasoning=(
+                            f"Deterministic: {principal_arn} can read {resource_arn} "
+                            f"(readable_by). Embedded credentials may trust {role_arn}."
+                        ),
+                    )
+                )
+    return hypotheses
+
+
 def _infer_resource_type_from_arn(arn: str) -> str:
     if ":role/" in arn:
         return "identity.role"
@@ -716,6 +772,17 @@ def run_discovery_driven_assessment(
                 )
                 det_hypotheses.extend(cred_access_hypotheses)
 
+            # Bloco 6c: hipóteses de pivot — lê segredo → usa credencial extraída para assumir role
+            cred_pivot_hypotheses = _derive_credential_pivot_hypotheses(
+                discovery_snapshot, effective_entry_identities
+            )
+            if cred_pivot_hypotheses:
+                logger.info(
+                    "Credential pivot hypotheses from readable_by x roles: %d",
+                    len(cred_pivot_hypotheses),
+                )
+                det_hypotheses.extend(cred_pivot_hypotheses)
+
             llm_hypotheses = strategic_planner.plan_attacks(
                 discovery_snapshot, effective_entry_identities, scope_for_strategic
             )
@@ -857,7 +924,11 @@ def _blind_real_allowed_resources(*, plan: dict, discovery_snapshot: dict, targe
         identifier = resource.get("identifier")
         if not identifier:
             continue
-        if resource.get("resource_type") == "identity.role":
+        rtype = resource.get("resource_type", "")
+        if rtype == "identity.role":
+            allowed_resources.add(identifier)
+        # Bloco 6c: credential pivot needs intermediate secrets/params in scope
+        elif rtype in ("secret.secrets_manager", "secret.ssm_parameter"):
             allowed_resources.add(identifier)
     return sorted(allowed_resources)
 

@@ -525,28 +525,43 @@ como entidades de primeira classe, com metadados de quem pode acessar cada um.
 
 ---
 
-### Bloco 6c — Identity Pivot Mid-Chain (salto arquitetural)
+### Bloco 6c — Identity Pivot Mid-Chain (salto arquitetural) [FECHADO 2026-04-19]
 
 **Direcao**: profundidade de chain — o engine passa de "um identity, um path" para "multi-hop real".
 **Objetivo**: engine prova chain completa que atravessa um servico de dados como elo intermediario.
 
-O que muda (arquitetural):
-- `StateSnapshot` ganha `available_identities: list[ExtractedIdentity]` — identidades descobertas
-  durante a campanha (via read_secret, read_ssm, etc.) que ainda nao estavam no discovery inicial
-- Runtime cria sessao boto3 com credenciais extraidas quando o planner decide usar a nova identity
-- `attack_graph` registra o pivot: `node A → [read_secret] → node B (extracted) → [assume_role] → node C`
-- StrategicPlanner recebe sinal de identidades extraidas disponiveis para proximos passos
+#### O que foi implementado
 
-Chain a provar:
-```
-entry_user (secretsmanager:GetSecretValue)
-  → lê secret com credenciais de service_account_user
-    → assume role privilegiado como service_account_user
-```
+- `_extract_full_aws_credentials(secret_string)` em `aws_executor.py`: extrai creds completas (AccessKeyId + SecretAccessKey + SessionToken) de JSON do secret para pivot real
+- `_execute_secretsmanager_read_secret` atualizado: se `credential_extracted=True`, armazena creds em `_credentials_by_actor[f"extracted://{secret_id}"]` e retorna `synthetic_actor` no resultado
+- `BlindRealRuntime.observe_real`: quando `secretsmanager_read_secret` retorna `credential_extracted=True` + `synthetic_actor`, registra identidade sintética em `state["identities"]` com flag `extracted=True`
+- `BlindRealRuntime.enumerate_actions`: atores extraídos recebem apenas `assume_role` actions — sem enumeration, sem policy abuse
+- `AttackHypothesis`: novo campo `intermediate_resource: str | None` + nova attack_class `"credential_pivot"`
+- `catalog.py`: novo profile `aws-credential-pivot` (target=role, bundle=aws-iam-heavy)
+- `campaign_synthesis.py`: `aws-credential-pivot` → `assume_role_proved`
+- `service.py`: `_attack_class_to_profile("credential_pivot")` → `"aws-credential-pivot"` + `_derive_credential_pivot_hypotheses()` wired em `run_discovery_driven_assessment`
+- 18 novos testes (Bloco 6c), 269/269 passando
 
-Criterio de saida:
-- 1 chain completa provada: read_secret → extracted_identity → assume_role_privileged
-- Attack graph com 3 nos distintos (entry → extracted → privileged)
+#### Bugs encontrados e corrigidos durante run real no lab AWS
+
+- `BlindRealRuntime._target_access_actions` não gerava `secretsmanager_read_secret` para `aws-credential-pivot` (target=role) → adicionado `_pivot_secret_read_actions` com lookup via `readable_by`
+- `BlindRealRuntime.enumerate_actions` para `aws-credential-pivot` gerava `iam_passrole` para o entry user → corrigido para que non-extracted actors no pivot profile só recebam enumerate + pivot_secret_read
+- `_blind_real_allowed_resources` não incluía secrets no scope → corrigido para incluir `secret.secrets_manager` e `secret.ssm_parameter`
+- `_restore_objective_target_access_actions` não restaurava `secretsmanager_read_secret` no modo `assume_role_proved` → adicionado restore para `secretsmanager_read_secret` e `ssm_read_parameter`
+- `_pivot_secret_read_actions` usava nome do secret como `secret_id` → trocado para ARN completo (IAM policy matching exige ARN)
+
+#### Criterio atingido
+
+- **Chain provada no lab real AWS em 2 passos**:
+  - Step 1: `rastro-pivot-entry-user` lê secret → `credential_extracted=True` → registra `extracted://ARN` como nova identidade
+  - Step 2: identidade extraída assume `rastro-pivot-target-role` → `objective_met=True`
+- `_extract_full_aws_credentials`: extrai JSON com case-insensitive, inclui SessionToken
+- `observe_real` registra synthetic actor corretamente
+- `enumerate_actions` limita extracted actors a assume_role only
+- `_derive_credential_pivot_hypotheses` gera hipóteses para cada (entry, secret, role) elegível
+- Profile `aws-credential-pivot` presente no catálogo e bundle `aws-iam-heavy`
+- terraform module `credential_pivot_real/` com render script para provisionar o lab
+- 269/269 testes passando
 
 ---
 

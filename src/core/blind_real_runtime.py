@@ -67,6 +67,16 @@ class BlindRealRuntime:
         for actor, actor_state in self.state.get("identities", {}).items():
             if not actor_state.get("active", False):
                 continue
+            if actor_state.get("extracted", False):
+                # Bloco 6c: extracted identities may only assume roles — no enumeration or mutation
+                actions.extend(self._assume_role_actions(actor, region, discovered_roles))
+                continue
+            if self.profile_name == "aws-credential-pivot":
+                # Bloco 6c: non-extracted actors in pivot profile may only enumerate + read secrets.
+                # The target role must be assumed via the extracted identity, not directly.
+                actions.extend(self._enumeration_actions(actor, region))
+                actions.extend(self._target_access_actions(actor, region))
+                continue
             actions.extend(self._enumeration_actions(actor, region))
             actions.extend(self._assume_role_actions(actor, region, discovered_roles))
             actions.extend(self._target_access_actions(actor, region))
@@ -88,6 +98,14 @@ class BlindRealRuntime:
             flags = state.setdefault("flags", [])
             if "target_accessed" not in flags:
                 flags.append("target_accessed")
+        # Bloco 6c: registra identidade sintética extraída de um segredo
+        if action.tool == "secretsmanager_read_secret":
+            resp = details.get("response_summary", {})
+            if resp.get("credential_extracted") and details.get("synthetic_actor"):
+                synthetic_actor = details["synthetic_actor"]
+                identities = state.setdefault("identities", {})
+                if synthetic_actor not in identities:
+                    identities[synthetic_actor] = {"active": True, "extracted": True}
         return Observation(success=success, details=details)
 
     def _enumeration_actions(self, actor: str, region: str) -> list[Action]:
@@ -133,6 +151,10 @@ class BlindRealRuntime:
         target = self.target_arn
         if self.profile_name == "aws-iam-role-chaining":
             return []
+        # Bloco 6c: credential pivot — entry reads intermediate secret, not the target role.
+        # Offer secretsmanager_read_secret for every secret where actor is in readable_by.
+        if self.profile_name == "aws-credential-pivot":
+            return self._pivot_secret_read_actions(actor, region)
         # Bloco 6b: credential_access_direct — entry user reads secret/SSM directly.
         # Skip the simulation probe and fall through to the type-based real read actions.
         is_direct_credential_access = self.profile_name in (
@@ -207,6 +229,30 @@ class BlindRealRuntime:
                 )
             ]
         return []
+
+    def _pivot_secret_read_actions(self, actor: str, region: str) -> list[Action]:
+        """Bloco 6c: oferece secretsmanager_read_secret para secrets onde actor está em readable_by."""
+        actions: list[Action] = []
+        for resource in self.discovery_snapshot.get("resources", []):
+            if resource.get("resource_type") != "secret.secrets_manager":
+                continue
+            readable_by = (resource.get("metadata") or {}).get("readable_by", [])
+            if actor not in readable_by:
+                continue
+            secret_arn = resource["identifier"]
+            # Use full ARN as secret_id so IAM policy matching works regardless of name suffix
+            secret_id = secret_arn
+            actions.append(
+                Action(
+                    action_type=ActionType.ACCESS_RESOURCE,
+                    actor=actor,
+                    target=secret_arn,
+                    parameters={"service": "secretsmanager", "region": region, "secret_id": secret_id},
+                    tool="secretsmanager_read_secret",
+                    technique=_technique("T1552", "Unsecured Credentials"),
+                )
+            )
+        return actions
 
     def _policy_abuse_actions(self, actor: str, region: str, roles: list[str]) -> list[Action]:
         if "iam" not in self.scope.allowed_services:
