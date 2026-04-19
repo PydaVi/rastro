@@ -347,6 +347,25 @@ class AwsClient(Protocol):
         """Retorna o documento de uma inline policy de user, ou None."""
         ...
 
+    def create_access_key(
+        self,
+        region: str,
+        user_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> Dict[str, Any]:
+        """Cria um access key para o user. Retorna dict com AccessKeyId e SecretAccessKey."""
+        ...
+
+    def delete_access_key(
+        self,
+        region: str,
+        user_name: str,
+        access_key_id: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> None:
+        """Deleta um access key (rollback)."""
+        ...
+
 
 @dataclass
 class Boto3AwsClient:
@@ -1156,6 +1175,35 @@ class Boto3AwsClient:
             return response.get("PolicyDocument")
         except Exception:
             return None
+
+    def create_access_key(
+        self,
+        region: str,
+        user_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> Dict[str, Any]:
+        client = self._session(credentials).client("iam", region_name=region)
+        response = client.create_access_key(UserName=user_name)
+        key = response["AccessKey"]
+        return {
+            "AccessKeyId": key["AccessKeyId"],
+            "SecretAccessKey": key["SecretAccessKey"],
+            "UserName": key["UserName"],
+            "Status": key.get("Status", "Active"),
+        }
+
+    def delete_access_key(
+        self,
+        region: str,
+        user_name: str,
+        access_key_id: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> None:
+        try:
+            client = self._session(credentials).client("iam", region_name=region)
+            client.delete_access_key(UserName=user_name, AccessKeyId=access_key_id)
+        except Exception:
+            pass  # best-effort rollback
 
     def _session(self, credentials: Optional[AwsCredentials] = None):
         import boto3

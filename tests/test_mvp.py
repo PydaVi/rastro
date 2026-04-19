@@ -10311,3 +10311,453 @@ def test_attack_class_to_profile_credential_pivot() -> None:
         ["Read secret", "AssumeRole"],
     )
     assert result == "aws-credential-pivot"
+
+
+# ---------------------------------------------------------------------------
+# Bloco 6d — SSM pivot, S3 pivot, CreateAccessKey pivot
+# ---------------------------------------------------------------------------
+
+ACCOUNT = "550192603632"
+
+
+def _6d_user(user_arn: str, metadata: dict | None = None) -> dict:
+    return {
+        "resource_type": "identity.user",
+        "identifier": user_arn,
+        "metadata": metadata or {},
+    }
+
+
+def _6d_ssm_param(param_arn: str, readable_by: list[str]) -> dict:
+    return {
+        "resource_type": "secret.ssm_parameter",
+        "identifier": param_arn,
+        "metadata": {"readable_by": readable_by},
+    }
+
+
+def _6d_s3_object(obj_arn: str, readable_by: list[str]) -> dict:
+    return {
+        "resource_type": "data_store.s3_object",
+        "identifier": obj_arn,
+        "metadata": {"readable_by": readable_by},
+    }
+
+
+def _6d_role(role_arn: str) -> dict:
+    return {"resource_type": "identity.role", "identifier": role_arn, "metadata": {}}
+
+
+# --- _derive_credential_pivot_hypotheses — SSM and S3 variants ---
+
+def test_derive_pivot_hypotheses_ssm_variant() -> None:
+    """SSM parameter em readable_by gera attack_class=ssm_pivot."""
+    from operations.service import _derive_credential_pivot_hypotheses
+
+    user_arn = f"arn:aws:iam::{ACCOUNT}:user/queue-indexer-user"
+    param_arn = f"arn:aws:ssm:us-east-1:{ACCOUNT}:parameter/svc/mesh/runtime/bootstrap"
+    role_arn = f"arn:aws:iam::{ACCOUNT}:role/batch-distributor-role"
+
+    discovery = {
+        "resources": [
+            _6d_ssm_param(param_arn, [user_arn]),
+            _6d_role(role_arn),
+        ]
+    }
+    hypotheses = _derive_credential_pivot_hypotheses(discovery, [user_arn])
+    assert any(h.attack_class == "ssm_pivot" and h.intermediate_resource == param_arn for h in hypotheses)
+
+
+def test_derive_pivot_hypotheses_s3_variant() -> None:
+    """S3 object em readable_by gera attack_class=s3_pivot."""
+    from operations.service import _derive_credential_pivot_hypotheses
+
+    user_arn = f"arn:aws:iam::{ACCOUNT}:user/asset-manifest-user"
+    obj_arn = f"arn:aws:s3:::mesh-artifacts-{ACCOUNT}/exports/runtime/bootstrap.json"
+    role_arn = f"arn:aws:iam::{ACCOUNT}:role/delivery-broker-role"
+
+    discovery = {
+        "resources": [
+            _6d_s3_object(obj_arn, [user_arn]),
+            _6d_role(role_arn),
+        ]
+    }
+    hypotheses = _derive_credential_pivot_hypotheses(discovery, [user_arn])
+    assert any(h.attack_class == "s3_pivot" and h.intermediate_resource == obj_arn for h in hypotheses)
+
+
+def test_derive_pivot_hypotheses_secret_still_credential_pivot() -> None:
+    """Secrets Manager em readable_by ainda gera attack_class=credential_pivot."""
+    from operations.service import _derive_credential_pivot_hypotheses
+
+    user_arn = f"arn:aws:iam::{ACCOUNT}:user/entry-user"
+    secret_arn = f"arn:aws:secretsmanager:us-east-1:{ACCOUNT}:secret:mysecret-XYZ"
+    role_arn = f"arn:aws:iam::{ACCOUNT}:role/target-role"
+
+    discovery = {
+        "resources": [
+            {"resource_type": "secret.secrets_manager", "identifier": secret_arn,
+             "metadata": {"readable_by": [user_arn]}},
+            _6d_role(role_arn),
+        ]
+    }
+    hypotheses = _derive_credential_pivot_hypotheses(discovery, [user_arn])
+    assert any(h.attack_class == "credential_pivot" for h in hypotheses)
+
+
+# --- _derive_create_access_key_hypotheses ---
+
+def test_derive_create_access_key_hypotheses_basic() -> None:
+    """createkey_by no user gera hipótese iam_create_access_key_pivot."""
+    from operations.service import _derive_create_access_key_hypotheses
+
+    entry_arn = f"arn:aws:iam::{ACCOUNT}:user/mesh-dispatch-operator"
+    target_user_arn = f"arn:aws:iam::{ACCOUNT}:user/cache-sync-bot"
+    role_arn = f"arn:aws:iam::{ACCOUNT}:role/runtime-broker-role"
+
+    discovery = {
+        "resources": [
+            _6d_user(entry_arn),
+            _6d_user(target_user_arn, {"createkey_by": [entry_arn]}),
+            _6d_role(role_arn),
+        ]
+    }
+    hypotheses = _derive_create_access_key_hypotheses(discovery, [entry_arn])
+    assert len(hypotheses) >= 1
+    h = next(x for x in hypotheses if x.intermediate_resource == target_user_arn)
+    assert h.attack_class == "iam_create_access_key_pivot"
+    assert h.entry_identity == entry_arn
+    assert h.target == role_arn
+
+
+def test_derive_create_access_key_hypotheses_no_createkey_by() -> None:
+    """Sem createkey_by, nenhuma hipótese gerada."""
+    from operations.service import _derive_create_access_key_hypotheses
+
+    entry_arn = f"arn:aws:iam::{ACCOUNT}:user/mesh-dispatch-operator"
+    target_user_arn = f"arn:aws:iam::{ACCOUNT}:user/cache-sync-bot"
+    role_arn = f"arn:aws:iam::{ACCOUNT}:role/runtime-broker-role"
+
+    discovery = {
+        "resources": [
+            _6d_user(entry_arn),
+            _6d_user(target_user_arn),  # sem createkey_by
+            _6d_role(role_arn),
+        ]
+    }
+    hypotheses = _derive_create_access_key_hypotheses(discovery, [entry_arn])
+    assert hypotheses == []
+
+
+def test_derive_create_access_key_hypotheses_entry_not_in_createkey_by() -> None:
+    """Entry identity não está em createkey_by — nenhuma hipótese."""
+    from operations.service import _derive_create_access_key_hypotheses
+
+    entry_arn = f"arn:aws:iam::{ACCOUNT}:user/other-user"
+    target_user_arn = f"arn:aws:iam::{ACCOUNT}:user/cache-sync-bot"
+    role_arn = f"arn:aws:iam::{ACCOUNT}:role/runtime-broker-role"
+
+    discovery = {
+        "resources": [
+            _6d_user(target_user_arn, {"createkey_by": ["arn:aws:iam::999:user/nobody"]}),
+            _6d_role(role_arn),
+        ]
+    }
+    hypotheses = _derive_create_access_key_hypotheses(discovery, [entry_arn])
+    assert hypotheses == []
+
+
+# --- attack_class_to_profile routing for 6d ---
+
+def test_attack_class_to_profile_ssm_pivot() -> None:
+    from operations.service import _attack_class_to_profile
+    assert _attack_class_to_profile("ssm_pivot", "arn:aws:iam::123:role/r", []) == "aws-credential-pivot-ssm"
+
+
+def test_attack_class_to_profile_s3_pivot() -> None:
+    from operations.service import _attack_class_to_profile
+    assert _attack_class_to_profile("s3_pivot", "arn:aws:iam::123:role/r", []) == "aws-credential-pivot-s3"
+
+
+def test_attack_class_to_profile_create_access_key_pivot() -> None:
+    from operations.service import _attack_class_to_profile
+    assert _attack_class_to_profile("iam_create_access_key_pivot", "arn:aws:iam::123:role/r", []) == "aws-iam-create-access-key-pivot"
+
+
+# --- catalog + synthesis for new profiles ---
+
+def test_catalog_has_6d_profiles() -> None:
+    """Catálogo contém os 3 novos perfis do Bloco 6d."""
+    from operations.catalog import FOUNDATION_PROFILES, BUNDLES
+    for profile in ("aws-credential-pivot-ssm", "aws-credential-pivot-s3", "aws-iam-create-access-key-pivot"):
+        assert profile in FOUNDATION_PROFILES, f"missing profile: {profile}"
+        assert profile in BUNDLES["aws-iam-heavy"], f"missing from bundle: {profile}"
+
+
+def test_campaign_synthesis_6d_profiles_assume_role_proved() -> None:
+    """Novos perfis 6d têm success_mode assume_role_proved."""
+    from operations.campaign_synthesis import _build_generated_success_criteria
+    for profile in ("aws-credential-pivot-ssm", "aws-credential-pivot-s3", "aws-iam-create-access-key-pivot"):
+        candidate = {
+            "id": "cand-6d",
+            "resource_arn": f"arn:aws:iam::{ACCOUNT}:role/target",
+            "profile_family": profile,
+        }
+        criteria = _build_generated_success_criteria(candidate)
+        assert criteria["mode"] == "assume_role_proved", f"wrong mode for {profile}"
+
+
+# --- BlindRealRuntime — SSM pivot ---
+
+def test_blind_real_runtime_ssm_pivot_offers_ssm_read_action() -> None:
+    """aws-credential-pivot-ssm: entry user recebe ssm_read_parameter (não iam_passrole)."""
+    from core.blind_real_runtime import BlindRealRuntime
+    from core.domain import Scope
+
+    user_arn = f"arn:aws:iam::{ACCOUNT}:user/queue-indexer-user"
+    param_arn = f"arn:aws:ssm:us-east-1:{ACCOUNT}:parameter/svc/mesh/runtime/bootstrap"
+    role_arn = f"arn:aws:iam::{ACCOUNT}:role/batch-distributor-role"
+
+    discovery = {
+        "resources": [
+            _6d_ssm_param(param_arn, [user_arn]),
+            _6d_role(role_arn),
+        ]
+    }
+    scope = Scope(
+        target="aws", allowed_actions=["enumerate", "assume_role", "access_resource"],
+        allowed_resources=[user_arn, param_arn, role_arn],
+        aws_account_ids=[ACCOUNT], allowed_regions=["us-east-1"],
+        allowed_services=["iam", "sts", "ssm"], authorized_by="test",
+        authorized_at="2026-04-19", authorization_document="test",
+    )
+    plan = {"resource_arn": role_arn, "profile": "aws-credential-pivot-ssm"}
+    runtime = BlindRealRuntime.build(
+        plan=plan, discovery_snapshot=discovery, scope=scope, entry_identities=[user_arn]
+    )
+    actions = runtime.enumerate_actions(None)
+    tools = [a.tool for a in actions]
+    assert "ssm_read_parameter" in tools
+    assert "iam_passrole" not in tools
+
+
+def test_blind_real_runtime_ssm_pivot_extracted_actor_gets_assume_role() -> None:
+    """aws-credential-pivot-ssm: extracted actor recebe apenas iam_passrole."""
+    from core.blind_real_runtime import BlindRealRuntime
+    from core.domain import Action, ActionType, Scope
+
+    user_arn = f"arn:aws:iam::{ACCOUNT}:user/queue-indexer-user"
+    param_arn = f"arn:aws:ssm:us-east-1:{ACCOUNT}:parameter/svc/mesh/runtime/bootstrap"
+    role_arn = f"arn:aws:iam::{ACCOUNT}:role/batch-distributor-role"
+    synthetic = f"extracted://{param_arn}"
+
+    discovery = {"resources": [_6d_ssm_param(param_arn, [user_arn]), _6d_role(role_arn)]}
+    scope = Scope(
+        target="aws", allowed_actions=["enumerate", "assume_role", "access_resource"],
+        allowed_resources=[user_arn, param_arn, role_arn],
+        aws_account_ids=[ACCOUNT], allowed_regions=["us-east-1"],
+        allowed_services=["iam", "sts", "ssm"], authorized_by="test",
+        authorized_at="2026-04-19", authorization_document="test",
+    )
+    plan = {"resource_arn": role_arn, "profile": "aws-credential-pivot-ssm"}
+    runtime = BlindRealRuntime.build(
+        plan=plan, discovery_snapshot=discovery, scope=scope, entry_identities=[user_arn]
+    )
+    # Simula extração: regista synthetic actor
+    action = Action(
+        action_type=ActionType.ACCESS_RESOURCE, actor=user_arn, target=param_arn,
+        parameters={}, tool="ssm_read_parameter", technique=None,
+    )
+    runtime.observe_real(action, {
+        "response_summary": {"credential_extracted": True},
+        "synthetic_actor": synthetic,
+    })
+    actions = runtime.enumerate_actions(None)
+    synthetic_actions = [a for a in actions if a.actor == synthetic]
+    assert all(a.tool == "iam_passrole" for a in synthetic_actions)
+    assert len(synthetic_actions) >= 1
+
+
+# --- BlindRealRuntime — S3 pivot ---
+
+def test_blind_real_runtime_s3_pivot_offers_s3_read_action() -> None:
+    """aws-credential-pivot-s3: entry user recebe s3_read_sensitive (não iam_passrole)."""
+    from core.blind_real_runtime import BlindRealRuntime
+    from core.domain import Scope
+
+    user_arn = f"arn:aws:iam::{ACCOUNT}:user/asset-manifest-user"
+    obj_arn = f"arn:aws:s3:::mesh-artifacts-{ACCOUNT}/exports/runtime/bootstrap.json"
+    role_arn = f"arn:aws:iam::{ACCOUNT}:role/delivery-broker-role"
+
+    discovery = {"resources": [_6d_s3_object(obj_arn, [user_arn]), _6d_role(role_arn)]}
+    scope = Scope(
+        target="aws", allowed_actions=["enumerate", "assume_role", "access_resource"],
+        allowed_resources=[user_arn, obj_arn, role_arn],
+        aws_account_ids=[ACCOUNT], allowed_regions=["us-east-1"],
+        allowed_services=["iam", "sts", "s3"], authorized_by="test",
+        authorized_at="2026-04-19", authorization_document="test",
+    )
+    plan = {"resource_arn": role_arn, "profile": "aws-credential-pivot-s3"}
+    runtime = BlindRealRuntime.build(
+        plan=plan, discovery_snapshot=discovery, scope=scope, entry_identities=[user_arn]
+    )
+    actions = runtime.enumerate_actions(None)
+    tools = [a.tool for a in actions]
+    assert "s3_read_sensitive" in tools
+    assert "iam_passrole" not in tools
+
+
+# --- BlindRealRuntime — CreateAccessKey pivot ---
+
+def test_blind_real_runtime_createkey_pivot_offers_create_action() -> None:
+    """aws-iam-create-access-key-pivot: entry user recebe iam_create_access_key."""
+    from core.blind_real_runtime import BlindRealRuntime
+    from core.domain import Scope
+
+    entry_arn = f"arn:aws:iam::{ACCOUNT}:user/mesh-dispatch-operator"
+    target_user_arn = f"arn:aws:iam::{ACCOUNT}:user/cache-sync-bot"
+    role_arn = f"arn:aws:iam::{ACCOUNT}:role/runtime-broker-role"
+
+    discovery = {
+        "resources": [
+            _6d_user(entry_arn),
+            _6d_user(target_user_arn, {"createkey_by": [entry_arn]}),
+            _6d_role(role_arn),
+        ]
+    }
+    scope = Scope(
+        target="aws", allowed_actions=["enumerate", "assume_role", "access_resource"],
+        allowed_resources=[entry_arn, target_user_arn, role_arn],
+        aws_account_ids=[ACCOUNT], allowed_regions=["us-east-1"],
+        allowed_services=["iam", "sts"], authorized_by="test",
+        authorized_at="2026-04-19", authorization_document="test",
+    )
+    plan = {"resource_arn": role_arn, "profile": "aws-iam-create-access-key-pivot"}
+    runtime = BlindRealRuntime.build(
+        plan=plan, discovery_snapshot=discovery, scope=scope, entry_identities=[entry_arn]
+    )
+    actions = runtime.enumerate_actions(None)
+    tools = [a.tool for a in actions]
+    assert "iam_create_access_key" in tools
+    assert "iam_passrole" not in tools
+
+
+def test_blind_real_runtime_createkey_pivot_extracted_actor_assumes_role() -> None:
+    """CreateAccessKey: extracted actor recebe apenas iam_passrole."""
+    from core.blind_real_runtime import BlindRealRuntime
+    from core.domain import Action, ActionType, Scope
+
+    entry_arn = f"arn:aws:iam::{ACCOUNT}:user/mesh-dispatch-operator"
+    target_user_arn = f"arn:aws:iam::{ACCOUNT}:user/cache-sync-bot"
+    role_arn = f"arn:aws:iam::{ACCOUNT}:role/runtime-broker-role"
+    synthetic = f"extracted://iam_user/{target_user_arn}"
+
+    discovery = {
+        "resources": [
+            _6d_user(entry_arn),
+            _6d_user(target_user_arn, {"createkey_by": [entry_arn]}),
+            _6d_role(role_arn),
+        ]
+    }
+    scope = Scope(
+        target="aws", allowed_actions=["enumerate", "assume_role", "access_resource"],
+        allowed_resources=[entry_arn, target_user_arn, role_arn],
+        aws_account_ids=[ACCOUNT], allowed_regions=["us-east-1"],
+        allowed_services=["iam", "sts"], authorized_by="test",
+        authorized_at="2026-04-19", authorization_document="test",
+    )
+    plan = {"resource_arn": role_arn, "profile": "aws-iam-create-access-key-pivot"}
+    runtime = BlindRealRuntime.build(
+        plan=plan, discovery_snapshot=discovery, scope=scope, entry_identities=[entry_arn]
+    )
+    # Simula criação de access key
+    action = Action(
+        action_type=ActionType.ACCESS_RESOURCE, actor=entry_arn, target=target_user_arn,
+        parameters={}, tool="iam_create_access_key", technique=None,
+    )
+    runtime.observe_real(action, {
+        "response_summary": {},
+        "synthetic_actor": synthetic,
+    })
+    actions = runtime.enumerate_actions(None)
+    synthetic_actions = [a for a in actions if a.actor == synthetic]
+    assert all(a.tool == "iam_passrole" for a in synthetic_actions)
+    assert len(synthetic_actions) >= 1
+
+
+def test_blind_real_runtime_createkey_pivot_observe_real_registers_extracted() -> None:
+    """observe_real com iam_create_access_key registra synthetic actor no state."""
+    from core.blind_real_runtime import BlindRealRuntime
+    from core.domain import Action, ActionType, Scope
+
+    entry_arn = f"arn:aws:iam::{ACCOUNT}:user/mesh-dispatch-operator"
+    target_user_arn = f"arn:aws:iam::{ACCOUNT}:user/cache-sync-bot"
+    role_arn = f"arn:aws:iam::{ACCOUNT}:role/runtime-broker-role"
+    synthetic = f"extracted://iam_user/{target_user_arn}"
+
+    plan = {"resource_arn": role_arn, "profile": "aws-iam-create-access-key-pivot"}
+    scope = Scope(
+        target="aws", allowed_actions=["enumerate", "assume_role", "access_resource"],
+        allowed_resources=[entry_arn, target_user_arn, role_arn],
+        aws_account_ids=[ACCOUNT], allowed_regions=["us-east-1"],
+        allowed_services=["iam", "sts"], authorized_by="test",
+        authorized_at="2026-04-19", authorization_document="test",
+    )
+    runtime = BlindRealRuntime.build(
+        plan=plan, discovery_snapshot={"resources": []},
+        scope=scope, entry_identities=[entry_arn],
+    )
+    action = Action(
+        action_type=ActionType.ACCESS_RESOURCE, actor=entry_arn, target=target_user_arn,
+        parameters={}, tool="iam_create_access_key", technique=None,
+    )
+    runtime.observe_real(action, {"response_summary": {}, "synthetic_actor": synthetic})
+    identities = runtime.state["identities"]
+    assert synthetic in identities
+    assert identities[synthetic]["extracted"] is True
+
+
+# --- _blind_real_allowed_resources includes S3 objects and users ---
+
+def test_blind_real_allowed_resources_includes_s3_objects() -> None:
+    """_blind_real_allowed_resources inclui data_store.s3_object para pivot S3."""
+    from operations.service import _blind_real_allowed_resources
+    from operations.models import TargetConfig
+
+    obj_arn = "arn:aws:s3:::my-bucket/path/to/creds.json"
+    role_arn = "arn:aws:iam::123:role/target"
+    plan = {"resource_arn": role_arn}
+    discovery = {
+        "resources": [
+            {"resource_type": "data_store.s3_object", "identifier": obj_arn, "metadata": {}},
+            {"resource_type": "identity.role", "identifier": role_arn, "metadata": {}},
+        ]
+    }
+    target = TargetConfig(
+        name="test", accounts=["123"], allowed_regions=["us-east-1"],
+        entry_credential_profiles={"arn:aws:iam::123:user/u": "p"},
+    )
+    allowed = _blind_real_allowed_resources(plan=plan, discovery_snapshot=discovery, target=target)
+    assert obj_arn in allowed
+
+
+def test_blind_real_allowed_resources_includes_identity_users() -> None:
+    """_blind_real_allowed_resources inclui identity.user para CreateAccessKey pivot."""
+    from operations.service import _blind_real_allowed_resources
+    from operations.models import TargetConfig
+
+    user_arn = "arn:aws:iam::123:user/target-user"
+    role_arn = "arn:aws:iam::123:role/target"
+    plan = {"resource_arn": role_arn}
+    discovery = {
+        "resources": [
+            {"resource_type": "identity.user", "identifier": user_arn, "metadata": {}},
+            {"resource_type": "identity.role", "identifier": role_arn, "metadata": {}},
+        ]
+    }
+    target = TargetConfig(
+        name="test", accounts=["123"], allowed_regions=["us-east-1"],
+        entry_credential_profiles={"arn:aws:iam::123:user/u": "p"},
+    )
+    allowed = _blind_real_allowed_resources(plan=plan, discovery_snapshot=discovery, target=target)
+    assert user_arn in allowed

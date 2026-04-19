@@ -68,11 +68,11 @@ class BlindRealRuntime:
             if not actor_state.get("active", False):
                 continue
             if actor_state.get("extracted", False):
-                # Bloco 6c: extracted identities may only assume roles — no enumeration or mutation
+                # Bloco 6c/6d: extracted identities may only assume roles — no enumeration or mutation
                 actions.extend(self._assume_role_actions(actor, region, discovered_roles))
                 continue
-            if self.profile_name == "aws-credential-pivot":
-                # Bloco 6c: non-extracted actors in pivot profile may only enumerate + read secrets.
+            if self.profile_name in _PIVOT_PROFILES:
+                # Bloco 6c/6d: non-extracted actors in pivot profiles may only enumerate + read pivot resource.
                 # The target role must be assumed via the extracted identity, not directly.
                 actions.extend(self._enumeration_actions(actor, region))
                 actions.extend(self._target_access_actions(actor, region))
@@ -98,10 +98,17 @@ class BlindRealRuntime:
             flags = state.setdefault("flags", [])
             if "target_accessed" not in flags:
                 flags.append("target_accessed")
-        # Bloco 6c: registra identidade sintética extraída de um segredo
-        if action.tool == "secretsmanager_read_secret":
+        # Bloco 6c/6d: registra identidade sintética extraída de secret/SSM/S3/CreateAccessKey
+        if action.tool in (
+            "secretsmanager_read_secret",
+            "ssm_read_parameter",
+            "s3_read_sensitive",
+            "iam_create_access_key",
+        ):
             resp = details.get("response_summary", {})
-            if resp.get("credential_extracted") and details.get("synthetic_actor"):
+            # secretsmanager/ssm check credential_extracted; s3/create_access_key always synthetic
+            credential_ok = resp.get("credential_extracted") or action.tool == "iam_create_access_key"
+            if credential_ok and details.get("synthetic_actor"):
                 synthetic_actor = details["synthetic_actor"]
                 identities = state.setdefault("identities", {})
                 if synthetic_actor not in identities:
@@ -151,10 +158,15 @@ class BlindRealRuntime:
         target = self.target_arn
         if self.profile_name == "aws-iam-role-chaining":
             return []
-        # Bloco 6c: credential pivot — entry reads intermediate secret, not the target role.
-        # Offer secretsmanager_read_secret for every secret where actor is in readable_by.
+        # Bloco 6c/6d: credential pivot variants — entry reads intermediate resource.
         if self.profile_name == "aws-credential-pivot":
             return self._pivot_secret_read_actions(actor, region)
+        if self.profile_name == "aws-credential-pivot-ssm":
+            return self._pivot_ssm_read_actions(actor, region)
+        if self.profile_name == "aws-credential-pivot-s3":
+            return self._pivot_s3_read_actions(actor, region)
+        if self.profile_name == "aws-iam-create-access-key-pivot":
+            return self._create_access_key_actions(actor, region)
         # Bloco 6b: credential_access_direct — entry user reads secret/SSM directly.
         # Skip the simulation probe and fall through to the type-based real read actions.
         is_direct_credential_access = self.profile_name in (
@@ -254,6 +266,82 @@ class BlindRealRuntime:
             )
         return actions
 
+    def _pivot_ssm_read_actions(self, actor: str, region: str) -> list[Action]:
+        """Bloco 6d: oferece ssm_read_parameter para params SSM onde actor está em readable_by."""
+        actions: list[Action] = []
+        for resource in self.discovery_snapshot.get("resources", []):
+            if resource.get("resource_type") != "secret.ssm_parameter":
+                continue
+            readable_by = (resource.get("metadata") or {}).get("readable_by", [])
+            if actor not in readable_by:
+                continue
+            param_arn = resource["identifier"]
+            # Deriva nome do parâmetro a partir do ARN: arn:aws:ssm:region:acct:parameter/path
+            if ":parameter/" in param_arn:
+                param_name = "/" + param_arn.split(":parameter/", 1)[1]
+            else:
+                param_name = param_arn
+            actions.append(
+                Action(
+                    action_type=ActionType.ACCESS_RESOURCE,
+                    actor=actor,
+                    target=param_arn,
+                    parameters={"service": "ssm", "region": region, "name": param_name},
+                    tool="ssm_read_parameter",
+                    technique=_technique("T1552", "Unsecured Credentials"),
+                )
+            )
+        return actions
+
+    def _pivot_s3_read_actions(self, actor: str, region: str) -> list[Action]:
+        """Bloco 6d: oferece s3_read_sensitive para objects S3 onde actor está em readable_by."""
+        actions: list[Action] = []
+        for resource in self.discovery_snapshot.get("resources", []):
+            if resource.get("resource_type") != "data_store.s3_object":
+                continue
+            readable_by = (resource.get("metadata") or {}).get("readable_by", [])
+            if actor not in readable_by:
+                continue
+            obj_arn = resource["identifier"]
+            bucket, object_key = _split_s3_arn(obj_arn)
+            if not object_key:
+                continue
+            actions.append(
+                Action(
+                    action_type=ActionType.ACCESS_RESOURCE,
+                    actor=actor,
+                    target=obj_arn,
+                    parameters={"service": "s3", "region": region, "bucket": bucket, "object_key": object_key},
+                    tool="s3_read_sensitive",
+                    technique=_technique("T1530", "Data from Cloud Storage"),
+                )
+            )
+        return actions
+
+    def _create_access_key_actions(self, actor: str, region: str) -> list[Action]:
+        """Bloco 6d: oferece iam_create_access_key para users onde actor está em createkey_by."""
+        actions: list[Action] = []
+        for resource in self.discovery_snapshot.get("resources", []):
+            if resource.get("resource_type") != "identity.user":
+                continue
+            createkey_by = (resource.get("metadata") or {}).get("createkey_by", [])
+            if actor not in createkey_by:
+                continue
+            user_arn = resource["identifier"]
+            if user_arn == actor:
+                continue
+            actions.append(
+                Action(
+                    action_type=ActionType.ACCESS_RESOURCE,
+                    actor=actor,
+                    target=user_arn,
+                    parameters={"service": "iam", "region": region, "user_arn": user_arn},
+                    tool="iam_create_access_key",
+                    technique=_technique("T1098", "Account Manipulation"),
+                )
+            )
+        return actions
+
     def _policy_abuse_actions(self, actor: str, region: str, roles: list[str]) -> list[Action]:
         if "iam" not in self.scope.allowed_services:
             return []
@@ -317,6 +405,15 @@ class BlindRealRuntime:
             for resource in discovery_snapshot.get("resources", [])
             if resource.get("resource_type") == "identity.role" and not _is_noise_role(resource.get("identifier", ""))
         ]
+
+
+# Perfis que usam pivot de credencial — entry não pode assumir role diretamente
+_PIVOT_PROFILES = frozenset({
+    "aws-credential-pivot",
+    "aws-credential-pivot-ssm",
+    "aws-credential-pivot-s3",
+    "aws-iam-create-access-key-pivot",
+})
 
 
 def _split_s3_arn(resource_arn: str) -> tuple[str, str | None]:

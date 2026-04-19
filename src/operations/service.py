@@ -378,7 +378,15 @@ def _attack_class_to_profile(attack_class: str, target_arn: str, attack_steps: l
             return "aws-iam-ssm"
         return "aws-credential-access-secret"
     if attack_class == "credential_pivot":
+        # Routa para o perfil correto com base no tipo do intermediate_resource
+        # (passado via attack_steps ou target_arn para compatibilidade)
         return "aws-credential-pivot"
+    if attack_class == "ssm_pivot":
+        return "aws-credential-pivot-ssm"
+    if attack_class == "s3_pivot":
+        return "aws-credential-pivot-s3"
+    if attack_class == "iam_create_access_key_pivot":
+        return "aws-iam-create-access-key-pivot"
     if attack_class == "data_exfil":
         return "aws-iam-s3"
     if attack_class == "compute_pivot":
@@ -500,10 +508,17 @@ def _derive_hypotheses_from_snapshot(
     return hypotheses
 
 
-# Data resource types that carry readable_by (Bloco 6a)
+# Data resource types that carry readable_by (Bloco 6a/6d)
 _DIRECT_READ_RESOURCE_TYPES = {
     "secret.secrets_manager",
     "secret.ssm_parameter",
+}
+
+# Resource types that can carry embedded credentials for pivot (6c/6d)
+_PIVOT_READ_RESOURCE_TYPES = {
+    "secret.secrets_manager",
+    "secret.ssm_parameter",
+    "data_store.s3_object",
 }
 
 
@@ -581,10 +596,18 @@ def _derive_credential_pivot_hypotheses(
 
     hypotheses: list[AttackHypothesis] = []
     for resource in resources:
-        if resource.get("resource_type") not in _DIRECT_READ_RESOURCE_TYPES:
+        rtype = resource.get("resource_type", "")
+        if rtype not in _PIVOT_READ_RESOURCE_TYPES:
             continue
         resource_arn = resource.get("identifier", "")
         readable_by: list[str] = (resource.get("metadata") or {}).get("readable_by", [])
+        # Determina attack_class baseado no tipo do recurso intermediário
+        if rtype == "secret.secrets_manager":
+            attack_class = "credential_pivot"
+        elif rtype == "secret.ssm_parameter":
+            attack_class = "ssm_pivot"
+        else:  # data_store.s3_object
+            attack_class = "s3_pivot"
         for principal_arn in readable_by:
             if principal_arn not in identity_set:
                 continue
@@ -593,7 +616,7 @@ def _derive_credential_pivot_hypotheses(
                     AttackHypothesis(
                         entry_identity=principal_arn,
                         target=role_arn,
-                        attack_class="credential_pivot",
+                        attack_class=attack_class,
                         intermediate_resource=resource_arn,
                         attack_steps=[
                             f"Read {resource_arn} to extract embedded AWS credentials",
@@ -603,6 +626,59 @@ def _derive_credential_pivot_hypotheses(
                         reasoning=(
                             f"Deterministic: {principal_arn} can read {resource_arn} "
                             f"(readable_by). Embedded credentials may trust {role_arn}."
+                        ),
+                    )
+                )
+    return hypotheses
+
+
+def _derive_create_access_key_hypotheses(
+    discovery_snapshot: dict,
+    entry_identities: list[str],
+) -> list:
+    """Bloco 6d: hipóteses de pivot via iam:CreateAccessKey.
+
+    Para cada user com createkey_by preenchido no snapshot, gera hipótese
+    iam_create_access_key_pivot com target=role para todos os roles disponíveis.
+    """
+    from planner.strategic_planner import AttackHypothesis
+
+    identity_set = set(entry_identities)
+    resources = discovery_snapshot.get("resources", [])
+
+    role_arns = [
+        r["identifier"]
+        for r in resources
+        if r.get("resource_type") == "identity.role"
+        and ":role/aws-service-role/" not in r.get("identifier", "")
+    ]
+    if not role_arns:
+        return []
+
+    hypotheses: list[AttackHypothesis] = []
+    for resource in resources:
+        if resource.get("resource_type") != "identity.user":
+            continue
+        user_arn = resource.get("identifier", "")
+        createkey_by: list[str] = (resource.get("metadata") or {}).get("createkey_by", [])
+        for principal_arn in createkey_by:
+            if principal_arn not in identity_set:
+                continue
+            for role_arn in role_arns:
+                hypotheses.append(
+                    AttackHypothesis(
+                        entry_identity=principal_arn,
+                        target=role_arn,
+                        attack_class="iam_create_access_key_pivot",
+                        intermediate_resource=user_arn,
+                        attack_steps=[
+                            f"Call iam:CreateAccessKey on {user_arn} to create long-term credentials",
+                            f"Use extracted identity to call sts:AssumeRole on {role_arn}",
+                        ],
+                        confidence="medium",
+                        reasoning=(
+                            f"Deterministic: {principal_arn} has iam:CreateAccessKey on {user_arn} "
+                            f"(createkey_by). Created credentials may trust {role_arn}."
                         ),
                     )
                 )
@@ -772,7 +848,7 @@ def run_discovery_driven_assessment(
                 )
                 det_hypotheses.extend(cred_access_hypotheses)
 
-            # Bloco 6c: hipóteses de pivot — lê segredo → usa credencial extraída para assumir role
+            # Bloco 6c/6d: hipóteses de pivot — lê segredo/SSM/S3 → usa credencial extraída para assumir role
             cred_pivot_hypotheses = _derive_credential_pivot_hypotheses(
                 discovery_snapshot, effective_entry_identities
             )
@@ -782,6 +858,17 @@ def run_discovery_driven_assessment(
                     len(cred_pivot_hypotheses),
                 )
                 det_hypotheses.extend(cred_pivot_hypotheses)
+
+            # Bloco 6d: hipóteses de pivot via CreateAccessKey
+            create_key_hypotheses = _derive_create_access_key_hypotheses(
+                discovery_snapshot, effective_entry_identities
+            )
+            if create_key_hypotheses:
+                logger.info(
+                    "CreateAccessKey pivot hypotheses from createkey_by x roles: %d",
+                    len(create_key_hypotheses),
+                )
+                det_hypotheses.extend(create_key_hypotheses)
 
             llm_hypotheses = strategic_planner.plan_attacks(
                 discovery_snapshot, effective_entry_identities, scope_for_strategic
@@ -927,8 +1014,11 @@ def _blind_real_allowed_resources(*, plan: dict, discovery_snapshot: dict, targe
         rtype = resource.get("resource_type", "")
         if rtype == "identity.role":
             allowed_resources.add(identifier)
-        # Bloco 6c: credential pivot needs intermediate secrets/params in scope
-        elif rtype in ("secret.secrets_manager", "secret.ssm_parameter"):
+        # Bloco 6c/6d: pivot profiles need intermediate resources in scope
+        elif rtype in ("secret.secrets_manager", "secret.ssm_parameter", "data_store.s3_object"):
+            allowed_resources.add(identifier)
+        elif rtype == "identity.user":
+            # Bloco 6d: CreateAccessKey pivot targets users
             allowed_resources.add(identifier)
     return sorted(allowed_resources)
 

@@ -94,6 +94,33 @@ FOUNDATION_PROFILES: dict[str, ProfileDefinition] = {
         scope_path=_real_path("terraform_local_lab", "credential_pivot_real", "rastro_local", "scope_aws_credential_pivot_openai.local.json"),
         discovery_ssm_prefixes=[],
     ),
+    "aws-credential-pivot-ssm": ProfileDefinition(
+        name="aws-credential-pivot-ssm",
+        bundle="aws-iam-heavy",
+        description="Credential pivot via SSM — extract AWS credentials from an SSM parameter, then assume a privileged role.",
+        fixture_path=_real_path("terraform-realistic-iam", "ssm_parameter_pivot_real", "rastro_local", "aws_ssm_parameter_pivot_lab.local.json"),
+        objective_path=_real_path("terraform-realistic-iam", "ssm_parameter_pivot_real", "rastro_local", "objective_aws_ssm_parameter_pivot.local.json"),
+        scope_path=_real_path("terraform-realistic-iam", "ssm_parameter_pivot_real", "rastro_local", "scope_aws_ssm_parameter_pivot_openai.local.json"),
+        discovery_ssm_prefixes=["/svc"],
+    ),
+    "aws-credential-pivot-s3": ProfileDefinition(
+        name="aws-credential-pivot-s3",
+        bundle="aws-iam-heavy",
+        description="Credential pivot via S3 — extract AWS credentials from an S3 object, then assume a privileged role.",
+        fixture_path=_real_path("terraform-realistic-iam", "s3_object_pivot_real", "rastro_local", "aws_s3_object_pivot_lab.local.json"),
+        objective_path=_real_path("terraform-realistic-iam", "s3_object_pivot_real", "rastro_local", "objective_aws_s3_object_pivot.local.json"),
+        scope_path=_real_path("terraform-realistic-iam", "s3_object_pivot_real", "rastro_local", "scope_aws_s3_object_pivot_openai.local.json"),
+        discovery_ssm_prefixes=[],
+    ),
+    "aws-iam-create-access-key-pivot": ProfileDefinition(
+        name="aws-iam-create-access-key-pivot",
+        bundle="aws-iam-heavy",
+        description="CreateAccessKey pivot — entry user creates access key for target user, extracted identity assumes privileged role.",
+        fixture_path=_real_path("terraform-realistic-iam", "create_access_key_pivot_real", "rastro_local", "aws_create_access_key_pivot_lab.local.json"),
+        objective_path=_real_path("terraform-realistic-iam", "create_access_key_pivot_real", "rastro_local", "objective_aws_create_access_key_pivot.local.json"),
+        scope_path=_real_path("terraform-realistic-iam", "create_access_key_pivot_real", "rastro_local", "scope_aws_create_access_key_pivot_openai.local.json"),
+        discovery_ssm_prefixes=[],
+    ),
 }
 
 
@@ -120,6 +147,9 @@ BUNDLES: dict[str, list[str]] = {
         "aws-iam-ssm",
         "aws-credential-access-secret",
         "aws-credential-pivot",
+        "aws-credential-pivot-ssm",
+        "aws-credential-pivot-s3",
+        "aws-iam-create-access-key-pivot",
     ],
 }
 

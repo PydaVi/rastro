@@ -1,0 +1,10 @@
+name: iam_create_access_key
+description: Create an IAM access key for a target user and extract the credentials for identity pivot
+phase: credential-access
+mitre_id: T1098
+platform: AWS IAM
+preconditions: []
+postconditions:
+  - privileged_identity_active
+implementation: tools/aws/iam_create_access_key.py
+safe_simulation: false

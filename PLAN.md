@@ -565,27 +565,48 @@ como entidades de primeira classe, com metadados de quem pode acessar cada um.
 
 ---
 
-### Bloco 6d — CreateAccessKey Chain (complemento IAM)
+### Bloco 6d — SSM + S3 + CreateAccessKey Chains [FECHADO 2026-04-19]
 
-**Direcao**: cobertura completa de credential creation — IAM como fonte de nova identidade.
-**Objetivo**: engine prova pivot via criacao de access key em user alvo.
+**Direcao**: cobertura completa de credential pivot — SSM, S3 e IAM como fontes de nova identidade.
+**Objetivo**: engine prova 3 chains de pivot usando fontes de credencial distintas.
 
-O que muda:
-- Novo tool: `create_access_key` (`iam:CreateAccessKey` em user alvo)
-- Rollback obrigatorio: `delete_access_key` no teardown (qualquer outcome)
-- Nova classe de privesc IAM: `iam_create_access_key` → encaixa no mesmo pipeline de identity pivot do 6c
-- Novo profile de campanha: `aws-iam-create-access-key-pivot`
+#### O que foi implementado
 
-Chain a provar:
-```
-entry_user (iam:CreateAccessKey no target_user)
-  → cria access key do target_user
-    → assume role privilegiado como target_user
-```
+- **SSM Parameter Pivot** (`aws-credential-pivot-ssm`):
+  - `_pivot_ssm_read_actions`: queries `secret.ssm_parameter` com `readable_by`, oferece `ssm_read_parameter`
+  - `_execute_ssm_read_parameter` detecta credenciais embutidas no valor, armazena `extracted://ARN` em `_credentials_by_actor`
+  - Attack class `ssm_pivot` roteado via `_attack_class_to_profile`
+- **S3 Object Pivot** (`aws-credential-pivot-s3`):
+  - `_pivot_s3_read_actions`: queries `data_store.s3_object` com `readable_by`, oferece `s3_read_sensitive`
+  - `_execute_s3_read_sensitive` detecta credenciais no preview, armazena `extracted://ARN`
+  - Attack class `s3_pivot` roteado
+- **CreateAccessKey Pivot** (`aws-iam-create-access-key-pivot`):
+  - `iam_create_access_key.yaml` + `_execute_iam_create_access_key`: cria chave no user alvo, registra `extracted://iam_user/{arn}`
+  - `RollbackTracker.register_delete_access_key`: rollback automatico em qualquer outcome
+  - `_create_access_key_actions`: queries `identity.user` com `createkey_by`
+  - `_derive_create_access_key_hypotheses` wired em `run_discovery_driven_assessment`
+- `_PIVOT_PROFILES` frozenset unifica routing de todos os 4 profiles de pivot
+- `_PIVOT_READ_RESOURCE_TYPES` cobre `secret.secrets_manager`, `secret.ssm_parameter`, `data_store.s3_object`
+- `_restore_objective_target_access_actions` restaura `ssm_read_parameter`, `s3_read_sensitive`, `iam_create_access_key`
+- 3 labs Terraform + fixtures + scripts de integracao
+- 288/288 testes passando (+19 novos Bloco 6d)
 
-Criterio de saida:
-- Chain provada com rollback automatico (access key deletada apos proof)
-- `derived_attack_targets` detecta `iam:CreateAccessKey` como sinal de pivot path
+#### Chains provadas no lab real AWS
+
+- **SSM pivot**: `queue-indexer-user` → `ssm_read_parameter(/svc/mesh/runtime/bootstrap)` → `batch-distributor-role` (2 steps, `objective_met=True`)
+- **S3 pivot**: `asset-manifest-user` → `s3_read_sensitive(bootstrap.json)` → `delivery-broker-role` (2 steps, `objective_met=True`)
+- **CreateAccessKey**: `mesh-dispatch-operator` → `iam_create_access_key(cache-sync-bot)` → `runtime-broker-role` (4 steps, `objective_met=True`, `rollback_ok=True`)
+
+#### O que aproximou do polo generalista
+
+- Engine prova chains multi-hop via qualquer fonte de credencial (secrets, SSM, S3, IAM key creation)
+- `_compute_data_resource_access` + `readable_by` / `createkey_by` detectam elos automaticamente no discovery
+- Rollback automatico garante que access keys criadas sao sempre deletadas
+
+#### O que permaneceu dependente de campaigns conhecidas
+
+- Profiles de execucao ainda sao templates pre-definidos
+- `createkey_by` ainda requer metadata no fixture — nao deriva de policy analysis automatica
 
 ---
 

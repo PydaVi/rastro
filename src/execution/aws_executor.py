@@ -51,6 +51,14 @@ class RollbackTracker:
             "version_id": version_id,
         })
 
+    def register_delete_access_key(self, region: str, user_name: str, access_key_id: str) -> None:
+        self._pending.append({
+            "op": "delete_access_key",
+            "region": region,
+            "user_name": user_name,
+            "access_key_id": access_key_id,
+        })
+
     def execute_all(self, client: AwsClient) -> list[str]:
         """Runs all registered rollbacks. Returns list of errors (best-effort)."""
         errors: list[str] = []
@@ -67,6 +75,12 @@ class RollbackTracker:
                         region=entry["region"],
                         policy_arn=entry["policy_arn"],
                         version_id=entry["version_id"],
+                    )
+                elif entry["op"] == "delete_access_key":
+                    client.delete_access_key(
+                        region=entry["region"],
+                        user_name=entry["user_name"],
+                        access_key_id=entry["access_key_id"],
                     )
             except Exception as exc:
                 errors.append(str(exc))
@@ -144,6 +158,8 @@ class AwsRealExecutor:
                 details = self._execute_iam_policy_abuse_probe(client, action, "iam:PassRole")
             elif action.tool == "iam_simulate_target_access":
                 details = self._execute_iam_simulate_target_access(client, action)
+            elif action.tool == "iam_create_access_key":
+                details = self._execute_iam_create_access_key(client, action)
             else:
                 return Observation(
                     success=False,
@@ -335,7 +351,19 @@ class AwsRealExecutor:
             object_key=object_key,
             credentials=self._credentials_for_actor(action.actor),
         )
-        return {
+        preview = response.get("Preview") or ""
+        credential_info = _detect_aws_credentials(preview)
+
+        # Bloco 6d: S3 pivot — extrai credenciais para pivot de identidade
+        synthetic_actor: str | None = None
+        if credential_info.get("credential_extracted"):
+            full_creds = _extract_full_aws_credentials(preview)
+            if full_creds is not None:
+                object_arn = action.target or f"arn:aws:s3:::{bucket}/{object_key}"
+                synthetic_actor = f"extracted://{object_arn}"
+                self._credentials_by_actor[synthetic_actor] = full_creds
+
+        result: dict = {
             "details": f"Executed s3:GetObject against {bucket}/{object_key}.",
             "evidence": {
                 "bucket": bucket,
@@ -351,9 +379,13 @@ class AwsRealExecutor:
             "response_summary": {
                 "content_length": response.get("ContentLength"),
                 "etag": response.get("ETag"),
-                "preview": response.get("Preview"),
+                "preview": preview,
+                **credential_info,
             },
         }
+        if synthetic_actor:
+            result["synthetic_actor"] = synthetic_actor
+        return result
 
     def _execute_s3_list_bucket(self, client: AwsClient, action: Action) -> dict:
         region = _required_parameter(action, "region")
@@ -474,7 +506,19 @@ class AwsRealExecutor:
             name=name,
             credentials=self._credentials_for_actor(action.actor),
         )
-        return {
+        value_string = response.get("Value") or ""
+        credential_info = _detect_aws_credentials(value_string)
+
+        # Bloco 6d: SSM pivot — extrai credenciais para pivot de identidade
+        synthetic_actor: str | None = None
+        if credential_info.get("credential_extracted"):
+            full_creds = _extract_full_aws_credentials(value_string)
+            if full_creds is not None:
+                param_arn = response.get("ARN") or action.target or name
+                synthetic_actor = f"extracted://{param_arn}"
+                self._credentials_by_actor[synthetic_actor] = full_creds
+
+        result: dict = {
             "details": f"Executed ssm:GetParameter against {name}.",
             "evidence": {
                 "parameter": name,
@@ -490,9 +534,13 @@ class AwsRealExecutor:
                 "name": response.get("Name"),
                 "version": response.get("Version"),
                 "type": response.get("Type"),
-                "preview": (response.get("Value") or "")[:256],
+                "preview": value_string[:256],
+                **credential_info,
             },
         }
+        if synthetic_actor:
+            result["synthetic_actor"] = synthetic_actor
+        return result
 
     def _execute_ec2_instance_profile_pivot(self, client: AwsClient, action: Action) -> dict:
         region = _required_parameter(action, "region")
@@ -747,6 +795,60 @@ class AwsRealExecutor:
             "response_summary": {
                 "version_created": True,
                 "set_as_default": False,
+                "rollback_registered": True,
+            },
+            "aws_region": region,
+            "execution_mode": "real",
+            "real_api_called": True,
+        }
+
+    def _execute_iam_create_access_key(self, client: AwsClient, action: Action) -> dict:
+        """Bloco 6d: iam:CreateAccessKey no user alvo — extrai credenciais para pivot de identidade."""
+        region = _required_parameter(action, "region")
+        user_arn = action.parameters.get("user_arn") or action.target
+        if not user_arn:
+            raise ValueError("iam_create_access_key requires user_arn or target")
+        user_name = user_arn.split("/")[-1]
+        actor_credentials = self._credentials_for_actor(action.actor)
+
+        key_info = client.create_access_key(
+            region=region,
+            user_name=user_name,
+            credentials=actor_credentials,
+        )
+        access_key_id = key_info["AccessKeyId"]
+        secret_access_key = key_info["SecretAccessKey"]
+
+        # Registra rollback garantido
+        self.rollback_tracker.register_delete_access_key(
+            region=region,
+            user_name=user_name,
+            access_key_id=access_key_id,
+        )
+
+        # Armazena credenciais extraídas para uso pela identidade sintética
+        synthetic_actor = f"extracted://iam_user/{user_arn}"
+        self._credentials_by_actor[synthetic_actor] = {
+            "AccessKeyId": access_key_id,
+            "SecretAccessKey": secret_access_key,
+            "SessionToken": None,
+        }
+
+        return {
+            "details": f"Executed iam:CreateAccessKey for {user_name}.",
+            "synthetic_actor": synthetic_actor,
+            "mutation_executed": True,
+            "evidence": {
+                "user_arn": user_arn,
+                "user_name": user_name,
+                "accessed_via": action.actor,
+            },
+            "request_summary": {
+                "api_calls": ["iam:CreateAccessKey"],
+                "user_name": user_name,
+            },
+            "response_summary": {
+                "key_id_prefix": access_key_id[:8] + "...",
                 "rollback_registered": True,
             },
             "aws_region": region,

@@ -605,9 +605,14 @@ def _restore_objective_target_access_actions(snapshot, original_actions, filtere
         elif success_mode == "assume_role_proved":
             if action.action_type == ActionType.ASSUME_ROLE and action.target == objective_target:
                 _add(action)
-            # Bloco 6c: credential pivot — restore intermediate secret reads that enable
-            # identity extraction before the assume_role step becomes possible.
-            elif action.tool in ("secretsmanager_read_secret", "ssm_read_parameter"):
+            # Bloco 6c/6d: credential/key pivot — restore intermediate reads/creates needed
+            # before the extracted identity can assume the target role.
+            elif action.tool in (
+                "secretsmanager_read_secret",
+                "ssm_read_parameter",
+                "s3_read_sensitive",
+                "iam_create_access_key",
+            ):
                 _add(action)
 
     return restored
