@@ -10,7 +10,7 @@ from core.audit import AuditLogger
 from core.domain import Action, ActionType, Decision, Objective, Observation, Scope
 from core.aws_dry_run_lab import AwsDryRunLab
 from core.blind_real_runtime import BlindRealRuntime
-from execution.aws_executor import AwsRealExecutor, AwsRealExecutorStub, _detect_aws_credentials, _extract_full_aws_credentials
+from execution.aws_executor import AwsRealExecutor, AwsRealExecutorStub, _detect_aws_credentials, _extract_full_aws_credentials, _load_tool_yaml, _resolve_field, _tool_yaml_cache
 from core.state import StateManager
 from reporting.report import ReportGenerator
 from execution.scope_enforcer import ScopeEnforcer
@@ -11028,3 +11028,256 @@ def test_blind_real_allowed_resources_includes_identity_users() -> None:
     )
     allowed = _blind_real_allowed_resources(plan=plan, discovery_snapshot=discovery, target=target)
     assert user_arn in allowed
+
+
+# ---------------------------------------------------------------------------
+# Bloco 8 — Tool Effects Declarativos
+# ---------------------------------------------------------------------------
+
+# --- _load_tool_yaml ---
+
+def test_b8_load_tool_yaml_returns_dict_for_known_tool():
+    _tool_yaml_cache.clear()
+    data = _load_tool_yaml("secretsmanager_read_secret")
+    assert isinstance(data, dict)
+    assert "produces" in data
+
+
+def test_b8_load_tool_yaml_returns_empty_dict_for_unknown_tool():
+    _tool_yaml_cache.clear()
+    data = _load_tool_yaml("tool_that_does_not_exist_xyz")
+    assert data == {}
+
+
+def test_b8_load_tool_yaml_caches_result():
+    _tool_yaml_cache.clear()
+    d1 = _load_tool_yaml("secretsmanager_read_secret")
+    d2 = _load_tool_yaml("secretsmanager_read_secret")
+    assert d1 is d2  # same object from cache
+
+
+# --- _resolve_field ---
+
+def _make_action_with_params(**params):
+    return Action(
+        actor="arn:aws:iam::123:user/u",
+        target="arn:aws:iam::123:role/r",
+        action_type=ActionType.ANALYZE,
+        parameters=params,
+    )
+
+
+def test_b8_resolve_field_response_summary():
+    action = _make_action_with_params(region="us-east-1")
+    details = {"response_summary": {"resource_arn": "arn:aws:secretsmanager:us-east-1:123:secret/foo"}}
+    result = _resolve_field("response_summary.resource_arn", action, details)
+    assert result == "arn:aws:secretsmanager:us-east-1:123:secret/foo"
+
+
+def test_b8_resolve_field_parameters():
+    action = _make_action_with_params(region="eu-west-1", target_arn="arn:aws:iam::123:user/u")
+    details = {}
+    result = _resolve_field("parameters.target_arn", action, details)
+    assert result == "arn:aws:iam::123:user/u"
+
+
+def test_b8_resolve_field_missing_key_returns_none():
+    action = _make_action_with_params(region="us-east-1")
+    details = {"response_summary": {}}
+    assert _resolve_field("response_summary.credentials", action, details) is None
+
+
+def test_b8_resolve_field_unknown_root_returns_none():
+    action = _make_action_with_params(region="us-east-1")
+    details = {}
+    assert _resolve_field("unknown_root.key", action, details) is None
+
+
+def test_b8_resolve_field_missing_response_summary_returns_none():
+    action = _make_action_with_params()
+    details = {}
+    assert _resolve_field("response_summary.anything", action, details) is None
+
+
+# --- _apply_produces: credential_pivot via credential_extracted condition ---
+
+def _make_scope_b8():
+    from core.domain import TargetType
+    return Scope(
+        target=TargetType.AWS,
+        allowed_actions=list(ActionType),
+        allowed_resources=["*"],
+        aws_account_ids=["123"],
+        allowed_regions=["us-east-1"],
+        allowed_services=["iam", "s3", "secretsmanager", "ssm"],
+        authorized_by="tester",
+        authorized_at="2026-04-16",
+        authorization_document="docs/test.md",
+    )
+
+
+def _make_executor():
+    scope = _make_scope_b8()
+    return AwsRealExecutor(fixture=None, scope=scope)
+
+
+def test_b8_apply_produces_stores_credentials_on_credential_extracted():
+    executor = _make_executor()
+    action = Action(
+        actor="arn:aws:iam::123:user/caller",
+        target="arn:aws:secretsmanager:us-east-1:123:secret/test",
+        action_type=ActionType.ACCESS_RESOURCE,
+        tool="secretsmanager_read_secret",
+        parameters={"region": "us-east-1"},
+    )
+    details = {
+        "response_summary": {
+            "credential_extracted": True,
+            "resource_arn": "arn:aws:secretsmanager:us-east-1:123:secret/test",
+            "credentials": {"aws_access_key_id": "AKIA1", "aws_secret_access_key": "secret1"},
+        }
+    }
+    executor._apply_produces(action, details)
+    expected_key = "extracted://arn:aws:secretsmanager:us-east-1:123:secret/test"
+    assert expected_key in executor._credentials_by_actor
+    assert details.get("synthetic_actor") == expected_key
+
+
+def test_b8_apply_produces_skips_when_credential_extracted_false():
+    executor = _make_executor()
+    action = Action(
+        actor="arn:aws:iam::123:user/caller",
+        target="arn:aws:secretsmanager:us-east-1:123:secret/test",
+        action_type=ActionType.ACCESS_RESOURCE,
+        tool="secretsmanager_read_secret",
+        parameters={"region": "us-east-1"},
+    )
+    details = {
+        "response_summary": {
+            "credential_extracted": False,
+            "resource_arn": "arn:aws:secretsmanager:us-east-1:123:secret/test",
+            "credentials": {"aws_access_key_id": "AKIA1", "aws_secret_access_key": "secret1"},
+        }
+    }
+    executor._apply_produces(action, details)
+    assert not executor._credentials_by_actor
+    assert "synthetic_actor" not in details
+
+
+def test_b8_apply_produces_noop_for_tool_without_produces():
+    executor = _make_executor()
+    action = Action(
+        actor="arn:aws:iam::123:user/caller",
+        target="arn:aws:iam::123:role/r",
+        action_type=ActionType.ACCESS_RESOURCE,
+        tool="iam_list_roles",
+        parameters={"region": "us-east-1"},
+    )
+    details = {"response_summary": {"roles_returned": 3}}
+    executor._apply_produces(action, details)
+    assert not executor._credentials_by_actor
+    assert "synthetic_actor" not in details
+
+
+# --- _apply_produces: create_access_key with rollback registration ---
+
+def test_b8_apply_produces_creates_access_key_registers_rollback():
+    executor = _make_executor()
+    action = Action(
+        actor="arn:aws:iam::123:user/caller",
+        target="arn:aws:iam::123:user/victim",
+        action_type=ActionType.ACCESS_RESOURCE,
+        tool="iam_create_access_key",
+        parameters={"region": "us-east-1"},
+    )
+    details = {
+        "aws_region": "us-east-1",
+        "response_summary": {
+            "resource_arn": "arn:aws:iam::123:user/victim",
+            "user_name": "victim",
+            "access_key_id": "AKIANEW",
+            "credentials": {"aws_access_key_id": "AKIANEW", "aws_secret_access_key": "newsecret"},
+        }
+    }
+    executor._apply_produces(action, details)
+    expected_key = "extracted://iam_user/arn:aws:iam::123:user/victim"
+    assert expected_key in executor._credentials_by_actor
+    assert details.get("synthetic_actor") == expected_key
+    assert not executor.rollback_tracker.is_empty()
+    pending = executor.rollback_tracker._pending
+    assert any(
+        e["op"] == "delete_access_key" and e["user_name"] == "victim" and e["access_key_id"] == "AKIANEW"
+        for e in pending
+    )
+
+
+def test_b8_apply_produces_skips_when_credentials_not_dict():
+    executor = _make_executor()
+    action = Action(
+        actor="arn:aws:iam::123:user/caller",
+        target="arn:aws:secretsmanager:us-east-1:123:secret/test",
+        action_type=ActionType.ACCESS_RESOURCE,
+        tool="secretsmanager_read_secret",
+        parameters={"region": "us-east-1"},
+    )
+    details = {
+        "response_summary": {
+            "credential_extracted": True,
+            "resource_arn": "arn:aws:secretsmanager:us-east-1:123:secret/test",
+            "credentials": "not-a-dict",
+        }
+    }
+    executor._apply_produces(action, details)
+    assert not executor._credentials_by_actor
+    assert "synthetic_actor" not in details
+
+
+# --- observe_real generic synthetic_actor registration ---
+
+def _make_blind_runtime_b8():
+    scope = _make_scope_b8()
+    entry_arn = "arn:aws:iam::123:user/caller"
+    return BlindRealRuntime(
+        target_arn="arn:aws:iam::123:role/target",
+        profile_name="test-profile",
+        discovery_snapshot={"resources": []},
+        scope=scope,
+        entry_identities=[entry_arn],
+        state={"flags": [], "identities": {entry_arn: {"active": True}}, "discovered_roles": []},
+    )
+
+
+def test_b8_observe_real_registers_identity_from_any_tool_with_synthetic_actor():
+    runtime = _make_blind_runtime_b8()
+    action = Action(
+        actor="arn:aws:iam::123:user/caller",
+        target="arn:aws:secretsmanager:us-east-1:123:secret/test",
+        action_type=ActionType.ACCESS_RESOURCE,
+        tool="secretsmanager_read_secret",
+        parameters={"region": "us-east-1"},
+    )
+    details = {
+        "synthetic_actor": "extracted://arn:aws:secretsmanager:us-east-1:123:secret/test",
+        "real_api_called": True,
+        "execution_mode": "real",
+    }
+    runtime.observe_real(action, details)
+    identities = runtime.state.get("identities", {})
+    assert "extracted://arn:aws:secretsmanager:us-east-1:123:secret/test" in identities
+
+
+def test_b8_observe_real_does_not_register_identity_without_synthetic_actor():
+    runtime = _make_blind_runtime_b8()
+    action = Action(
+        actor="arn:aws:iam::123:user/caller",
+        target="arn:aws:iam::123:role/r",
+        action_type=ActionType.ACCESS_RESOURCE,
+        tool="iam_list_roles",
+        parameters={"region": "us-east-1"},
+    )
+    details = {"real_api_called": True, "execution_mode": "real"}
+    runtime.observe_real(action, details)
+    identities = runtime.state.get("identities", {})
+    # Only the entry identity should be present
+    entry_arn = "arn:aws:iam::123:user/caller"
+    assert all(k == entry_arn for k in identities)

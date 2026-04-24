@@ -98,21 +98,13 @@ class BlindRealRuntime:
             flags = state.setdefault("flags", [])
             if "target_accessed" not in flags:
                 flags.append("target_accessed")
-        # Bloco 6c/6d: registra identidade sintética extraída de secret/SSM/S3/CreateAccessKey
-        if action.tool in (
-            "secretsmanager_read_secret",
-            "ssm_read_parameter",
-            "s3_read_sensitive",
-            "iam_create_access_key",
-        ):
-            resp = details.get("response_summary", {})
-            # secretsmanager/ssm check credential_extracted; s3/create_access_key always synthetic
-            credential_ok = resp.get("credential_extracted") or action.tool == "iam_create_access_key"
-            if credential_ok and details.get("synthetic_actor"):
-                synthetic_actor = details["synthetic_actor"]
-                identities = state.setdefault("identities", {})
-                if synthetic_actor not in identities:
-                    identities[synthetic_actor] = {"active": True, "extracted": True}
+        # Bloco 8: registra identidade sintética — qualquer tool com produces: credential_pivot
+        # O synthetic_actor é setado por _apply_produces no executor, não mais hardcoded aqui.
+        if details.get("synthetic_actor"):
+            synthetic_actor = details["synthetic_actor"]
+            identities = state.setdefault("identities", {})
+            if synthetic_actor not in identities:
+                identities[synthetic_actor] = {"active": True, "extracted": True}
         return Observation(success=success, details=details)
 
     def _enumeration_actions(self, actor: str, region: str) -> list[Action]:

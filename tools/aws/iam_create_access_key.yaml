@@ -8,3 +8,13 @@ postconditions:
   - privileged_identity_active
 implementation: tools/aws/iam_create_access_key.py
 safe_simulation: false
+produces:
+  - effect: credential_pivot
+    condition: success
+    actor_key_template: "extracted://iam_user/{resource_arn}"
+    resource_arn_field: "response_summary.resource_arn"
+    credentials_field: "response_summary.credentials"
+    rollback:
+      op: delete_access_key
+      user_name_field: "response_summary.user_name"
+      access_key_id_field: "response_summary.access_key_id"

@@ -9,3 +9,9 @@ postconditions:
   - parameter_compromised
 implementation: tools/aws/ssm_read_parameter.py
 safe_simulation: true
+produces:
+  - effect: credential_pivot
+    condition: credential_extracted
+    actor_key_template: "extracted://{resource_arn}"
+    resource_arn_field: "response_summary.resource_arn"
+    credentials_field: "response_summary.credentials"

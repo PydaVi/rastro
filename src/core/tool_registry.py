@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -17,7 +17,7 @@ class Tool(BaseModel):
     platform: str
     preconditions: List[str]
     postconditions: List[str]
-    implementation: str
+    implementation: Optional[str] = None
     safe_simulation: bool
 
 

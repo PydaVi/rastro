@@ -9,3 +9,9 @@ postconditions:
   - priv_esc
 implementation: tools/aws/s3_read_sensitive.py
 safe_simulation: true
+produces:
+  - effect: credential_pivot
+    condition: credential_extracted
+    actor_key_template: "extracted://{resource_arn}"
+    resource_arn_field: "response_summary.resource_arn"
+    credentials_field: "response_summary.credentials"
