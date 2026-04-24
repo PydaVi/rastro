@@ -34,11 +34,16 @@ from operations.models import ProfileDefinition
 from operations.discovery import (
     run_foundation_discovery,
     _compute_data_resource_access,
+    _compute_capability_graph,
+    _principal_has_capability,
     _action_grants_read,
     _resource_covers_arn,
     _SECRET_READ_ACTIONS,
     _SSM_READ_ACTIONS,
     _S3_READ_ACTIONS,
+    _CREATEKEY_ACTIONS,
+    _ASSUMEROLE_ACTIONS,
+    _ROLE_MUTATION_ACTIONS,
 )
 from operations.campaign_synthesis import synthesize_foundation_campaigns
 from operations.synthetic_catalog import get_mixed_synthetic_profile, get_synthetic_profile
@@ -4498,6 +4503,268 @@ def test_compute_data_resource_access_no_data_resources() -> None:
     ]
     _compute_data_resource_access(resources)  # deve ser no-op silencioso
     assert "readable_by" not in resources[0].get("metadata", {})
+
+
+# ---------------------------------------------------------------------------
+# Bloco 7 — _compute_capability_graph (createkey_by, assumable_by, mutable_by)
+# ---------------------------------------------------------------------------
+
+def _make_role_b7(arn: str, policy_permissions: list[dict] | None = None) -> dict:
+    return {
+        "resource_type": "identity.role",
+        "identifier": arn,
+        "metadata": {"policy_permissions": policy_permissions or []},
+    }
+
+
+def test_capability_graph_createkey_by_exact_action() -> None:
+    """Principal com iam:CreateAccessKey em Resource=* popula createkey_by no user alvo."""
+    entry = "arn:aws:iam::123:user/operator"
+    target_user = "arn:aws:iam::123:user/bot"
+    resources = [
+        _make_user(entry, [{"source": "P", "statements": [
+            {"Effect": "Allow", "Action": "iam:CreateAccessKey", "Resource": "*"},
+        ]}]),
+        _make_user(target_user, []),
+    ]
+    _compute_capability_graph(resources)
+    bot = next(r for r in resources if r["identifier"] == target_user)
+    assert entry in bot["metadata"]["createkey_by"]
+
+
+def test_capability_graph_createkey_by_iam_wildcard() -> None:
+    """iam:* em policy cobre iam:CreateAccessKey."""
+    entry = "arn:aws:iam::123:user/admin"
+    target_user = "arn:aws:iam::123:user/svc"
+    resources = [
+        _make_user(entry, [{"source": "P", "statements": [
+            {"Effect": "Allow", "Action": "iam:*", "Resource": "*"},
+        ]}]),
+        _make_user(target_user, []),
+    ]
+    _compute_capability_graph(resources)
+    svc = next(r for r in resources if r["identifier"] == target_user)
+    assert entry in svc["metadata"]["createkey_by"]
+
+
+def test_capability_graph_createkey_by_specific_arn() -> None:
+    """Resource com ARN específico do user alvo → createkey_by populado."""
+    entry = "arn:aws:iam::123:user/operator"
+    target_user = "arn:aws:iam::123:user/bot"
+    other_user = "arn:aws:iam::123:user/other"
+    resources = [
+        _make_user(entry, [{"source": "P", "statements": [
+            {"Effect": "Allow", "Action": "iam:CreateAccessKey", "Resource": target_user},
+        ]}]),
+        _make_user(target_user, []),
+        _make_user(other_user, []),
+    ]
+    _compute_capability_graph(resources)
+    bot = next(r for r in resources if r["identifier"] == target_user)
+    other = next(r for r in resources if r["identifier"] == other_user)
+    assert entry in bot["metadata"]["createkey_by"]
+    assert "createkey_by" not in other.get("metadata", {})
+
+
+def test_capability_graph_createkey_by_self_excluded() -> None:
+    """Um user não é listado em seu próprio createkey_by."""
+    user = "arn:aws:iam::123:user/self-service"
+    resources = [
+        _make_user(user, [{"source": "P", "statements": [
+            {"Effect": "Allow", "Action": "iam:CreateAccessKey", "Resource": "*"},
+        ]}]),
+    ]
+    _compute_capability_graph(resources)
+    assert "createkey_by" not in resources[0]["metadata"]
+
+
+def test_capability_graph_createkey_by_no_permission() -> None:
+    """Principal sem iam:CreateAccessKey não popula createkey_by."""
+    entry = "arn:aws:iam::123:user/readonly"
+    target_user = "arn:aws:iam::123:user/bot"
+    resources = [
+        _make_user(entry, [{"source": "P", "statements": [
+            {"Effect": "Allow", "Action": "iam:ListUsers", "Resource": "*"},
+        ]}]),
+        _make_user(target_user, []),
+    ]
+    _compute_capability_graph(resources)
+    bot = next(r for r in resources if r["identifier"] == target_user)
+    assert "createkey_by" not in bot.get("metadata", {})
+
+
+def test_capability_graph_assumable_by_permission_policy() -> None:
+    """Principal com sts:AssumeRole via permission policy popula assumable_by na role."""
+    entry = "arn:aws:iam::123:user/engineer"
+    role = "arn:aws:iam::123:role/ops-role"
+    resources = [
+        _make_user(entry, [{"source": "P", "statements": [
+            {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": role},
+        ]}]),
+        _make_role_b7(role),
+    ]
+    _compute_capability_graph(resources)
+    role_res = next(r for r in resources if r["identifier"] == role)
+    assert entry in role_res["metadata"]["assumable_by"]
+
+
+def test_capability_graph_assumable_by_wildcard_resource() -> None:
+    """sts:AssumeRole em Resource=* popula assumable_by em todas as roles."""
+    entry = "arn:aws:iam::123:user/poweruser"
+    role_a = "arn:aws:iam::123:role/role-a"
+    role_b = "arn:aws:iam::123:role/role-b"
+    resources = [
+        _make_user(entry, [{"source": "P", "statements": [
+            {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": "*"},
+        ]}]),
+        _make_role_b7(role_a),
+        _make_role_b7(role_b),
+    ]
+    _compute_capability_graph(resources)
+    for role_arn in (role_a, role_b):
+        role_res = next(r for r in resources if r["identifier"] == role_arn)
+        assert entry in role_res["metadata"]["assumable_by"]
+
+
+def test_capability_graph_assumable_by_no_permission() -> None:
+    """Sem sts:AssumeRole na policy, assumable_by não é populado."""
+    entry = "arn:aws:iam::123:user/readonly"
+    role = "arn:aws:iam::123:role/admin-role"
+    resources = [
+        _make_user(entry, [{"source": "P", "statements": [
+            {"Effect": "Allow", "Action": "iam:ListRoles", "Resource": "*"},
+        ]}]),
+        _make_role_b7(role),
+    ]
+    _compute_capability_graph(resources)
+    role_res = next(r for r in resources if r["identifier"] == role)
+    assert "assumable_by" not in role_res.get("metadata", {})
+
+
+def test_capability_graph_mutable_by_attach_role_policy() -> None:
+    """iam:AttachRolePolicy popula mutable_by com a chave canônica correta."""
+    entry = "arn:aws:iam::123:user/privesc"
+    role = "arn:aws:iam::123:role/target-role"
+    resources = [
+        _make_user(entry, [{"source": "P", "statements": [
+            {"Effect": "Allow", "Action": "iam:AttachRolePolicy", "Resource": "*"},
+        ]}]),
+        _make_role_b7(role),
+    ]
+    _compute_capability_graph(resources)
+    role_res = next(r for r in resources if r["identifier"] == role)
+    mutable_by = role_res["metadata"]["mutable_by"]
+    assert entry in mutable_by["iam:AttachRolePolicy"]
+    assert "iam:PutRolePolicy" not in mutable_by
+
+
+def test_capability_graph_mutable_by_multiple_actions() -> None:
+    """iam:* popula mutable_by para AttachRolePolicy, PutRolePolicy e CreatePolicyVersion."""
+    entry = "arn:aws:iam::123:user/iam-admin"
+    role = "arn:aws:iam::123:role/target-role"
+    resources = [
+        _make_user(entry, [{"source": "P", "statements": [
+            {"Effect": "Allow", "Action": "iam:*", "Resource": "*"},
+        ]}]),
+        _make_role_b7(role),
+    ]
+    _compute_capability_graph(resources)
+    role_res = next(r for r in resources if r["identifier"] == role)
+    mutable_by = role_res["metadata"]["mutable_by"]
+    assert entry in mutable_by["iam:AttachRolePolicy"]
+    assert entry in mutable_by["iam:PutRolePolicy"]
+    assert entry in mutable_by["iam:CreatePolicyVersion"]
+
+
+def test_capability_graph_mutable_by_specific_role_arn() -> None:
+    """Resource com ARN específico da role → mutable_by apenas para essa role."""
+    entry = "arn:aws:iam::123:user/scoped-privesc"
+    role_a = "arn:aws:iam::123:role/role-a"
+    role_b = "arn:aws:iam::123:role/role-b"
+    resources = [
+        _make_user(entry, [{"source": "P", "statements": [
+            {"Effect": "Allow", "Action": "iam:AttachRolePolicy", "Resource": role_a},
+        ]}]),
+        _make_role_b7(role_a),
+        _make_role_b7(role_b),
+    ]
+    _compute_capability_graph(resources)
+    res_a = next(r for r in resources if r["identifier"] == role_a)
+    res_b = next(r for r in resources if r["identifier"] == role_b)
+    assert entry in res_a["metadata"]["mutable_by"]["iam:AttachRolePolicy"]
+    assert "mutable_by" not in res_b.get("metadata", {})
+
+
+def test_capability_graph_deny_not_counted_createkey() -> None:
+    """Effect=Deny não conta para createkey_by."""
+    entry = "arn:aws:iam::123:user/denied"
+    target_user = "arn:aws:iam::123:user/bot"
+    resources = [
+        _make_user(entry, [{"source": "P", "statements": [
+            {"Effect": "Deny", "Action": "iam:CreateAccessKey", "Resource": "*"},
+        ]}]),
+        _make_user(target_user, []),
+    ]
+    _compute_capability_graph(resources)
+    bot = next(r for r in resources if r["identifier"] == target_user)
+    assert "createkey_by" not in bot.get("metadata", {})
+
+
+def test_capability_graph_combined_all_types() -> None:
+    """Um snapshot com múltiplos tipos popula readable_by, createkey_by, assumable_by e mutable_by."""
+    account = "arn:aws:iam::123"
+    entry = f"{account}:user/super-user"
+    target_user = f"{account}:user/bot"
+    role = f"{account}:role/admin-role"
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret:prod/creds"
+    resources = [
+        _make_user(entry, [{"source": "P", "statements": [
+            {"Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": "*"},
+            {"Effect": "Allow", "Action": "iam:CreateAccessKey", "Resource": "*"},
+            {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": "*"},
+            {"Effect": "Allow", "Action": "iam:AttachRolePolicy", "Resource": "*"},
+        ]}]),
+        _make_user(target_user, []),
+        _make_role_b7(role),
+        _make_secret(secret_arn),
+    ]
+    _compute_capability_graph(resources)
+
+    secret = next(r for r in resources if r["identifier"] == secret_arn)
+    bot = next(r for r in resources if r["identifier"] == target_user)
+    role_res = next(r for r in resources if r["identifier"] == role)
+
+    assert entry in secret["metadata"]["readable_by"]
+    assert entry in bot["metadata"]["createkey_by"]
+    assert entry in role_res["metadata"]["assumable_by"]
+    assert entry in role_res["metadata"]["mutable_by"]["iam:AttachRolePolicy"]
+
+
+def test_capability_graph_alias_backward_compat() -> None:
+    """_compute_data_resource_access é alias de _compute_capability_graph."""
+    assert _compute_data_resource_access is _compute_capability_graph
+
+
+def test_principal_has_capability_basic() -> None:
+    """_principal_has_capability retorna True para action+resource corretos."""
+    principal = _make_user("arn:aws:iam::123:user/u", [{"source": "P", "statements": [
+        {"Effect": "Allow", "Action": "iam:CreateAccessKey", "Resource": "*"},
+    ]}])
+    assert _principal_has_capability(principal, _CREATEKEY_ACTIONS, "arn:aws:iam::123:user/bot")
+
+
+def test_principal_has_capability_deny() -> None:
+    """Effect=Deny → retorna False."""
+    principal = _make_user("arn:aws:iam::123:user/u", [{"source": "P", "statements": [
+        {"Effect": "Deny", "Action": "iam:CreateAccessKey", "Resource": "*"},
+    ]}])
+    assert not _principal_has_capability(principal, _CREATEKEY_ACTIONS, "arn:aws:iam::123:user/bot")
+
+
+def test_principal_has_capability_no_permissions() -> None:
+    """Sem policy_permissions → retorna False."""
+    principal = {"resource_type": "identity.user", "identifier": "arn:x", "metadata": {}}
+    assert not _principal_has_capability(principal, _CREATEKEY_ACTIONS, "arn:aws:iam::123:user/bot")
 
 
 # ---------------------------------------------------------------------------

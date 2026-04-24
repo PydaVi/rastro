@@ -97,7 +97,7 @@ def _action_grants_read(action_lower: str, read_actions: frozenset) -> bool:
     1. Exact match: action_lower in read_actions (e.g. secretsmanager:getsecretvalue)
     2. Policy wildcard: action_lower termina com * (e.g. secretsmanager:Get*)
        → verifica se alguma ação concreta de read_actions começa com o prefixo.
-    3. Ação na policy é * → coberta pelo exact match (\"*\" está em read_actions).
+    3. Ação na policy é * → coberta pelo exact match ("*" está em read_actions).
     """
     if action_lower in read_actions:
         return True
@@ -125,68 +125,136 @@ def _resource_covers_arn(resource_field: list[str], target_arn: str) -> bool:
     return False
 
 
-def _compute_data_resource_access(resources: list[dict]) -> None:
-    """Bloco 6a: adiciona readable_by a cada recurso de dado no snapshot.
+# ---------------------------------------------------------------------------
+# Bloco 7 — Capability Graph (createkey_by, assumable_by, mutable_by)
+# ---------------------------------------------------------------------------
 
-    Para secrets (Secrets Manager, SSM) e S3 (buckets e objetos): determina
-    quais principals têm permissão de leitura com base em policy_permissions
-    já enriquecidas no discovery.
+_CREATEKEY_ACTIONS = frozenset({
+    "iam:createaccesskey",
+    "iam:*",
+    "*",
+})
 
-    readable_by: [arn, ...] — principals com acesso de leitura direto.
+_ASSUMEROLE_ACTIONS = frozenset({
+    "sts:assumerole",
+    "sts:*",
+    "*",
+})
+
+# IAM mutation actions on identity.role — tracked separately in mutable_by dict.
+# Key = canonical action name stored in mutable_by; value = frozenset that matches it.
+_ROLE_MUTATION_ACTIONS: dict[str, frozenset] = {
+    "iam:AttachRolePolicy":    frozenset({"iam:attachrolepolicy",    "iam:*", "*"}),
+    "iam:PutRolePolicy":       frozenset({"iam:putrolepolicy",       "iam:*", "*"}),
+    "iam:CreatePolicyVersion": frozenset({"iam:createpolicyversion", "iam:*", "*"}),
+}
+
+
+def _principal_has_capability(
+    principal: dict,
+    capability_actions: frozenset,
+    target_arn: str,
+) -> bool:
+    """Retorna True se policy_permissions do principal contém capability_actions sobre target_arn."""
+    meta = principal.get("metadata") or {}
+    for perm in meta.get("policy_permissions", []):
+        for stmt in perm.get("statements", []):
+            if stmt.get("Effect") != "Allow":
+                continue
+            actions = stmt.get("Action", [])
+            if isinstance(actions, str):
+                actions = [actions]
+            resource_field = stmt.get("Resource", "*")
+            if isinstance(resource_field, str):
+                resource_field = [resource_field]
+            for action in actions:
+                if _action_grants_read(action.lower(), capability_actions):
+                    if _resource_covers_arn(resource_field, target_arn):
+                        return True
+    return False
+
+
+def _compute_capability_graph(resources: list[dict]) -> None:
+    """Bloco 7: computa grafo de capacidades completo a partir de policy_permissions.
+
+    Popula automaticamente, sem anotação manual de fixtures:
+    - readable_by: [arn] em secret.secrets_manager, secret.ssm_parameter, data_store.s3_*
+    - createkey_by: [arn] em identity.user — quem tem iam:CreateAccessKey sobre esse user
+    - assumable_by: [arn] em identity.role — quem tem sts:AssumeRole via permission policy
+    - mutable_by: {"iam:AttachRolePolicy": [arn], ...} em identity.role
+
     Chamado após _apply_recursive_scores (policy_permissions já populadas).
+    Não sobrescreve campos já presentes se o resultado computado for vazio —
+    preserva anotações manuais em fixtures de test.
     """
-    data_resources = [
-        r for r in resources if r.get("resource_type") in _DATA_READ_ACTIONS
-    ]
     principals = [
         r for r in resources
         if r.get("resource_type") in ("identity.user", "identity.role")
     ]
-
-    if not data_resources or not principals:
+    if not principals:
         return
 
-    for data_res in data_resources:
+    # --- readable_by em recursos de dados ---
+    for data_res in resources:
         rt = data_res.get("resource_type", "")
+        if rt not in _DATA_READ_ACTIONS:
+            continue
         target_arn = data_res.get("identifier", "")
         read_actions = _DATA_READ_ACTIONS[rt]
-        readable_by: list[str] = []
-
-        for principal in principals:
-            principal_arn = principal.get("identifier", "")
-            meta = principal.get("metadata") or {}
-            can_read = False
-
-            for perm in meta.get("policy_permissions", []):
-                if can_read:
-                    break
-                for stmt in perm.get("statements", []):
-                    if stmt.get("Effect") != "Allow":
-                        continue
-                    actions = stmt.get("Action", [])
-                    if isinstance(actions, str):
-                        actions = [actions]
-                    resource_field = stmt.get("Resource", "*")
-                    if isinstance(resource_field, str):
-                        resource_field = [resource_field]
-
-                    for action in actions:
-                        if _action_grants_read(action.lower(), read_actions):
-                            if _resource_covers_arn(resource_field, target_arn):
-                                can_read = True
-                                break
-                    if can_read:
-                        break
-
-            if can_read:
-                readable_by.append(principal_arn)
-
+        readable_by = [
+            p["identifier"] for p in principals
+            if _principal_has_capability(p, read_actions, target_arn)
+        ]
         if readable_by:
-            meta = data_res.get("metadata")
-            if meta is None:
-                data_res["metadata"] = {}
-                meta = data_res["metadata"]
-            meta["readable_by"] = readable_by
+            _set_resource_meta(data_res, "readable_by", readable_by)
+
+    # --- createkey_by em identity.user ---
+    for user_res in resources:
+        if user_res.get("resource_type") != "identity.user":
+            continue
+        user_arn = user_res.get("identifier", "")
+        createkey_by = [
+            p["identifier"] for p in principals
+            if p.get("identifier") != user_arn  # skip self
+            and _principal_has_capability(p, _CREATEKEY_ACTIONS, user_arn)
+        ]
+        if createkey_by:
+            _set_resource_meta(user_res, "createkey_by", createkey_by)
+
+    # --- assumable_by e mutable_by em identity.role ---
+    for role_res in resources:
+        if role_res.get("resource_type") != "identity.role":
+            continue
+        role_arn = role_res.get("identifier", "")
+
+        assumable_by = [
+            p["identifier"] for p in principals
+            if _principal_has_capability(p, _ASSUMEROLE_ACTIONS, role_arn)
+        ]
+        if assumable_by:
+            _set_resource_meta(role_res, "assumable_by", assumable_by)
+
+        mutable_by: dict[str, list[str]] = {}
+        for action_name, action_set in _ROLE_MUTATION_ACTIONS.items():
+            mutators = [
+                p["identifier"] for p in principals
+                if _principal_has_capability(p, action_set, role_arn)
+            ]
+            if mutators:
+                mutable_by[action_name] = mutators
+        if mutable_by:
+            _set_resource_meta(role_res, "mutable_by", mutable_by)
+
+
+def _set_resource_meta(resource: dict, key: str, value: object) -> None:
+    """Garante que resource["metadata"] existe e define resource["metadata"][key]."""
+    if resource.get("metadata") is None:
+        resource["metadata"] = {}
+    resource["metadata"][key] = value
+
+
+# Backward-compat alias — testes importam _compute_data_resource_access diretamente.
+_compute_data_resource_access = _compute_capability_graph
 
 
 def _resolve_target_for_action(
@@ -1269,7 +1337,7 @@ def run_foundation_discovery(
     _compute_privilege_scores(resources)
     _derive_attack_targets(resources)
     _apply_recursive_scores(resources)
-    _compute_data_resource_access(resources)
+    _compute_capability_graph(resources)
 
     summary = {
         "roles": sum(1 for resource in resources if resource["resource_type"] == "identity.role"),
