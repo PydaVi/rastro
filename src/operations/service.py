@@ -5,6 +5,7 @@ import logging
 import os
 from pathlib import Path
 
+from core.capability_graph import CapabilityGraph
 from core.domain import ActionType, Scope, TargetType
 
 logger = logging.getLogger(__name__)
@@ -837,38 +838,16 @@ def run_discovery_driven_assessment(
                 "Deterministic hypotheses from derived_attack_targets: %d", len(det_hypotheses)
             )
 
-            # Bloco 6b: hipóteses de leitura direta de segredos (readable_by)
-            cred_access_hypotheses = _derive_credential_access_hypotheses(
-                discovery_snapshot, effective_entry_identities
-            )
-            if cred_access_hypotheses:
+            # Bloco 9: hipóteses via BFS do CapabilityGraph
+            # (substitui _derive_credential_access_hypotheses,
+            #  _derive_credential_pivot_hypotheses e _derive_create_access_key_hypotheses)
+            cap_graph = CapabilityGraph.build(discovery_snapshot)
+            graph_hypotheses = cap_graph.derive_all_hypotheses(effective_entry_identities)
+            if graph_hypotheses:
                 logger.info(
-                    "Credential access direct hypotheses from readable_by: %d",
-                    len(cred_access_hypotheses),
+                    "CapabilityGraph BFS hypotheses: %d", len(graph_hypotheses)
                 )
-                det_hypotheses.extend(cred_access_hypotheses)
-
-            # Bloco 6c/6d: hipóteses de pivot — lê segredo/SSM/S3 → usa credencial extraída para assumir role
-            cred_pivot_hypotheses = _derive_credential_pivot_hypotheses(
-                discovery_snapshot, effective_entry_identities
-            )
-            if cred_pivot_hypotheses:
-                logger.info(
-                    "Credential pivot hypotheses from readable_by x roles: %d",
-                    len(cred_pivot_hypotheses),
-                )
-                det_hypotheses.extend(cred_pivot_hypotheses)
-
-            # Bloco 6d: hipóteses de pivot via CreateAccessKey
-            create_key_hypotheses = _derive_create_access_key_hypotheses(
-                discovery_snapshot, effective_entry_identities
-            )
-            if create_key_hypotheses:
-                logger.info(
-                    "CreateAccessKey pivot hypotheses from createkey_by x roles: %d",
-                    len(create_key_hypotheses),
-                )
-                det_hypotheses.extend(create_key_hypotheses)
+                det_hypotheses.extend(graph_hypotheses)
 
             llm_hypotheses = strategic_planner.plan_attacks(
                 discovery_snapshot, effective_entry_identities, scope_for_strategic

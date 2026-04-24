@@ -10,6 +10,7 @@ from core.audit import AuditLogger
 from core.domain import Action, ActionType, Decision, Objective, Observation, Scope
 from core.aws_dry_run_lab import AwsDryRunLab
 from core.blind_real_runtime import BlindRealRuntime
+from core.capability_graph import CapabilityGraph
 from execution.aws_executor import AwsRealExecutor, AwsRealExecutorStub, _detect_aws_credentials, _extract_full_aws_credentials, _load_tool_yaml, _resolve_field, _tool_yaml_cache
 from core.state import StateManager
 from reporting.report import ReportGenerator
@@ -11281,3 +11282,302 @@ def test_b8_observe_real_does_not_register_identity_without_synthetic_actor():
     # Only the entry identity should be present
     entry_arn = "arn:aws:iam::123:user/caller"
     assert all(k == entry_arn for k in identities)
+
+
+# ---------------------------------------------------------------------------
+# Bloco 9 — CapabilityGraph
+# ---------------------------------------------------------------------------
+
+# --- helpers ---
+
+def _make_snapshot_b9(resources):
+    return {"resources": resources}
+
+
+def _user(arn, **meta):
+    return {"resource_type": "identity.user", "identifier": arn, "metadata": meta}
+
+
+def _role(arn, **meta):
+    return {"resource_type": "identity.role", "identifier": arn, "metadata": meta}
+
+
+def _secret(arn, **meta):
+    return {"resource_type": "secret.secrets_manager", "identifier": arn, "metadata": meta}
+
+
+def _ssm(arn, **meta):
+    return {"resource_type": "secret.ssm_parameter", "identifier": arn, "metadata": meta}
+
+
+def _s3(arn, **meta):
+    return {"resource_type": "data_store.s3_object", "identifier": arn, "metadata": meta}
+
+
+# --- CapabilityGraph.build ---
+
+def test_b9_build_empty_snapshot():
+    g = CapabilityGraph.build(_make_snapshot_b9([]))
+    assert g.can_read == {}
+    assert g.can_assume == {}
+    assert g.can_create_key == {}
+    assert g.can_mutate == {}
+    assert g._all_role_arns == []
+
+
+def test_b9_build_readable_by_populates_can_read():
+    user_arn = "arn:aws:iam::123:user/u"
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret/s"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _secret(secret_arn, readable_by=[user_arn]),
+    ]))
+    assert secret_arn in g.can_read[user_arn]
+
+
+def test_b9_build_assumable_by_populates_can_assume():
+    user_arn = "arn:aws:iam::123:user/u"
+    role_arn = "arn:aws:iam::123:role/r"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _role(role_arn, assumable_by=[user_arn]),
+    ]))
+    assert role_arn in g.can_assume[user_arn]
+
+
+def test_b9_build_createkey_by_populates_can_create_key():
+    caller_arn = "arn:aws:iam::123:user/caller"
+    target_user_arn = "arn:aws:iam::123:user/target"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _user(target_user_arn, createkey_by=[caller_arn]),
+    ]))
+    assert target_user_arn in g.can_create_key[caller_arn]
+
+
+def test_b9_build_mutable_by_populates_can_mutate():
+    caller_arn = "arn:aws:iam::123:user/caller"
+    role_arn = "arn:aws:iam::123:role/r"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _role(role_arn, mutable_by={"iam:AttachRolePolicy": [caller_arn]}),
+    ]))
+    assert (role_arn, "iam:AttachRolePolicy") in g.can_mutate[caller_arn]
+
+
+def test_b9_build_excludes_service_roles():
+    svc_role = "arn:aws:iam::123:role/aws-service-role/foo"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _role(svc_role),
+    ]))
+    assert svc_role not in g._all_role_arns
+
+
+# --- derive_all_hypotheses: role_chain ---
+
+def test_b9_derive_role_chain_hypothesis():
+    user_arn = "arn:aws:iam::123:user/u"
+    role_arn = "arn:aws:iam::123:role/r"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _role(role_arn, assumable_by=[user_arn]),
+    ]))
+    hyps = g.derive_all_hypotheses([user_arn])
+    assert any(
+        h.attack_class == "role_chain" and h.target == role_arn and h.entry_identity == user_arn
+        for h in hyps
+    )
+
+
+# --- derive_all_hypotheses: mutation ---
+
+def test_b9_derive_attach_role_policy_hypothesis():
+    user_arn = "arn:aws:iam::123:user/u"
+    role_arn = "arn:aws:iam::123:role/r"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _role(role_arn, mutable_by={"iam:AttachRolePolicy": [user_arn]}),
+    ]))
+    hyps = g.derive_all_hypotheses([user_arn])
+    assert any(
+        h.attack_class == "iam_attach_role_policy_privesc" and h.target == role_arn
+        for h in hyps
+    )
+
+
+def test_b9_derive_create_policy_version_hypothesis():
+    user_arn = "arn:aws:iam::123:user/u"
+    role_arn = "arn:aws:iam::123:role/r"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _role(role_arn, mutable_by={"iam:CreatePolicyVersion": [user_arn]}),
+    ]))
+    hyps = g.derive_all_hypotheses([user_arn])
+    assert any(h.attack_class == "iam_create_policy_version_privesc" for h in hyps)
+
+
+# --- derive_all_hypotheses: credential_access_direct ---
+
+def test_b9_derive_credential_access_direct_for_secret():
+    user_arn = "arn:aws:iam::123:user/u"
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret/s"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _secret(secret_arn, readable_by=[user_arn]),
+    ]))
+    hyps = g.derive_all_hypotheses([user_arn])
+    assert any(
+        h.attack_class == "credential_access_direct" and h.target == secret_arn
+        for h in hyps
+    )
+
+
+def test_b9_derive_credential_access_direct_for_ssm():
+    user_arn = "arn:aws:iam::123:user/u"
+    ssm_arn = "arn:aws:ssm:us-east-1:123:parameter/foo"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _ssm(ssm_arn, readable_by=[user_arn]),
+    ]))
+    hyps = g.derive_all_hypotheses([user_arn])
+    assert any(
+        h.attack_class == "credential_access_direct" and h.target == ssm_arn
+        for h in hyps
+    )
+
+
+# --- derive_all_hypotheses: credential_pivot (2-hop) ---
+
+def test_b9_derive_credential_pivot_secret_to_role():
+    user_arn = "arn:aws:iam::123:user/u"
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret/s"
+    role_arn = "arn:aws:iam::123:role/r"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _secret(secret_arn, readable_by=[user_arn]),
+        _role(role_arn),
+    ]))
+    hyps = g.derive_all_hypotheses([user_arn])
+    assert any(
+        h.attack_class == "credential_pivot"
+        and h.target == role_arn
+        and h.intermediate_resource == secret_arn
+        for h in hyps
+    )
+
+
+def test_b9_derive_ssm_pivot():
+    user_arn = "arn:aws:iam::123:user/u"
+    ssm_arn = "arn:aws:ssm:us-east-1:123:parameter/creds"
+    role_arn = "arn:aws:iam::123:role/r"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _ssm(ssm_arn, readable_by=[user_arn]),
+        _role(role_arn),
+    ]))
+    hyps = g.derive_all_hypotheses([user_arn])
+    assert any(
+        h.attack_class == "ssm_pivot" and h.target == role_arn
+        for h in hyps
+    )
+
+
+def test_b9_derive_s3_pivot():
+    user_arn = "arn:aws:iam::123:user/u"
+    s3_arn = "arn:aws:s3:::bucket/keys.txt"
+    role_arn = "arn:aws:iam::123:role/r"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _s3(s3_arn, readable_by=[user_arn]),
+        _role(role_arn),
+    ]))
+    hyps = g.derive_all_hypotheses([user_arn])
+    assert any(
+        h.attack_class == "s3_pivot" and h.target == role_arn
+        for h in hyps
+    )
+
+
+# --- derive_all_hypotheses: iam_create_access_key_pivot ---
+
+def test_b9_derive_create_access_key_pivot():
+    caller_arn = "arn:aws:iam::123:user/caller"
+    victim_user_arn = "arn:aws:iam::123:user/victim"
+    role_arn = "arn:aws:iam::123:role/r"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _user(victim_user_arn, createkey_by=[caller_arn]),
+        _role(role_arn),
+    ]))
+    hyps = g.derive_all_hypotheses([caller_arn])
+    assert any(
+        h.attack_class == "iam_create_access_key_pivot"
+        and h.target == role_arn
+        and h.intermediate_resource == victim_user_arn
+        for h in hyps
+    )
+
+
+# --- edge cases ---
+
+def test_b9_no_hypotheses_when_no_edges():
+    user_arn = "arn:aws:iam::123:user/u"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _user(user_arn),
+    ]))
+    hyps = g.derive_all_hypotheses([user_arn])
+    assert hyps == []
+
+
+def test_b9_no_pivot_hypothesis_when_no_roles():
+    user_arn = "arn:aws:iam::123:user/u"
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret/s"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _secret(secret_arn, readable_by=[user_arn]),
+        # no roles in snapshot
+    ]))
+    hyps = g.derive_all_hypotheses([user_arn])
+    # credential_access_direct is generated (no role needed)
+    # credential_pivot is NOT generated (no roles)
+    assert any(h.attack_class == "credential_access_direct" for h in hyps)
+    assert not any(h.attack_class == "credential_pivot" for h in hyps)
+
+
+def test_b9_multiple_entry_identities_combined():
+    user1 = "arn:aws:iam::123:user/u1"
+    user2 = "arn:aws:iam::123:user/u2"
+    role1 = "arn:aws:iam::123:role/r1"
+    role2 = "arn:aws:iam::123:role/r2"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _role(role1, assumable_by=[user1]),
+        _role(role2, assumable_by=[user2]),
+    ]))
+    hyps = g.derive_all_hypotheses([user1, user2])
+    targets = {h.target for h in hyps}
+    assert role1 in targets and role2 in targets
+
+
+def test_b9_hypothesis_has_attack_steps():
+    user_arn = "arn:aws:iam::123:user/u"
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret/s"
+    role_arn = "arn:aws:iam::123:role/r"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _secret(secret_arn, readable_by=[user_arn]),
+        _role(role_arn),
+    ]))
+    hyps = g.derive_all_hypotheses([user_arn])
+    pivot = next(h for h in hyps if h.attack_class == "credential_pivot")
+    assert len(pivot.attack_steps) >= 2
+    assert any("Read" in step or "extract" in step.lower() for step in pivot.attack_steps)
+    assert any("AssumeRole" in step for step in pivot.attack_steps)
+
+
+def test_b9_pivot_confidence_is_medium():
+    user_arn = "arn:aws:iam::123:user/u"
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret/s"
+    role_arn = "arn:aws:iam::123:role/r"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _secret(secret_arn, readable_by=[user_arn]),
+        _role(role_arn),
+    ]))
+    hyps = g.derive_all_hypotheses([user_arn])
+    pivot = next(h for h in hyps if h.attack_class == "credential_pivot")
+    assert pivot.confidence == "medium"
+
+
+def test_b9_role_chain_confidence_is_high():
+    user_arn = "arn:aws:iam::123:user/u"
+    role_arn = "arn:aws:iam::123:role/r"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _role(role_arn, assumable_by=[user_arn]),
+    ]))
+    hyps = g.derive_all_hypotheses([user_arn])
+    chain = next(h for h in hyps if h.attack_class == "role_chain")
+    assert chain.confidence == "high"
