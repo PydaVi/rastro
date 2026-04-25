@@ -1,0 +1,15 @@
+{
+  "name": "acme-showcase",
+  "platform": "aws",
+  "accounts": ["550192603632"],
+  "allowed_regions": ["us-east-1"],
+  "entry_roles": [],
+  "discovery_ssm_prefixes": ["/acme/"],
+  "entry_credential_profiles": {
+    "arn:aws:iam::550192603632:user/acme-cicd-agent":    "acme-cicd-entry",
+    "arn:aws:iam::550192603632:user/acme-log-collector": "acme-secret-entry",
+    "arn:aws:iam::550192603632:user/acme-batch-runner":  "acme-s3-entry",
+    "arn:aws:iam::550192603632:user/acme-param-reader":  "acme-ssm-entry",
+    "arn:aws:iam::550192603632:user/acme-health-probe":  "acme-createkey-entry"
+  }
+}

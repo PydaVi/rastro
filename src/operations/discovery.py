@@ -114,6 +114,11 @@ def _resource_covers_arn(resource_field: list[str], target_arn: str) -> bool:
 
     Suporta Resource=* (curinga total), prefixos com * (e.g. arn:aws:s3:::bucket/*)
     e match exato.
+
+    Tratamento especial: Secrets Manager adiciona sufixo aleatório ao ARN do secret
+    (e.g. arn:...:secret:foo-aF57cq).  A policy usa o ARN com sufixo, mas o snapshot
+    de discovery armazena o ARN sem sufixo.  Verificamos os dois sentidos:
+      policy_arn.startswith(target_arn + "-")  →  target sem sufixo ⊂ policy com sufixo
     """
     for res in resource_field:
         if res == "*":
@@ -121,6 +126,9 @@ def _resource_covers_arn(resource_field: list[str], target_arn: str) -> bool:
         if res.endswith("*") and target_arn.startswith(res[:-1]):
             return True
         if res == target_arn:
+            return True
+        # Secrets Manager: policy ARN tem sufixo aleatório; target não tem
+        if "secretsmanager" in res and res.startswith(target_arn + "-"):
             return True
     return False
 

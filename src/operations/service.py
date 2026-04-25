@@ -239,6 +239,24 @@ def run_generated_campaign(
     entry_profile: str | None = None
     if entry_identities and target.entry_credential_profiles:
         entry_profile = target.entry_credential_profiles.get(entry_identities[0])
+        # If entry_credential_profiles is configured but this identity has no mapping,
+        # skip — running with the default profile would give wrong results.
+        if entry_profile is None:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Skipping campaign for %s — no credential profile mapped in target.entry_credential_profiles",
+                entry_identities[0],
+            )
+            return CampaignResult(
+                status="skipped_no_profile",
+                profile=profile_name,
+                output_dir=output_dir,
+                generated_scope=generated_scope_path,
+                objective_met=False,
+                preflight_ok=False,
+                preflight_details={},
+                error=f"no credential profile for {entry_identities[0]}",
+            )
 
     try:
         runner_kwargs = dict(
@@ -814,75 +832,79 @@ def run_discovery_driven_assessment(
         authorization=authorization,
         output_dir=discovery_dir,
     )
-    # Strategic planner: LLM reasons about discovery before target selection.
-    # Falls back to rule-based target_selector on any failure or empty result.
+    # Strategic planner: deterministic BFS always runs; LLM enrichment is optional.
+    # Falls back to rule-based target_selector only if BFS+LLM produce nothing.
     strategic_hypotheses_path = None
     strategic_active = False
+
+    # Always expose all discovered identities for hypothesis generation.
+    discovered_users = [
+        r.get("identifier")
+        for r in discovery_snapshot.get("resources", [])
+        if r.get("resource_type") == "identity.user" and r.get("identifier")
+    ]
+    effective_entry_identities = sorted(set(discovered_users)) or list(target.entry_roles)
+    scope_for_strategic = _build_scope_for_strategic_planner(target, authorization)
+
+    # ── Phase 1: deterministic hypotheses (always runs, never fails) ─────────
+    det_hypotheses = _derive_hypotheses_from_snapshot(
+        discovery_snapshot, effective_entry_identities
+    )
+    logger.info(
+        "Deterministic hypotheses from derived_attack_targets: %d", len(det_hypotheses)
+    )
+
+    # Bloco 9: BFS do CapabilityGraph (determinístico, sem LLM)
+    try:
+        cap_graph = CapabilityGraph.build(discovery_snapshot)
+        graph_hypotheses = cap_graph.derive_all_hypotheses(effective_entry_identities)
+        if graph_hypotheses:
+            logger.info("CapabilityGraph BFS hypotheses: %d", len(graph_hypotheses))
+            det_hypotheses.extend(graph_hypotheses)
+    except Exception as exc:
+        logger.warning("CapabilityGraph BFS failed: %s", exc)
+
+    # ── Phase 2: LLM enrichment (optional — only if strategic_planner provided) ──
+    llm_hypotheses: list = []
     if strategic_planner is not None:
-        # For strategic reasoning, always expose all discovered identities so the LLM
-        # can reason about which users have vulnerable permissions (e.g. iam:CreatePolicyVersion).
-        # Campaign execution uses entry_roles separately (see below).
-        discovered_users = [
-            r.get("identifier")
-            for r in discovery_snapshot.get("resources", [])
-            if r.get("resource_type") == "identity.user" and r.get("identifier")
-        ]
-        effective_entry_identities = sorted(set(discovered_users)) or list(target.entry_roles)
-        scope_for_strategic = _build_scope_for_strategic_planner(target, authorization)
         try:
-            # Síntese determinística primeiro (derived_attack_targets → hipóteses sem LLM)
-            det_hypotheses = _derive_hypotheses_from_snapshot(
-                discovery_snapshot, effective_entry_identities
-            )
-            logger.info(
-                "Deterministic hypotheses from derived_attack_targets: %d", len(det_hypotheses)
-            )
-
-            # Bloco 9: hipóteses via BFS do CapabilityGraph
-            # (substitui _derive_credential_access_hypotheses,
-            #  _derive_credential_pivot_hypotheses e _derive_create_access_key_hypotheses)
-            cap_graph = CapabilityGraph.build(discovery_snapshot)
-            graph_hypotheses = cap_graph.derive_all_hypotheses(effective_entry_identities)
-            if graph_hypotheses:
-                logger.info(
-                    "CapabilityGraph BFS hypotheses: %d", len(graph_hypotheses)
-                )
-                det_hypotheses.extend(graph_hypotheses)
-
             llm_hypotheses = strategic_planner.plan_attacks(
                 discovery_snapshot, effective_entry_identities, scope_for_strategic
             )
-
-            # Merge: LLM first (may have richer steps), then fill in any missed with deterministic.
-            # Dedup key usa profile_family (não attack_class) para que AttachRolePolicy,
-            # CreatePolicyVersion e PutRolePolicy gerem candidatos em perfis distintos.
-            seen_keys: set[tuple] = {
-                (h.entry_identity, h.target,
-                 _attack_class_to_profile(h.attack_class, h.target, h.attack_steps))
-                for h in llm_hypotheses
-            }
-            for h in det_hypotheses:
-                key = (h.entry_identity, h.target,
-                       _attack_class_to_profile(h.attack_class, h.target, h.attack_steps))
-                if key not in seen_keys:
-                    seen_keys.add(key)
-                    llm_hypotheses.append(h)
-
-            hypotheses = _scope_enforce_hypotheses(llm_hypotheses, target)[:max_hypotheses]
-            if hypotheses:
-                strategic_payload = _hypotheses_to_candidates_payload(
-                    hypotheses, discovery_snapshot, bundle_name
-                )
-                candidates_dir.mkdir(parents=True, exist_ok=True)
-                hyp_path = candidates_dir / "strategic_hypotheses.json"
-                hyp_path.write_text(json.dumps([h.model_dump() for h in hypotheses], indent=2))
-                strategic_hypotheses_path = hyp_path
-                candidates_json, candidates_md, candidates_payload = _write_strategic_candidates(
-                    strategic_payload, candidates_dir
-                )
-                strategic_active = True
         except Exception as exc:
-            logger.warning("Strategic planner failed, falling back to rule-based: %s", exc)
+            logger.warning("Strategic planner (LLM) failed, using deterministic only: %s", exc)
+
+    # Merge: LLM first, then fill in any missed deterministic hypotheses.
+    # Dedup key usa profile_family para que AttachRolePolicy, CreatePolicyVersion
+    # e PutRolePolicy gerem candidatos em perfis distintos.
+    seen_keys: set[tuple] = {
+        (h.entry_identity, h.target,
+         _attack_class_to_profile(h.attack_class, h.target, h.attack_steps))
+        for h in llm_hypotheses
+    }
+    for h in det_hypotheses:
+        key = (h.entry_identity, h.target,
+               _attack_class_to_profile(h.attack_class, h.target, h.attack_steps))
+        if key not in seen_keys:
+            seen_keys.add(key)
+            llm_hypotheses.append(h)
+
+    try:
+        hypotheses = _scope_enforce_hypotheses(llm_hypotheses, target)[:max_hypotheses]
+        if hypotheses:
+            strategic_payload = _hypotheses_to_candidates_payload(
+                hypotheses, discovery_snapshot, bundle_name
+            )
+            candidates_dir.mkdir(parents=True, exist_ok=True)
+            hyp_path = candidates_dir / "strategic_hypotheses.json"
+            hyp_path.write_text(json.dumps([h.model_dump() for h in hypotheses], indent=2))
+            strategic_hypotheses_path = hyp_path
+            candidates_json, candidates_md, candidates_payload = _write_strategic_candidates(
+                strategic_payload, candidates_dir
+            )
+            strategic_active = True
+    except Exception as exc:
+        logger.warning("Strategic planner failed, falling back to rule-based: %s", exc)
 
     if not strategic_active:
         candidates_json, candidates_md, candidates_payload = target_selector(

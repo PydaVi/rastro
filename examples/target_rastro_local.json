@@ -1,0 +1,21 @@
+{
+  "name": "aws-rastro-local-lab",
+  "platform": "aws",
+  "accounts": [
+    "550192603632"
+  ],
+  "allowed_regions": [
+    "us-east-1"
+  ],
+  "entry_roles": [],
+  "entry_credential_profiles": {
+    "arn:aws:iam::550192603632:user/mesh-dispatch-operator": "rastro-createkey-entry",
+    "arn:aws:iam::550192603632:user/rastro-pivot-entry-user": "rastro-pivot-entry",
+    "arn:aws:iam::550192603632:user/ops-deploy-user": "ops-deploy-user",
+    "arn:aws:iam::550192603632:user/sre-oncall-user": "sre-oncall-user",
+    "arn:aws:iam::550192603632:user/queue-indexer-user": "rastro-ssm-pivot-entry",
+    "arn:aws:iam::550192603632:user/asset-manifest-user": "rastro-s3-pivot-entry",
+    "arn:aws:iam::550192603632:user/data-engineer-user": "data-engineer-user",
+    "arn:aws:iam::550192603632:user/dev-backend-user": "dev-backend-user"
+  }
+}

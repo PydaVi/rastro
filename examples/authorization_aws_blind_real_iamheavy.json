@@ -9,7 +9,12 @@
     "aws-iam-role-chaining",
     "aws-iam-create-policy-version-privesc",
     "aws-iam-attach-role-policy-privesc",
-    "aws-iam-pass-role-privesc"
+    "aws-iam-pass-role-privesc",
+    "aws-credential-access-secret",
+    "aws-credential-pivot",
+    "aws-credential-pivot-ssm",
+    "aws-credential-pivot-s3",
+    "aws-iam-create-access-key-pivot"
   ],
   "excluded_profiles": []
 }

@@ -19,7 +19,6 @@ KEYWORD_WEIGHTS = {
 }
 
 KEYWORD_PENALTIES = {
-    "admin": 10,
     "public": 10,
     "bridge": 10,
     "audit": 10,

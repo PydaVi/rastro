@@ -43,7 +43,7 @@ class ProfileDefinition(BaseModel):
 
 
 class CampaignResult(BaseModel):
-    status: Literal["passed", "objective_not_met", "preflight_failed", "run_failed"]
+    status: Literal["passed", "objective_not_met", "preflight_failed", "run_failed", "skipped_no_profile"]
     campaign_id: str | None = None
     profile: str
     output_dir: Path
