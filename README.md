@@ -10,8 +10,7 @@ encadeamento, testa cada cadeia e prova o caminho completo de comprometimento.
 
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
-![Tests](https://img.shields.io/badge/tests-288%20passing-brightgreen)
-![Campaigns](https://img.shields.io/badge/campaigns%20proved-20%2F20%20(100%25)-brightgreen)
+![Tests](https://img.shields.io/badge/tests-341%20passing-brightgreen)
 ![Status](https://img.shields.io/badge/status-engine%20R%26D-orange)
 
 ---
@@ -31,7 +30,7 @@ possíveis, e prova o que funciona com mutação real e rollback automático.
 **BAS** → testa ataques conhecidos, não raciocina sobre o ambiente  
 **Pentest manual** → não escala com a velocidade de mudança do IAM  
 
-**Rastro** → LLM raciocina sobre permissões reais → hipóteses → mutação real → prova auditável
+**Rastro** → BFS determinístico + LLM opcional raciocinam sobre permissões reais → hipóteses → mutação real → prova auditável
 
 ---
 
@@ -48,21 +47,24 @@ possíveis, e prova o que funciona com mutação real e rollback automático.
 | Bloco 6a — Discovery Multi-Serviço | +15 testes | Secrets, SSM, S3 como entidades de 1ª classe com `readable_by` |
 | Bloco 6b — Credential Access Passivo | +12 testes | Entry user lê secret diretamente → `credential_extracted` provado |
 | Bloco 6c — Identity Pivot Mid-Chain | +18 testes | Secret → credencial extraída → nova identidade → assume role |
-| **Bloco 6d — SSM + S3 + CreateAccessKey** | **3/3 labs (100%)** | **Pivot via qualquer fonte de credencial** |
+| Bloco 6d — SSM + S3 + CreateAccessKey | 3/3 labs (100%) | Pivot via qualquer fonte de credencial |
+| Bloco 7 — Capability Graph | grafo derivado de policy docs | `createkey_by`, `assumable_by`, `mutable_by` computados automaticamente |
+| Bloco 8 — Tool Effects Declarativos | zero crescimento do executor | Tool YAML declara `produces:`; executor aplica sem código custom |
+| **Bloco 9 — Graph Traversal Hypotheses** | **6/6 chains provadas em AWS real** | **BFS substitui funções `_derive_*` hardcoded; hipóteses determinísticas independentes de LLM** |
 
 ### Capacidade atual
 
 O engine entra em qualquer conta AWS, mapeia a superfície de ataque e prova chains completas:
 
 ```
-conta AWS → discovery autônomo → privilege scoring por blast radius
-  → hipóteses por entrada (LLM + determinístico)
+conta AWS → discovery autônomo → capability graph (BFS sobre policy docs)
+  → hipóteses determinísticas (+ enriquecimento LLM opcional)
     → mutação real → prova auditável → rollback automático
 ```
 
-#### Classes de privesc provadas em AWS real
+#### Classes de ataque provadas em AWS real
 
-**IAM direto:**
+**IAM PrivEsc:**
 - `iam:CreatePolicyVersion` — cria versão admin em customer-managed policy
 - `iam:AttachRolePolicy` — anexa AdministratorAccess a role alvo
 - `sts:AssumeRole` — role chaining até role privilegiado
@@ -74,29 +76,21 @@ conta AWS → discovery autônomo → privilege scoring por blast radius
 - S3 Object → credencial extraída do conteúdo do objeto → assume role
 - `iam:CreateAccessKey` em user alvo → nova identidade → assume role (com rollback da key)
 
-### Demonstração: Full Account Scan
+### Demonstração: acme_showcase — 6 chains simultâneos
 
-5 usuários, conta empresarial simulada (sem naming conventions), zero configuração manual de alvos:
-
-```
-ops-deploy-user    → platform-admin-role (3 vetores: role-chain, attach, create-policy-version)
-data-engineer-user → data-pipeline-role  (role-chaining)
-readonly-audit-user → audit-readonly-role (role-chaining)
-```
-
-O engine selecionou `platform-admin-role` (score 8400, `iam:*`) como alvo principal
-sem nenhuma dica de naming convention — apenas pelo blast radius real das permissões.
-
-### Demonstração: Identity Pivot Chain
-
-Chain de 2 passos provada em AWS real:
+Lab com 5 entry identities e 6 vetores de ataque distintos, todos convergindo em `acme-admin-role`:
 
 ```
-asset-manifest-user
-  → s3:GetObject (mesh-artifacts/bootstrap.json) [credencial extraída]
-    → extracted://bootstrap.json
-      → sts:AssumeRole → delivery-broker-role  [objetivo alcançado]
+acme-cicd-agent    → iam:AttachRolePolicy(acme-ops-role)       → provado  [PrivEsc]
+acme-cicd-agent    → iam:CreatePolicyVersion(acme-cicd-ops-policy) → provado  [PrivEsc]
+acme-log-collector → secretsmanager:GetSecretValue             → deploy-svc creds → provado  [Secret pivot]
+acme-batch-runner  → s3:GetObject(internal/svc-creds.json)     → ops-agent creds  → provado  [S3 pivot]
+acme-param-reader  → ssm:GetParameter(/acme/prod/deploy-key)   → api-relay creds  → provado  [SSM pivot]
+acme-health-probe  → iam:CreateAccessKey(acme-deploy-svc)      → deploy-svc creds → provado  [CreateKey pivot]
 ```
+
+Zero configuração de alvos ou fixtures — o engine descobriu e provou todos os 6 paths
+partindo apenas das credenciais dos 5 entry users.
 
 ---
 
@@ -104,17 +98,22 @@ asset-manifest-user
 
 ```
                     ┌─────────────────────────────┐
-                    │      StrategicPlanner        │
-                    │  (OpenAI / Ollama / Mock)    │
-                    │  raciocina sobre policy docs │
-                    │  → AttackHypotheses          │
+                    │      CapabilityGraph BFS     │
+                    │  (sempre roda, determinístico)│
+                    │  can_read / can_assume /      │
+                    │  can_mutate / can_create_key  │
                     └──────────────┬──────────────┘
-                                   │
+                                   │ hipóteses det.
+                    ┌──────────────▼──────────────┐
+                    │     StrategicPlanner (LLM)   │
+                    │  (opcional — enriquece BFS)  │
+                    │  OpenAI / Ollama / Mock       │
+                    └──────────────┬──────────────┘
+                                   │ hipóteses merged
                     ┌──────────────▼──────────────┐
                     │         RASTRO CORE          │
                     │                              │
                     │  Planner ──▶ Tool Executor   │
-                    │  (LLM executa hipóteses)     │
                     │      ▲           │           │
                     │      │           ▼           │
                     │  Attack Graph ◀ Tool Registry│
@@ -129,8 +128,9 @@ asset-manifest-user
      (MD + JSON + HTML)       (obrigatório)        (append-only)
 ```
 
-O LLM é componente de raciocínio — não o orquestrador. Nenhuma lógica de
-controle ou segurança depende do modelo de linguagem.
+O LLM é componente opcional de enriquecimento — não o orquestrador. Nenhuma lógica de
+controle ou segurança depende do modelo de linguagem. O BFS determinístico sempre roda
+e já é suficiente para provar a maioria dos chains.
 
 ### Discovery enriquecido
 
@@ -139,13 +139,13 @@ O snapshot de discovery contém documentos reais de policy por principal:
 ```json
 {
   "resource_type": "identity.user",
-  "identifier": "arn:aws:iam::ACCOUNT:user/ops-deploy-user",
+  "identifier": "arn:aws:iam::ACCOUNT:user/acme-cicd-agent",
   "metadata": {
     "policy_permissions": [
       {
-        "source": "DeployPolicy",
+        "source": "inline:acme-cicd-agent-privesc",
         "statements": [
-          {"Effect": "Allow", "Action": "iam:AttachRolePolicy", "Resource": "*"}
+          {"Effect": "Allow", "Action": "iam:AttachRolePolicy", "Resource": "arn:aws:iam::ACCOUNT:role/acme-ops-role"}
         ]
       }
     ]
@@ -153,17 +153,30 @@ O snapshot de discovery contém documentos reais de policy por principal:
 }
 ```
 
-E recursos de dados expõem quem pode acessá-los:
+E recursos de dados expõem quem pode acessá-los (Capability Graph):
 
 ```json
 {
-  "resource_type": "secret.ssm_parameter",
-  "identifier": "arn:aws:ssm:us-east-1:ACCOUNT:parameter/svc/runtime/bootstrap",
+  "resource_type": "secret.secrets_manager",
+  "identifier": "arn:aws:secretsmanager:us-east-1:ACCOUNT:secret:acme/svc/deploy-creds",
   "metadata": {
-    "readable_by": ["arn:aws:iam::ACCOUNT:user/queue-indexer-user"]
+    "readable_by": ["arn:aws:iam::ACCOUNT:user/acme-log-collector"]
   }
 }
 ```
+
+---
+
+## Interface web (rastro-ui)
+
+O repositório [rastro-ui](https://github.com/PydaVi/rastro-ui) oferece uma interface local
+para executar assessments, acompanhar o progresso em tempo real e explorar os resultados:
+
+- Kill chain visual com tipagem automática de nó (user/role/secret/ssm/s3)
+- Listagem de todos os caminhos provados com ferramentas e tipo de ataque
+- Narrativa de impacto em linguagem de negócio por classe de ataque
+- Técnicas MITRE ATT&CK mapeadas automaticamente
+- Grafo interativo (pyvis) e relatório markdown para download
 
 ---
 
@@ -180,7 +193,7 @@ pip install -e ".[dev]"
 **Testes (sem LLM, sem AWS):**
 
 ```bash
-pytest                 # 288 testes, sem dependências externas
+pytest                 # 341 testes, sem dependências externas
 pytest -m integration  # requer AWS ou Ollama
 ```
 
@@ -189,21 +202,11 @@ pytest -m integration  # requer AWS ou Ollama
 ```bash
 RASTRO_ENABLE_AWS_REAL=1 python -m app.main assessment run \
   --bundle aws-iam-heavy \
-  --target examples/target_aws_foundation.local.json \
-  --authorization examples/authorization_aws_foundation.local.json \
+  --target examples/target_acme_showcase.json \
+  --authorization examples/authorization_aws_blind_real_iamheavy.json \
   --out outputs \
-  --max-steps 9 \
+  --max-steps 10 \
   --discovery-driven
-```
-
-**CLI operacional:**
-
-```bash
-python -m app.main profile list
-python -m app.main target validate --target examples/target_aws_foundation.local.json
-python -m app.main preflight validate --scope examples/scope_aws_role_choice_openai.json
-python -m app.main discovery run --scope ...
-python -m app.main assessment run --bundle aws-iam-heavy --discovery-driven ...
 ```
 
 ---
@@ -236,22 +239,20 @@ authorization_document: "docs/authorization.pdf"
 | ~~4 — Deep IAM Reasoning~~ | ~~Policy documents reais no discovery~~ | DONE |
 | ~~5 — Full Account Scan~~ | ~~5/5 campanhas, 5 usuários, 0 configuração manual~~ | DONE |
 | ~~6 — Chains multi-serviço~~ | ~~Secrets, SSM, S3, CreateAccessKey como elos de pivot~~ | DONE |
-| **7 — Capability Graph** | Discovery computa grafo de capacidades sem anotação manual | próximo |
-| 8 — Tool Effects Declarativos | Tool YAML declara o que produz; executor para de crescer | planejado |
-| 9 — Graph Traversal Hypotheses | BFS substitui zoo de funções `_derive_*` hardcoded | planejado |
-| 10 — Execução por Caminho | Executor segue paths; profile deixa de ser repositório de ataque | planejado |
+| ~~7 — Capability Graph~~ | ~~Discovery computa grafo de capacidades sem anotação manual~~ | DONE |
+| ~~8 — Tool Effects Declarativos~~ | ~~Tool YAML declara o que produz; executor para de crescer~~ | DONE |
+| ~~9 — Graph Traversal Hypotheses~~ | ~~BFS substitui zoo de funções `_derive_*` hardcoded~~ | DONE |
+| **10 — Execução por Caminho** | Executor segue paths do grafo; profile deixa de ser repositório de ataque | próximo |
 
-O objetivo dos Blocos 7–10 é um engine verdadeiramente cego: dado qualquer ambiente AWS,
-entra, constrói o grafo, encontra caminhos por traversal e executa — sem adaptação de código
-para cada novo cenário.
+O objetivo do Bloco 10 é um engine verdadeiramente guiado por grafo: dado qualquer ambiente AWS,
+entra, constrói o grafo, encontra caminhos por traversal e executa cada aresta como uma ação —
+sem adaptação de código para cada novo cenário de ataque.
 
 ---
 
 ## O que não existe ainda
 
 - Binário instalado `rastro ...` — CLI via Python por ora
-- Interface gráfica ou dashboard
-- Produto SaaS ou API hospedada
 - Onboarding automatizado de conta AWS
 - Suporte a Kubernetes (AWS first)
 - Produto 02 (attack path em CI/CD) — aguarda maturidade do Produto 01
@@ -263,9 +264,9 @@ para cada novo cenário.
 Leia o [PLAN.md](PLAN.md) para o estado atual e direção,
 e o [AGENTS.md](AGENTS.md) para o contrato de desenvolvimento.
 
-O foco atual é o **Bloco 7**: fazer o discovery computar automaticamente o grafo
-de capacidades (quem pode fazer o quê sobre cada recurso) a partir dos documentos
-de policy IAM reais — eliminando a necessidade de anotação manual de fixtures.
+O foco atual é o **Bloco 10**: fazer o executor seguir diretamente os caminhos
+do grafo de capacidades, eliminando a dependência de profiles de ataque como
+repositórios de lógica hardcoded.
 
 ---
 
