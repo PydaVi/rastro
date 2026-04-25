@@ -167,19 +167,6 @@ E recursos de dados expõem quem pode acessá-los (Capability Graph):
 
 ---
 
-## Interface web (rastro-ui)
-
-O repositório [rastro-ui](https://github.com/PydaVi/rastro-ui) oferece uma interface local
-para executar assessments, acompanhar o progresso em tempo real e explorar os resultados:
-
-- Kill chain visual com tipagem automática de nó (user/role/secret/ssm/s3)
-- Listagem de todos os caminhos provados com ferramentas e tipo de ataque
-- Narrativa de impacto em linguagem de negócio por classe de ataque
-- Técnicas MITRE ATT&CK mapeadas automaticamente
-- Grafo interativo (pyvis) e relatório markdown para download
-
----
-
 ## Como executar
 
 ```bash
