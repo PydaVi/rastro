@@ -138,7 +138,7 @@ def execute_run(
             planner_kwargs["timeout"] = planner_cfg.timeout
     if seed is not None:
         planner_kwargs["seed"] = seed
-    if attack_steps:
+    if attack_steps and backend != "mock":
         planner_kwargs["attack_steps_hint"] = attack_steps
 
     planner: Planner = get_planner(backend=backend, **planner_kwargs)
