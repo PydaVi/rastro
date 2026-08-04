@@ -258,6 +258,19 @@ class AwsClient(Protocol):
         """Retorna lista de nomes de políticas inline."""
         ...
 
+    def get_user_permissions_boundary(
+        self,
+        region: str,
+        user_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> Optional[str]:
+        """Retorna o ARN da permission boundary do user, ou None se não houver.
+
+        Propaga exceções (não faz best-effort silencioso aqui) — quem chama
+        decide se falha de fetch vira "sem boundary" ou "boundary não resolvida".
+        """
+        ...
+
     def attach_role_policy(
         self,
         region: str,
@@ -1050,6 +1063,16 @@ class Boto3AwsClient:
             return policies
         except Exception:
             return []
+
+    def get_user_permissions_boundary(
+        self,
+        region: str,
+        user_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> Optional[str]:
+        client = self._session(credentials).client("iam", region_name=region)
+        user = client.get_user(UserName=user_name)["User"]
+        return (user.get("PermissionsBoundary") or {}).get("PermissionsBoundaryArn")
 
     def list_user_inline_policies(
         self,

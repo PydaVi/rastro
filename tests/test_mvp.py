@@ -4993,6 +4993,82 @@ def test_discovery_governance_scp_visibility_unknown_when_client_raises(tmp_path
     assert snapshot["governance"]["scp_visibility"] == "unknown"
 
 
+def _get_user_boundary_snapshot(tmp_path: Path, client) -> dict:
+    target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
+    authorization_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path)
+    _, _, snapshot = run_foundation_discovery(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        client=client,
+    )
+    return snapshot
+
+
+def _first_user_meta(snapshot: dict) -> dict:
+    return next(r for r in snapshot["resources"] if r["resource_type"] == "identity.user")["metadata"]
+
+
+def test_discovery_user_boundary_unresolved_without_client_support(tmp_path: Path) -> None:
+    """FakeAwsClient padrao nao implementa get_user_permissions_boundary → unresolved, nao no_boundary."""
+    snapshot = _get_user_boundary_snapshot(tmp_path, FakeAwsClient())
+    user_meta = _first_user_meta(snapshot)
+    assert user_meta["boundary_visibility"] == "unresolved"
+    assert user_meta["permissions_boundary_arn"] is None
+    assert "boundary_policy_permissions" not in user_meta
+
+
+def test_discovery_user_boundary_no_boundary_when_client_confirms_none(tmp_path: Path) -> None:
+    """Cliente implementa a chamada e confirma ausencia de boundary → no_boundary de verdade."""
+
+    class NoBoundaryFakeAwsClient(FakeAwsClient):
+        def get_user_permissions_boundary(self, region, user_name, credentials=None):
+            return None
+
+    snapshot = _get_user_boundary_snapshot(tmp_path, NoBoundaryFakeAwsClient())
+    user_meta = _first_user_meta(snapshot)
+    assert user_meta["boundary_visibility"] == "no_boundary"
+
+
+def test_discovery_user_boundary_resolved_with_customer_managed_policy(tmp_path: Path) -> None:
+    """Boundary customer-managed resolvida → boundary_policy_permissions populado."""
+    boundary_arn = "arn:aws:iam::123456789012:policy/UserBoundary"
+
+    class BoundaryAwareFakeAwsClient(FakeAwsClient):
+        def get_user_permissions_boundary(self, region, user_name, credentials=None):
+            return boundary_arn
+
+        def get_policy_default_version(self, region, policy_arn, credentials=None):
+            if policy_arn == boundary_arn:
+                return {"Statement": [
+                    {"Effect": "Allow", "Action": "s3:*", "Resource": "*"},
+                ]}
+            return None
+
+    snapshot = _get_user_boundary_snapshot(tmp_path, BoundaryAwareFakeAwsClient())
+    user_meta = _first_user_meta(snapshot)
+    assert user_meta["boundary_visibility"] == "resolved"
+    assert user_meta["permissions_boundary_arn"] == boundary_arn
+    assert user_meta["boundary_policy_permissions"][0]["policy_arn"] == boundary_arn
+
+
+def test_discovery_user_boundary_unresolved_when_fetch_raises(tmp_path: Path) -> None:
+    """get_user_permissions_boundary levantando excecao degrada para unresolved, nunca propaga."""
+
+    class BrokenBoundaryFakeAwsClient(FakeAwsClient):
+        def get_user_permissions_boundary(self, region, user_name, credentials=None):
+            raise RuntimeError("AccessDeniedException")
+
+    snapshot = _get_user_boundary_snapshot(tmp_path, BrokenBoundaryFakeAwsClient())
+    user_meta = _first_user_meta(snapshot)
+    assert user_meta["boundary_visibility"] == "unresolved"
+
+
 # ---------------------------------------------------------------------------
 # Bloco 6b — _detect_aws_credentials
 # ---------------------------------------------------------------------------

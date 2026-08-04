@@ -10,7 +10,7 @@ encadeamento, testa cada cadeia e prova o caminho completo de comprometimento.
 
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
-![Tests](https://img.shields.io/badge/tests-357%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-361%20passing-brightgreen)
 ![Status](https://img.shields.io/badge/status-engine%20R%26D-orange)
 
 ---
@@ -180,7 +180,7 @@ pip install -e ".[dev]"
 **Testes (sem LLM, sem AWS):**
 
 ```bash
-pytest                 # 357 testes, sem dependências externas
+pytest                 # 361 testes, sem dependências externas
 pytest -m integration  # requer AWS ou Ollama
 ```
 
@@ -242,8 +242,11 @@ Deny explícito e permission boundary quando resolvível. O snapshot já reporta
 credencial tem acesso — `unknown` de forma explícita quando não tem, nunca "sem SCP" silencioso),
 mas SCP ainda não entra no cálculo de capacidade — isso depende do avaliador de política do Bloco 12
 (SCP tem semântica de baseline "Allow all" diferente de boundary, que não dá pra tratar como uma
-extensão pontual). Boundary em `identity.user`, SCP herdado de OUs e cross-account real seguem
-pendentes dentro do próprio Bloco 11 (ver PLAN.md).
+extensão pontual). Permission boundary já é resolvida tanto em `identity.role` quanto em
+`identity.user`, com sinal honesto de três estados (`resolved` / `no_boundary` / `unresolved` —
+nunca assume "sem boundary" por omissão). SCP herdado de OUs/root, `Condition` de trust policy
+e cross-account real seguem pendentes dentro do próprio Bloco 11 (ver PLAN.md) — todos convergem
+para o avaliador de política do Bloco 12.
 
 O objetivo do Bloco 10 continua o mesmo: um engine verdadeiramente guiado por grafo, onde entrar em
 qualquer ambiente AWS, construir o grafo, achar caminhos por traversal e executar cada aresta não

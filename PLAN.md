@@ -937,12 +937,23 @@ trabalho do avaliador de politica do Bloco 12, nao uma extensao pontual de
 `_principal_has_capability`. Expor os SCPs no snapshot sem fingir que ja
 influenciam o grafo e a opcao honesta: visibilidade antes de enforcement.
 
+**Fatia 3 (2026-08-04) — Boundary em `identity.user`**
+
+Mesmo mecanismo da role, estendido para user: `AwsClient.get_user_permissions_boundary`
+(via `iam:GetUser`) busca o ARN, e `_fetch_boundary_policy_permissions` (ja existente,
+reaproveitado sem mudanca) resolve o conteudo quando customer-managed. Diferença
+deliberada em relação ao caminho de role: `get_role_details` é uma chamada
+obrigatória (se falha, o discovery do role inteiro falha), enquanto
+`get_user_permissions_boundary` é **opcional e best-effort** (getattr-defensivo) —
+então `boundary_visibility` do user distingue três casos, não dois: `unresolved`
+quando o cliente não implementa a chamada OU ela levanta exceção (nunca vira
+"sem boundary" por omissão), `no_boundary` só quando o cliente confirma
+positivamente a ausência, `resolved` quando o conteúdo foi buscado.
+
 **Escopo explicitamente deixado de fora desta fatia** (nao esconder atras de "feito"):
 
 - SCP como fator do calculo de `assumable_by`/`mutable_by`/etc — pendente, depende do Bloco 12
 - SCP herdado de OUs/root (so vemos o diretamente anexado a conta)
-- Boundary em `identity.user` — a boundary de role ja e resolvida; a de user
-  requer estender o discovery de user (`iam:GetUser`) do mesmo jeito.
 - Cross-account de verdade (trust principal de outra conta que a discovery nao
   enumerou) — exige discovery multi-conta ou leitura de Organizations; hoje
   esses principals simplesmente nao aparecem no `principals` loop e por isso
@@ -955,19 +966,20 @@ influenciam o grafo e a opcao honesta: visibilidade antes de enforcement.
 1. ~~`_principal_has_capability` respeita precedencia de Deny (identity + boundary)~~ DONE
 2. ~~`assumable_by` exige trust policy E permission policy~~ DONE
 3. ~~SCP visibility no snapshot (`governance.scp_visibility`), best-effort~~ DONE
-4. ~~357 testes passando, sem regressao (341 base + 16 novos)~~ DONE
-5. SCP incorporado ao calculo de capacidade — pendente, depende do Bloco 12
-6. Boundary em `identity.user` — pendente
+4. ~~Boundary em `identity.user` resolvida com a mesma honestidade de sinal~~ DONE
+5. ~~361 testes passando, sem regressao (341 base + 20 novos)~~ DONE
+6. SCP incorporado ao calculo de capacidade — pendente, depende do Bloco 12
 7. Revalidar os 6 chains do acme_showcase em AWS real com o novo `assumable_by`
    mais restrito (nenhum falso negativo esperado, mas nao revalidado ainda)
 
 **Proximo experimento de maior leverage**
 
-Revalidar acme_showcase e o lab do Bloco 5 (5 users) contra o `assumable_by`
-mais restrito e confirmar `governance.scp_visibility` numa conta real dentro
-de uma Organization — nenhum dos dois foi validado contra AWS real ainda,
-so contra fixtures offline. Depois: boundary em `identity.user` (extensao
-pequena e contida) ou seguir para o avaliador de politica do Bloco 12.
+O que resta do Bloco 11 (SCP herdado de OU/root, cross-account real, `Condition`
+de trust policy) todos convergem para a mesma necessidade: um avaliador de
+politica de verdade, que e o proprio Bloco 12. Revalidar acme_showcase/Bloco 5
+contra o `assumable_by` mais restrito em AWS real segue como validacao pendente
+(precisa de credenciais/infra que essa sessao nao tem) — registrar como o
+primeiro teste a rodar antes de declarar Bloco 11 fechado.
 
 ---
 

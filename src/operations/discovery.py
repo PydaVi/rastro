@@ -851,14 +851,39 @@ def run_foundation_discovery(
             principal_name=user_name,
             max_policies=effective_limits.max_policies_per_principal,
         )
+
+        _get_user_boundary = getattr(aws_client, "get_user_permissions_boundary", None)
+        user_boundary_arn: str | None = None
+        user_boundary_fetch_failed = _get_user_boundary is None
+        if _get_user_boundary is not None:
+            try:
+                user_boundary_arn = _get_user_boundary(region=region, user_name=user_name)
+            except Exception:
+                user_boundary_fetch_failed = True
+        user_boundary_permissions = _fetch_boundary_policy_permissions(
+            aws_client=aws_client, region=region, boundary_arn=user_boundary_arn,
+        )
+        if user_boundary_fetch_failed:
+            user_boundary_visibility = "unresolved"
+        elif not user_boundary_arn:
+            user_boundary_visibility = "no_boundary"
+        elif user_boundary_permissions is not None:
+            user_boundary_visibility = "resolved"
+        else:
+            user_boundary_visibility = "unresolved"
+
         user_meta: dict = {
             "user_name": user_name,
             "attached_policy_names": [p.get("PolicyName") for p in attached_policies if p.get("PolicyName")],
             "attached_policy_arns": user_attached_arns,
             "inline_policy_names": inline_policy_names,
+            "permissions_boundary_arn": user_boundary_arn,
+            "boundary_visibility": user_boundary_visibility,
         }
         if policy_permissions:
             user_meta["policy_permissions"] = policy_permissions
+        if user_boundary_permissions is not None:
+            user_meta["boundary_policy_permissions"] = user_boundary_permissions
         resources.append(
             {
                 "service": "iam",
