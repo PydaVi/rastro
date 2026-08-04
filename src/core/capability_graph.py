@@ -17,6 +17,8 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.policy_evaluator import evaluate_effective_access
+
 # (action_type, from_arn, to_arn, extra)
 _Step = tuple[str, str, str, Any]
 
@@ -32,6 +34,18 @@ _MUTATE_ACTION_TO_CLASS: dict[str, str] = {
     "iam:AttachRolePolicy":    "iam_attach_role_policy_privesc",
     "iam:PutRolePolicy":       "iam_put_role_policy_privesc",
     "iam:CreatePolicyVersion": "iam_create_policy_version_privesc",
+}
+
+# resource_type do alvo de um passo "read" → action concreta usada pelo
+# PolicyEvaluator (Bloco 12). Só o necessário para avaliar o PRIMEIRO passo
+# do path (sempre a partir do entry_arn real) — passos seguintes partem de
+# identidades sintéticas (extracted://...) que não têm policy_permissions
+# própria no discovery, então não são avaliados nesta versão.
+_READ_ACTION_BY_RESOURCE_TYPE: dict[str, str] = {
+    "secret.secrets_manager": "secretsmanager:GetSecretValue",
+    "secret.ssm_parameter":   "ssm:GetParameter",
+    "data_store.s3_object":   "s3:GetObject",
+    "data_store.s3_bucket":   "s3:GetObject",
 }
 
 
@@ -53,14 +67,20 @@ class CapabilityGraph:
     resource_types: dict[str, str] = field(default_factory=dict)
     # all non-service role ARNs in the environment
     _all_role_arns: list[str] = field(default_factory=list)
+    # identity_arn (real, nao sintetica) → {"policy_permissions": [...], "boundary_policy_permissions": [...] | None}
+    _principal_policy_data: dict[str, dict] = field(default_factory=dict)
+    # SCPs diretamente anexados a conta (Bloco 11), ou None se nao resolvivel
+    _scp_statements: list[dict] | None = None
 
     @classmethod
     def build(cls, discovery_snapshot: dict) -> "CapabilityGraph":
         """Constrói o grafo a partir do snapshot com anotações do Bloco 7."""
         g = cls()
         resources = discovery_snapshot.get("resources", [])
+        governance = discovery_snapshot.get("governance") or {}
+        g._scp_statements = governance.get("scp_policies")
 
-        # Pass 1: collect resource types and role ARNs
+        # Pass 1: collect resource types, role ARNs and per-principal policy data
         for r in resources:
             arn = r.get("identifier", "")
             rtype = r.get("resource_type", "")
@@ -68,6 +88,12 @@ class CapabilityGraph:
                 g.resource_types[arn] = rtype
             if rtype == "identity.role" and ":role/aws-service-role/" not in arn:
                 g._all_role_arns.append(arn)
+            if rtype in ("identity.user", "identity.role") and arn:
+                meta = r.get("metadata") or {}
+                g._principal_policy_data[arn] = {
+                    "policy_permissions": meta.get("policy_permissions", []),
+                    "boundary_policy_permissions": meta.get("boundary_policy_permissions"),
+                }
 
         # Pass 2: build edges from Bloco 7 capability annotations
         for r in resources:
@@ -274,4 +300,51 @@ class CapabilityGraph:
             attack_steps=attack_steps,
             confidence=confidence,
             reasoning=reasoning,
+            evaluation_tier=self._compute_evaluation_tier(entry_arn, path),
         )
+
+    def _step_action(self, step: _Step) -> str | None:
+        """Action concreta de um passo, para o PolicyEvaluator. None se nao mapeavel."""
+        stype, _from_a, to_a, extra = step
+        if stype == "assume":
+            return "sts:AssumeRole"
+        if stype == "create_key":
+            return "iam:CreateAccessKey"
+        if stype == "mutate":
+            return extra
+        if stype == "read":
+            return _READ_ACTION_BY_RESOURCE_TYPE.get(self.resource_types.get(to_a, ""))
+        return None
+
+    def _compute_evaluation_tier(self, entry_arn: str, path: list[_Step]) -> str:
+        """Bloco 12: tenta promover de "structural" pra "evaluated".
+
+        So avalia o PRIMEIRO passo do path — e sempre a partir de entry_arn,
+        uma identidade real com policy_permissions no discovery (garantido por
+        _traverse). Passos seguintes partem de identidades sinteticas
+        (extracted://...) sem policy_permissions propria — nao avaliaveis
+        nesta versao (ver limitacoes no PLAN.md Bloco 12).
+        """
+        if not path:
+            return "structural"
+        step = path[0]
+        _stype, from_a, to_a, _extra = step
+        if from_a != entry_arn:
+            return "structural"
+        action = self._step_action(step)
+        if action is None:
+            return "structural"
+        principal_data = self._principal_policy_data.get(from_a)
+        if principal_data is None:
+            return "structural"
+
+        result = evaluate_effective_access(
+            identity_statements=principal_data["policy_permissions"],
+            action=action,
+            resource_arn=to_a,
+            boundary_statements=principal_data["boundary_policy_permissions"],
+            scp_statements=self._scp_statements,
+        )
+        if result.allowed and result.certain:
+            return "evaluated"
+        return "structural"

@@ -10,7 +10,7 @@ encadeamento, testa cada cadeia e prova o caminho completo de comprometimento.
 
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
-![Tests](https://img.shields.io/badge/tests-361%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-401%20passing-brightgreen)
 ![Status](https://img.shields.io/badge/status-engine%20R%26D-orange)
 
 ---
@@ -180,7 +180,7 @@ pip install -e ".[dev]"
 **Testes (sem LLM, sem AWS):**
 
 ```bash
-pytest                 # 361 testes, sem dependências externas
+pytest                 # 401 testes, sem dependências externas
 pytest -m integration  # requer AWS ou Ollama
 ```
 
@@ -230,6 +230,7 @@ authorization_document: "docs/authorization.pdf"
 | ~~8 — Tool Effects Declarativos~~ | ~~Tool YAML declara o que produz; executor para de crescer~~ | DONE |
 | ~~9 — Graph Traversal Hypotheses~~ | ~~BFS substitui zoo de funções `_derive_*` hardcoded~~ | DONE |
 | **11 — Governança Real** | Deny explícito, permission boundary e trust policy corretos no CapabilityGraph | em andamento |
+| **12 — PolicyEvaluator** | Avaliação determinística de Action+Resource+Condition, camada "evaluated" | em andamento |
 | 10 — Execução por Caminho | Executor segue paths do grafo; profile deixa de ser repositório de ataque | pendente |
 
 Bloco 11 foi priorizado antes do 10: um caminho que o engine reporta mas que a própria AWS já
@@ -245,8 +246,17 @@ mas SCP ainda não entra no cálculo de capacidade — isso depende do avaliador
 extensão pontual). Permission boundary já é resolvida tanto em `identity.role` quanto em
 `identity.user`, com sinal honesto de três estados (`resolved` / `no_boundary` / `unresolved` —
 nunca assume "sem boundary" por omissão). SCP herdado de OUs/root, `Condition` de trust policy
-e cross-account real seguem pendentes dentro do próprio Bloco 11 (ver PLAN.md) — todos convergem
-para o avaliador de política do Bloco 12.
+e cross-account real seguem pendentes dentro do próprio Bloco 11 (ver PLAN.md).
+
+O Bloco 12 (`src/core/policy_evaluator.py`) já existe e já está plugado: cada `AttackHypothesis`
+carrega `evaluation_tier` (`structural` — achado por BFS sobre classes de action, ou `evaluated` —
+o primeiro passo do path foi confirmado Action+Resource+Condition contra identity policy, boundary
+e SCP reais). Wildcard de Action/Resource é glob completo (não só sufixo), com `NotAction`,
+`NotResource` e os operadores de `Condition` mais comuns (`StringEquals`, `StringLike`, `ArnLike`,
+`Bool`, `Null`, entre outros) — um statement cujo `Condition` usa um operador não suportado nunca
+decide o resultado, e a chamada volta com incerteza explícita em vez de fingir que avaliou. Só o
+primeiro passo do path é avaliado por enquanto (passos seguintes de um pivot partem de identidades
+extraídas sem policy própria no discovery — fora de escopo desta fatia).
 
 O objetivo do Bloco 10 continua o mesmo: um engine verdadeiramente guiado por grafo, onde entrar em
 qualquer ambiente AWS, construir o grafo, achar caminhos por traversal e executar cada aresta não

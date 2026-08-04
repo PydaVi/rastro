@@ -983,6 +983,95 @@ primeiro teste a rodar antes de declarar Bloco 11 fechado.
 
 ---
 
+### Bloco 12 — PolicyEvaluator: avaliação determinística de política (INICIADO, 2026-08-04)
+
+**Direcao**: camada de prova graduada — nem toda hipótese precisa de mutação real
+pra ganhar confiança, mas nenhuma ganha confiança por afirmação do LLM.
+
+**O que foi implementado**
+
+`src/core/policy_evaluator.py` — módulo novo, puro, sem I/O, sem dependência de
+`discovery.py`/`capability_graph.py` (é o contrário: `capability_graph.py` importa
+dele). Avalia Action+Resource+Condition contra um conjunto de statements com a
+semântica real de precedência da AWS:
+
+- `evaluate_scope(statements, action, resource_arn, context)` — uma camada
+  isolada (identity, boundary ou SCP). Retorna `Allow` / `Deny` / `NoMatch` +
+  qual statement decidiu + `certain` (False quando um operador de Condition não
+  suportado apareceu em qualquer statement que casou Action+Resource — nesse
+  caso o statement nunca decide o resultado, mas a incerteza propaga em vez de
+  ser ignorada).
+- `evaluate_effective_access(identity, boundary, scp, action, resource_arn)` —
+  combina as três camadas. `boundary=None`/`scp=None` (não resolvida) não
+  restringe — mesma regra do Bloco 11. SCP só contribui `Deny`: ausência de
+  Allow no SCP não bloqueia, porque o baseline real de uma conta é a policy
+  AWS-managed `FullAWSAccess` salvo substituição explícita, e este avaliador
+  não resolve a hierarquia de OUs pra saber se isso foi substituído — tratar
+  SCP como "precisa de Allow explícito" geraria falso negativo sistemático.
+
+Wildcard de Action/Resource é glob completo (`*`/`?` em qualquer posição, não só
+sufixo — `_action_grants_read` do Bloco 7 só cobria sufixo). `NotAction`/`NotResource`
+suportados. Condition: `StringEquals`, `StringNotEquals`, `StringLike`,
+`StringNotLike`, `ArnLike`, `ArnEquals`, `ArnNotLike`, `Bool`, `Null` — qualquer
+outro operador (`Date*`, `IpAddress`, `Numeric*`, `ForAllValues`/`ForAnyValue`,
+sufixos `*IfExists`) marca `certain=False` em vez de fingir que avaliou.
+
+**Integração**: `CapabilityGraph` ganhou `evaluation_tier` em cada `AttackHypothesis`
+(`AttackHypothesis.evaluation_tier: "structural" | "evaluated"`, default
+`"structural"`). No `build()`, o grafo passa a guardar `policy_permissions` +
+`boundary_policy_permissions` por principal real e `governance.scp_policies` do
+snapshot. Em `_path_to_hypothesis`, o **primeiro passo** do path (sempre a partir
+do `entry_arn`, uma identidade real — garantido por `_traverse`) é avaliado pelo
+`PolicyEvaluator`; se `allowed and certain`, a hipótese é promovida a `evaluated`.
+
+**Escopo explicitamente deixado de fora** (não esconder atrás de "feito"):
+
+- Só o primeiro passo do path é avaliado. Passos seguintes de um pivot (ex.:
+  `credential_pivot`, `s3_pivot`) partem de identidades sintéticas
+  (`extracted://...`) sem `policy_permissions` própria no discovery — avaliar
+  isso exigiria resolver qual principal real a credencial extraída realmente
+  corresponde, o que o engine não modela hoje.
+- Resource-based policy (bucket policy, key policy, secret resource policy) —
+  discovery não coleta esses documentos ainda; o parâmetro existe na assinatura
+  de `evaluate_effective_access` pra quando existir, mas não é usado.
+- Hierarquia de OU/root pra SCP — mesma limitação já registrada no Bloco 11.
+- `_principal_has_capability`/`_statements_grant` em `discovery.py` (a camada
+  grossa que popula `readable_by`/`assumable_by`/etc, usada pra achar hipóteses
+  candidatas) **não foi substituída** pelo `PolicyEvaluator` — continua com
+  wildcard só-sufixo e sem `Condition`. Decisão deliberada: são consultas
+  diferentes (classe de actions × 1 principal × todos os recursos, vs. 1 action
+  exata × 1 recurso × 1 principal) e trocar a primeira por N chamadas do
+  avaliador por par (principal, recurso) tem custo quadrático sem necessidade —
+  o grafo continua servindo pra achar candidatos, o avaliador serve pra
+  confirmar o candidato mais promissor. Reavaliar se isso virar gargalo real.
+
+**Critérios de saída (parcial)**
+
+1. ~~`PolicyEvaluator` com wildcard completo, NotAction/NotResource, Condition~~ DONE
+2. ~~34 testes puros do avaliador (`tests/test_policy_evaluator.py`, arquivo
+   próprio — primeiro passo do Bloco 17, quebrar o monólito por domínio)~~ DONE
+3. ~~`evaluation_tier` em `AttackHypothesis`, integrado ao `CapabilityGraph`~~ DONE
+4. ~~`evaluation_tier` propagado até `target_candidates.json`, com bônus de
+   score (+10, menor que priv_bonus — desempata, não sobrepõe confidence)~~ DONE
+5. ~~401 testes passando, sem regressão (361 base + 40 novos)~~ DONE
+6. Report Engine (MD/HTML final, pós-execução) expor `evaluation_tier` — pendente
+7. SCP incorporado ao cálculo de `assumable_by`/etc em `discovery.py` — ainda
+   não decidido se vale a pena dado o item de escopo acima
+8. Avaliar segundo/terceiro passo de paths de pivot (resolver identidade
+   sintética → principal real) — pendente, maior escopo
+
+**Próximo experimento de maior leverage**
+
+`evaluation_tier` já chega em `strategic_hypotheses.json` e `target_candidates.json`
+(os artefatos de pré-execução) e já influencia a priorização de candidatos. O que
+falta é o `ReportGenerator` (relatório final, pós-execução, MD/JSON/HTML) expor essa
+informação — hoje ele trabalha em cima de `StateSnapshot`/`AttackGraph`, não das
+hipóteses originais, então a linha entre "isso foi confirmado pelo avaliador antes
+de tentar" e "isso funcionou na execução real" ainda não aparece junta no artefato
+final que um administrador de verdade leria.
+
+---
+
 ### O que fica para depois dos Blocos 7–10
 
 Após o salto arquitetural, o roadmap de expansão horizontal volta a fazer sentido:

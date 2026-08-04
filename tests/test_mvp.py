@@ -3609,6 +3609,35 @@ def test_hypotheses_to_candidates_payload_maps_attack_classes_to_profiles() -> N
     assert by_profile["aws-iam-secrets"]["score"] == 50
 
 
+def test_hypotheses_to_candidates_payload_evaluation_tier_bonus() -> None:
+    """Bloco 12: hipotese evaluated ganha +10 no score (desempate, nao muda de tier de confidence)."""
+    from planner.strategic_planner import AttackHypothesis
+    from operations.service import _hypotheses_to_candidates_payload
+
+    hypotheses = [
+        AttackHypothesis(
+            entry_identity="arn:aws:iam::123:user/analyst",
+            target="arn:aws:iam::123:role/AdminRole",
+            attack_class="role_chain",
+            attack_steps=["sts:AssumeRole on AdminRole"],
+            confidence="medium",
+            reasoning="Trust policy allows analyst.",
+            evaluation_tier="evaluated",
+        ),
+    ]
+    discovery = {
+        "target": "test",
+        "resources": [
+            {"identifier": "arn:aws:iam::123:role/AdminRole", "resource_type": "identity.role"},
+        ],
+    }
+    payload = _hypotheses_to_candidates_payload(hypotheses, discovery, "aws-iam-heavy")
+    candidate = payload["candidates"][0]
+    assert candidate["evaluation_tier"] == "evaluated"
+    assert candidate["score"] == 60  # medium=50 + evaluation_bonus=10
+    assert candidate["score_components"]["evaluation_bonus"] == 10
+
+
 def test_scope_enforce_hypotheses_filters_out_of_account_targets() -> None:
     from planner.strategic_planner import AttackHypothesis
     from operations.service import _scope_enforce_hypotheses
@@ -11882,3 +11911,98 @@ def test_b9_role_chain_confidence_is_high():
     hyps = g.derive_all_hypotheses([user_arn])
     chain = next(h for h in hyps if h.attack_class == "role_chain")
     assert chain.confidence == "high"
+
+
+# ---------------------------------------------------------------------------
+# Bloco 12 — evaluation_tier: CapabilityGraph promove hipoteses via PolicyEvaluator
+# ---------------------------------------------------------------------------
+
+def test_b12_evaluation_tier_defaults_to_structural_without_policy_permissions():
+    """Fixtures do Bloco 9 nao trazem policy_permissions do entry user → tier fica structural."""
+    user_arn = "arn:aws:iam::123:user/u"
+    role_arn = "arn:aws:iam::123:role/r"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _role(role_arn, assumable_by=[user_arn]),
+    ]))
+    hyps = g.derive_all_hypotheses([user_arn])
+    chain = next(h for h in hyps if h.attack_class == "role_chain")
+    assert chain.evaluation_tier == "structural"
+
+
+def test_b12_evaluation_tier_promoted_when_first_step_confirmed():
+    """entry tem policy_permissions reais que casam com o primeiro passo → evaluated."""
+    user_arn = "arn:aws:iam::123:user/u"
+    role_arn = "arn:aws:iam::123:role/r"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _user(user_arn, policy_permissions=[{"source": "p", "statements": [
+            {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": role_arn},
+        ]}]),
+        _role(role_arn, assumable_by=[user_arn]),
+    ]))
+    hyps = g.derive_all_hypotheses([user_arn])
+    chain = next(h for h in hyps if h.attack_class == "role_chain")
+    assert chain.evaluation_tier == "evaluated"
+
+
+def test_b12_evaluation_tier_stays_structural_when_boundary_caps_it():
+    """assumable_by diz que sim (grafo grosso), mas a boundary do entry nega essa action
+    especifica → PolicyEvaluator nao confirma, tier fica structural (nao promove)."""
+    user_arn = "arn:aws:iam::123:user/u"
+    role_arn = "arn:aws:iam::123:role/r"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _user(
+            user_arn,
+            policy_permissions=[{"source": "p", "statements": [
+                {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": role_arn},
+            ]}],
+            boundary_policy_permissions=[{"source": "boundary", "statements": [
+                {"Effect": "Allow", "Action": "s3:*", "Resource": "*"},
+            ]}],
+        ),
+        _role(role_arn, assumable_by=[user_arn]),
+    ]))
+    hyps = g.derive_all_hypotheses([user_arn])
+    chain = next(h for h in hyps if h.attack_class == "role_chain")
+    assert chain.evaluation_tier == "structural"
+
+
+def test_b12_evaluation_tier_uses_scp_from_governance():
+    """governance.scp_policies no snapshot participa da avaliacao do primeiro passo."""
+    user_arn = "arn:aws:iam::123:user/u"
+    role_arn = "arn:aws:iam::123:role/r"
+    snapshot = _make_snapshot_b9([
+        _user(user_arn, policy_permissions=[{"source": "p", "statements": [
+            {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": role_arn},
+        ]}]),
+        _role(role_arn, assumable_by=[user_arn]),
+    ])
+    snapshot["governance"] = {
+        "scp_visibility": "directly_attached_only",
+        "scp_policies": [{"source": "scp:guardrail", "statements": [
+            {"Effect": "Deny", "Action": "sts:AssumeRole", "Resource": "*"},
+        ]}],
+    }
+    g = CapabilityGraph.build(snapshot)
+    hyps = g.derive_all_hypotheses([user_arn])
+    chain = next(h for h in hyps if h.attack_class == "role_chain")
+    assert chain.evaluation_tier == "structural"
+
+
+def test_b12_evaluation_tier_only_evaluates_first_step_of_pivot_path():
+    """Path de pivot (2+ passos): so o primeiro passo (entry real) e avaliado — o segundo
+    parte de uma identidade extracted:// sem policy_permissions propria, nao avaliavel."""
+    user_arn = "arn:aws:iam::123:user/u"
+    secret_arn = "arn:aws:secretsmanager:us-east-1:123:secret/s"
+    role_arn = "arn:aws:iam::123:role/r"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _user(user_arn, policy_permissions=[{"source": "p", "statements": [
+            {"Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": secret_arn},
+        ]}]),
+        _secret(secret_arn, readable_by=[user_arn]),
+        _role(role_arn),
+    ]))
+    hyps = g.derive_all_hypotheses([user_arn])
+    pivot = next(h for h in hyps if h.attack_class == "credential_pivot")
+    # primeiro passo (ler o secret) foi confirmado — promovido a evaluated mesmo
+    # sem conseguir avaliar o assume subsequente da identidade extraida.
+    assert pivot.evaluation_tier == "evaluated"

@@ -31,6 +31,12 @@ class AttackHypothesis(BaseModel):
     confidence: Literal["high", "medium", "low"]
     reasoning: str
     intermediate_resource: str | None = None  # Bloco 6c: secret/param ARN used as pivot
+    # Bloco 12: "structural" = achado por BFS sobre readable_by/assumable_by/etc
+    # (classes de action, sem checar Condition/NotAction/boundary/SCP linha a linha).
+    # "evaluated" = o primeiro passo do path foi confirmado pelo PolicyEvaluator,
+    # com certain=True — Action+Resource+Condition avaliados de verdade contra
+    # identity+boundary+SCP, não só a classe de action.
+    evaluation_tier: Literal["structural", "evaluated"] = "structural"
 
 
 class StrategicPlanner(ABC):

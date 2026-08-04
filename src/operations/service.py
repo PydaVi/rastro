@@ -756,7 +756,12 @@ def _hypotheses_to_candidates_payload(hypotheses, discovery_snapshot: dict, bund
         # Garante que roles de alto valor (iam:*, score elevado) sejam priorizados
         # sobre alvos menos relevantes com mesma confidence.
         priv_bonus = min(15, target_priv_scores.get(hyp.target, 0) // 600)
-        score = base_score + priv_bonus
+        # Bloco 12: tiebreaker menor que priv_bonus — evaluation_tier confirma o
+        # PRIMEIRO passo via PolicyEvaluator, não a cadeia inteira; não deve
+        # sobrepor um salto de nível de confidence (80/50/20), só desempatar
+        # dentro do mesmo nível.
+        evaluation_bonus = 10 if hyp.evaluation_tier == "evaluated" else 0
+        score = base_score + priv_bonus + evaluation_bonus
         candidates.append({
             "id": f"{profile_family}:{_slugify(hyp.target)}",
             "resource_arn": hyp.target,
@@ -764,9 +769,13 @@ def _hypotheses_to_candidates_payload(hypotheses, discovery_snapshot: dict, bund
             "profile_family": profile_family,
             "score": score,
             "confidence": hyp.confidence,
+            "evaluation_tier": hyp.evaluation_tier,
             "selection_reason": [f"strategic:{hyp.attack_class}", *hyp.attack_steps[:2]],
             "signals": {"reasoning": hyp.reasoning, "entry_identity": hyp.entry_identity, "attack_steps": hyp.attack_steps},
-            "score_components": {"lexical": 0, "structural": base_score, "privilege_bonus": priv_bonus},
+            "score_components": {
+                "lexical": 0, "structural": base_score,
+                "privilege_bonus": priv_bonus, "evaluation_bonus": evaluation_bonus,
+            },
             "execution_fixture_set": None,
             "fixture_path": None,
             "scope_template_path": None,
