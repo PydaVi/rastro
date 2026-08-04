@@ -45,6 +45,9 @@ from operations.discovery import (
     _CREATEKEY_ACTIONS,
     _ASSUMEROLE_ACTIONS,
     _ROLE_MUTATION_ACTIONS,
+    _trust_policy_allows_principal,
+    _account_id_from_arn,
+    _extract_trust_principals,
 )
 from operations.campaign_synthesis import synthesize_foundation_campaigns
 from operations.synthetic_catalog import get_mixed_synthetic_profile, get_synthetic_profile
@@ -4766,6 +4769,153 @@ def test_principal_has_capability_no_permissions() -> None:
     """Sem policy_permissions → retorna False."""
     principal = {"resource_type": "identity.user", "identifier": "arn:x", "metadata": {}}
     assert not _principal_has_capability(principal, _CREATEKEY_ACTIONS, "arn:aws:iam::123:user/bot")
+
+
+# ---------------------------------------------------------------------------
+# Bloco 11 — governanca real: deny explicito vence allow, boundary, trust policy
+# ---------------------------------------------------------------------------
+
+def test_principal_has_capability_explicit_deny_beats_allow_same_statement_set() -> None:
+    """Um Allow amplo (iam:*) + um Deny especifico sobre o mesmo alvo: Deny vence.
+
+    Antes do Bloco 11, _principal_has_capability so olhava para o primeiro Allow
+    que casasse e nunca cruzava com Deny statements do MESMO principal — um caso
+    real e comum (guardrail de Deny explicito coexistindo com um Allow amplo).
+    """
+    principal = _make_user("arn:aws:iam::123:user/almost-admin", [{"source": "P", "statements": [
+        {"Effect": "Allow", "Action": "iam:*", "Resource": "*"},
+        {"Effect": "Deny", "Action": "iam:CreateAccessKey", "Resource": "arn:aws:iam::123:user/bot"},
+    ]}])
+    assert not _principal_has_capability(principal, _CREATEKEY_ACTIONS, "arn:aws:iam::123:user/bot")
+    # Deny era escopado a um user especifico — outro alvo continua permitido.
+    assert _principal_has_capability(principal, _CREATEKEY_ACTIONS, "arn:aws:iam::123:user/other")
+
+
+def test_principal_has_capability_boundary_unresolved_does_not_restrict() -> None:
+    """boundary_policy_permissions ausente (None) = boundary nao resolvida, nao restringe."""
+    principal = _make_user("arn:aws:iam::123:user/u", [{"source": "P", "statements": [
+        {"Effect": "Allow", "Action": "iam:CreateAccessKey", "Resource": "*"},
+    ]}])
+    assert _principal_has_capability(principal, _CREATEKEY_ACTIONS, "arn:aws:iam::123:user/bot")
+
+
+def test_principal_has_capability_boundary_caps_identity_allow() -> None:
+    """Boundary resolvida sem Allow para a action = teto atingido, nega mesmo com identity Allow."""
+    principal = _make_user("arn:aws:iam::123:user/u", [{"source": "P", "statements": [
+        {"Effect": "Allow", "Action": "iam:CreateAccessKey", "Resource": "*"},
+    ]}])
+    principal["metadata"]["boundary_policy_permissions"] = [{
+        "source": "boundary", "statements": [
+            {"Effect": "Allow", "Action": "s3:GetObject", "Resource": "*"},
+        ],
+    }]
+    assert not _principal_has_capability(principal, _CREATEKEY_ACTIONS, "arn:aws:iam::123:user/bot")
+
+
+def test_principal_has_capability_boundary_explicit_deny() -> None:
+    """Deny explicito na boundary vence mesmo com Allow na identity policy e na propria boundary."""
+    principal = _make_user("arn:aws:iam::123:user/u", [{"source": "P", "statements": [
+        {"Effect": "Allow", "Action": "iam:CreateAccessKey", "Resource": "*"},
+    ]}])
+    principal["metadata"]["boundary_policy_permissions"] = [{
+        "source": "boundary", "statements": [
+            {"Effect": "Allow", "Action": "iam:*", "Resource": "*"},
+            {"Effect": "Deny", "Action": "iam:CreateAccessKey", "Resource": "*"},
+        ],
+    }]
+    assert not _principal_has_capability(principal, _CREATEKEY_ACTIONS, "arn:aws:iam::123:user/bot")
+
+
+def test_extract_trust_principals_ignores_deny_statement() -> None:
+    """Um statement Deny no trust policy nao deve virar principal confiavel."""
+    doc = {"Statement": [
+        {"Effect": "Deny", "Principal": {"AWS": "arn:aws:iam::123:role/BrokerRole"}, "Action": "sts:AssumeRole"},
+    ]}
+    assert _extract_trust_principals(doc) == []
+
+
+def test_trust_policy_allows_principal_none_is_permissive_fallback() -> None:
+    """trust_principals=None (metadata parcial) nao restringe — comportamento pre-Bloco-11."""
+    assert _trust_policy_allows_principal(None, "arn:aws:iam::123:user/anyone")
+
+
+def test_trust_policy_allows_principal_empty_list_denies_everyone() -> None:
+    """trust_principals=[] (discovery rodou, so-servico) nega qualquer principal IAM."""
+    assert not _trust_policy_allows_principal([], "arn:aws:iam::123:user/anyone")
+
+
+def test_trust_policy_allows_principal_exact_arn_match() -> None:
+    arn = "arn:aws:iam::123:role/broker"
+    assert _trust_policy_allows_principal([arn], arn)
+    assert not _trust_policy_allows_principal([arn], "arn:aws:iam::123:role/other")
+
+
+def test_trust_policy_allows_principal_account_root_covers_any_principal_in_account() -> None:
+    assert _trust_policy_allows_principal(
+        ["arn:aws:iam::123:root"], "arn:aws:iam::123:role/anything",
+    )
+
+
+def test_account_id_from_arn() -> None:
+    assert _account_id_from_arn("arn:aws:iam::123456789012:role/x") == "123456789012"
+    assert _account_id_from_arn("not-an-arn") is None
+
+
+def test_capability_graph_assumable_by_requires_trust_policy_match() -> None:
+    """Identity policy permite sts:AssumeRole, mas trust policy da role nao lista o principal.
+
+    Este e o caso de falso positivo que o Bloco 11 corrige: antes, assumable_by
+    era populado so pela permission policy do principal, ignorando se a role
+    de fato confia nele (trust_principals). Isso podia gerar hipoteses de
+    role-chaining que nao existem de verdade em AWS real.
+    """
+    entry = "arn:aws:iam::123:user/engineer"
+    role = "arn:aws:iam::123:role/ops-role"
+    resources = [
+        _make_user(entry, [{"source": "P", "statements": [
+            {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": role},
+        ]}]),
+        {
+            "resource_type": "identity.role", "identifier": role,
+            "metadata": {"policy_permissions": [], "trust_principals": ["arn:aws:iam::123:role/someone-else"]},
+        },
+    ]
+    _compute_capability_graph(resources)
+    role_res = next(r for r in resources if r["identifier"] == role)
+    assert "assumable_by" not in role_res.get("metadata", {})
+
+
+def test_capability_graph_assumable_by_trust_and_permission_policy_both_required() -> None:
+    """Trust policy permite E identity policy permite → assumable_by populado."""
+    entry = "arn:aws:iam::123:user/engineer"
+    role = "arn:aws:iam::123:role/ops-role"
+    resources = [
+        _make_user(entry, [{"source": "P", "statements": [
+            {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": role},
+        ]}]),
+        {
+            "resource_type": "identity.role", "identifier": role,
+            "metadata": {"policy_permissions": [], "trust_principals": [entry]},
+        },
+    ]
+    _compute_capability_graph(resources)
+    role_res = next(r for r in resources if r["identifier"] == role)
+    assert entry in role_res["metadata"]["assumable_by"]
+
+
+def test_capability_graph_assumable_by_missing_trust_principals_key_is_permissive() -> None:
+    """_make_role_b7 (fixture parcial, sem trust_principals) preserva comportamento pre-Bloco-11."""
+    entry = "arn:aws:iam::123:user/engineer"
+    role = "arn:aws:iam::123:role/ops-role"
+    resources = [
+        _make_user(entry, [{"source": "P", "statements": [
+            {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": role},
+        ]}]),
+        _make_role_b7(role),
+    ]
+    _compute_capability_graph(resources)
+    role_res = next(r for r in resources if r["identifier"] == role)
+    assert entry in role_res["metadata"]["assumable_by"]
 
 
 # ---------------------------------------------------------------------------

@@ -10,7 +10,7 @@ encadeamento, testa cada cadeia e prova o caminho completo de comprometimento.
 
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
-![Tests](https://img.shields.io/badge/tests-341%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-354%20passing-brightgreen)
 ![Status](https://img.shields.io/badge/status-engine%20R%26D-orange)
 
 ---
@@ -180,7 +180,7 @@ pip install -e ".[dev]"
 **Testes (sem LLM, sem AWS):**
 
 ```bash
-pytest                 # 341 testes, sem dependências externas
+pytest                 # 354 testes, sem dependências externas
 pytest -m integration  # requer AWS ou Ollama
 ```
 
@@ -229,11 +229,20 @@ authorization_document: "docs/authorization.pdf"
 | ~~7 — Capability Graph~~ | ~~Discovery computa grafo de capacidades sem anotação manual~~ | DONE |
 | ~~8 — Tool Effects Declarativos~~ | ~~Tool YAML declara o que produz; executor para de crescer~~ | DONE |
 | ~~9 — Graph Traversal Hypotheses~~ | ~~BFS substitui zoo de funções `_derive_*` hardcoded~~ | DONE |
-| **10 — Execução por Caminho** | Executor segue paths do grafo; profile deixa de ser repositório de ataque | próximo |
+| **11 — Governança Real** | Deny explícito, permission boundary e trust policy corretos no CapabilityGraph | em andamento |
+| 10 — Execução por Caminho | Executor segue paths do grafo; profile deixa de ser repositório de ataque | pendente |
 
-O objetivo do Bloco 10 é um engine verdadeiramente guiado por grafo: dado qualquer ambiente AWS,
-entra, constrói o grafo, encontra caminhos por traversal e executa cada aresta como uma ação —
-sem adaptação de código para cada novo cenário de ataque.
+Bloco 11 foi priorizado antes do 10: um caminho que o engine reporta mas que a própria AWS já
+bloquearia (via Deny explícito, boundary ou trust policy) não é uma prova, é um erro de modelagem —
+e isso importa mais do que qualquer cobertura nova antes de estar corrigido. `assumable_by` hoje já
+cruza permission policy do candidato com o trust policy real da role (antes, só a permission policy
+decidia — um vetor de falso positivo real); `_principal_has_capability` já respeita precedência de
+Deny explícito e permission boundary quando resolvível. SCP/RCP, boundary em `identity.user` e
+cross-account real seguem pendentes dentro do próprio Bloco 11 (ver PLAN.md).
+
+O objetivo do Bloco 10 continua o mesmo: um engine verdadeiramente guiado por grafo, onde entrar em
+qualquer ambiente AWS, construir o grafo, achar caminhos por traversal e executar cada aresta não
+exige adaptação de código para cada novo cenário de ataque.
 
 ---
 
@@ -251,9 +260,11 @@ sem adaptação de código para cada novo cenário de ataque.
 Leia o [PLAN.md](PLAN.md) para o estado atual e direção,
 e o [AGENTS.md](AGENTS.md) para o contrato de desenvolvimento.
 
-O foco atual é o **Bloco 10**: fazer o executor seguir diretamente os caminhos
-do grafo de capacidades, eliminando a dependência de profiles de ataque como
-repositórios de lógica hardcoded.
+O foco atual é o **Bloco 11**: fechar as lacunas de governança real (SCP, permission
+boundary em `identity.user`, cross-account) no CapabilityGraph antes de expandir
+cobertura. O Bloco 10 (executor seguir diretamente os caminhos do grafo, eliminando
+profiles de ataque como repositório de lógica hardcoded) segue como próximo passo
+estrutural depois disso.
 
 ---
 

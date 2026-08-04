@@ -865,6 +865,88 @@ o semântico de cada profile.
 
 ---
 
+### Bloco 11 — Governanca Real: Deny Explicito, Boundary, Trust Policy (EM ANDAMENTO, iniciado 2026-08-04)
+
+**Direcao**: correcao antes de expansao. Regua revisada (2026-08-04): o criterio de
+sucesso deixa de ser so "prova um caminho de forma auditavel" e passa a ser
+"raciocina corretamente sobre a governanca real de uma conta AWS complexa". Um
+caminho que o engine reporta mas que a propria AWS ja bloquearia nao e uma prova,
+e um erro de modelagem — essa classe de erro vale mais consertar do que qualquer
+cobertura de servico nova.
+
+**O problema diagnosticado**
+
+`_principal_has_capability` (Bloco 7) so olhava para statements `Effect=Allow` —
+nunca cruzava com um `Effect=Deny` do mesmo principal cobrindo a mesma
+action+resource. Um guardrail de Deny explicito coexistindo com um Allow amplo
+(`iam:*`) era ignorado silenciosamente: falso positivo.
+
+`assumable_by` (usado para popular arestas `CanAssume` no CapabilityGraph) era
+computado *so* a partir da permission policy do principal candidato — nunca
+cruzava com o `trust_principals` da propria role, que ja e coletado no discovery
+desde o Bloco 7 mas nunca foi consultado pelo `_compute_capability_graph`. Um
+principal com `sts:AssumeRole` amplo na propria policy, mas que a role alvo nao
+lista no trust policy, virava uma hipotese de role-chaining que nao existe de
+verdade em AWS real — a classe exata de falso positivo que a regua deste
+documento marca como "sinal de confianca inflada", nao progresso.
+
+`permissions_boundary_arn` era coletado no discovery (metadata de toda role) e
+descartado — nao entrava em nenhum calculo de capacidade.
+
+**O que foi implementado nesta fatia**
+
+1. `_principal_has_capability` (`src/operations/discovery.py`) agora aplica a
+   regra de precedencia que a propria AWS aplica: um `Deny` que cobre a mesma
+   action+resource sempre vence um `Allow`, checado contra a identity policy e,
+   quando resolvida, contra a boundary policy.
+2. `_fetch_boundary_policy_permissions` busca o documento da permission boundary
+   (mesmo mecanismo de `_fetch_policy_permissions`, reaproveitado) quando a
+   boundary e customer-managed. Cada role passa a carregar `boundary_visibility`
+   (`no_boundary` / `resolved` / `unresolved`) — quando a boundary existe mas nao
+   e resolvivel (ex.: AWS-managed), isso fica visivel no snapshot em vez de
+   silenciosamente assumido como "sem restricao".
+3. `assumable_by` agora exige *os dois* sinais: permission policy do candidato
+   E trust policy da role (`_trust_policy_allows_principal`), cobrindo `"*"`,
+   ARN exato, e `:root`/account-id (confianca no nivel de conta). `trust_principals`
+   ausente do metadata (fixture parcial) preserva o comportamento anterior
+   (fallback permissivo, so a permission policy decide) — `trust_principals=[]`
+   (discovery rodou e nao achou nenhum principal AWS, ex. role so-servico) nega.
+4. `_extract_trust_principals` passa a ignorar statements `Effect=Deny` do trust
+   policy (nao contam mais como principal confiavel).
+
+**Escopo explicitamente deixado de fora desta fatia** (nao esconder atras de "feito"):
+
+- SCP (Service Control Policy) e RCP — exige `organizations:*` API, que a
+  credencial de entry point raramente tem; precisa de visibilidade explicita
+  (`scp_visibility: unknown`) em vez de assumir "sem SCP" quando o acesso falha.
+- Boundary em `identity.user` — a boundary de role ja e resolvida; a de user
+  requer estender o discovery de user (`iam:GetUser`) do mesmo jeito.
+- Cross-account de verdade (trust principal de outra conta que a discovery nao
+  enumerou) — exige discovery multi-conta ou leitura de Organizations; hoje
+  esses principals simplesmente nao aparecem no `principals` loop e por isso
+  nunca geram aresta (nem falso positivo, nem cobertura real).
+- `Condition` do trust policy (ex. `aws:PrincipalOrgID`, external ID) — ainda
+  nao influencia `_trust_policy_allows_principal`.
+
+**Criterios de saida (parcial)**
+
+1. ~~`_principal_has_capability` respeita precedencia de Deny (identity + boundary)~~ DONE
+2. ~~`assumable_by` exige trust policy E permission policy~~ DONE
+3. ~~354 testes passando, sem regressao (341 anteriores + 13 novos)~~ DONE
+4. SCP/RCP — pendente
+5. Boundary em `identity.user` — pendente
+6. Revalidar os 6 chains do acme_showcase em AWS real com o novo `assumable_by`
+   mais restrito (nenhum falso negativo esperado, mas nao revalidado ainda)
+
+**Proximo experimento de maior leverage**
+
+Revalidar acme_showcase e o lab do Bloco 5 (5 users) contra o `assumable_by`
+mais restrito — confirmar que nenhum chain hoje provado depende de um trust
+policy que na verdade nao permitiria. Depois: SCP visibility (mesmo que so
+best-effort, com fallback honesto para `unknown`).
+
+---
+
 ### O que fica para depois dos Blocos 7–10
 
 Após o salto arquitetural, o roadmap de expansão horizontal volta a fazer sentido:

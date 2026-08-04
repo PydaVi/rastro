@@ -158,16 +158,16 @@ _ROLE_MUTATION_ACTIONS: dict[str, frozenset] = {
 }
 
 
-def _principal_has_capability(
-    principal: dict,
+def _statements_grant(
+    permission_list: list[dict],
     capability_actions: frozenset,
     target_arn: str,
+    effect: str,
 ) -> bool:
-    """Retorna True se policy_permissions do principal contém capability_actions sobre target_arn."""
-    meta = principal.get("metadata") or {}
-    for perm in meta.get("policy_permissions", []):
+    """Retorna True se algum statement com o Effect dado cobre capability_actions sobre target_arn."""
+    for perm in permission_list:
         for stmt in perm.get("statements", []):
-            if stmt.get("Effect") != "Allow":
+            if stmt.get("Effect") != effect:
                 continue
             actions = stmt.get("Action", [])
             if isinstance(actions, str):
@@ -180,6 +180,37 @@ def _principal_has_capability(
                     if _resource_covers_arn(resource_field, target_arn):
                         return True
     return False
+
+
+def _principal_has_capability(
+    principal: dict,
+    capability_actions: frozenset,
+    target_arn: str,
+) -> bool:
+    """Retorna True se o principal tem capability_actions efetivas sobre target_arn.
+
+    Regra de precedencia (Bloco 11): um Effect=Deny que cobre a mesma
+    action+resource sempre vence um Effect=Allow, na identity policy e,
+    se resolvida, na permission boundary — mesma regra que a AWS aplica
+    na avaliacao de politica. boundary_policy_permissions ausente (None)
+    significa "boundary nao resolvida" e NAO restringe (ver
+    _fetch_boundary_policy_permissions); presente e vazia restringe.
+    """
+    meta = principal.get("metadata") or {}
+    policy_permissions = meta.get("policy_permissions", [])
+    if not _statements_grant(policy_permissions, capability_actions, target_arn, "Allow"):
+        return False
+    if _statements_grant(policy_permissions, capability_actions, target_arn, "Deny"):
+        return False
+
+    boundary_permissions = meta.get("boundary_policy_permissions")
+    if boundary_permissions is not None:
+        if not _statements_grant(boundary_permissions, capability_actions, target_arn, "Allow"):
+            return False
+        if _statements_grant(boundary_permissions, capability_actions, target_arn, "Deny"):
+            return False
+
+    return True
 
 
 def _compute_capability_graph(resources: list[dict]) -> None:
@@ -235,9 +266,11 @@ def _compute_capability_graph(resources: list[dict]) -> None:
             continue
         role_arn = role_res.get("identifier", "")
 
+        role_trust_principals = (role_res.get("metadata") or {}).get("trust_principals")
         assumable_by = [
             p["identifier"] for p in principals
             if _principal_has_capability(p, _ASSUMEROLE_ACTIONS, role_arn)
+            and _trust_policy_allows_principal(role_trust_principals, p["identifier"])
         ]
         if assumable_by:
             _set_resource_meta(role_res, "assumable_by", assumable_by)
@@ -715,6 +748,34 @@ def _fetch_policy_permissions(
     return permissions
 
 
+def _fetch_boundary_policy_permissions(
+    *,
+    aws_client: "AwsClient",
+    region: str,
+    boundary_arn: str | None,
+) -> list[dict] | None:
+    """Busca os statements da permission boundary, se resolvivel.
+
+    Retorna None quando nao ha boundary, ou quando ha mas o conteudo nao pode
+    ser resolvido (ex.: boundary AWS-managed, cujo documento nao buscamos —
+    mesma limitacao que _fetch_policy_permissions aplica a policies anexadas).
+    None e distinto de [] : None significa "nao sabemos o conteudo desta
+    boundary", nunca deve ser lido como "sem restricao".
+    """
+    if not boundary_arn or not _is_customer_managed_policy(boundary_arn):
+        return None
+    _get_policy_doc = getattr(aws_client, "get_policy_default_version", None)
+    if _get_policy_doc is None:
+        return None
+    doc = _get_policy_doc(region=region, policy_arn=boundary_arn)
+    if not doc:
+        return None
+    statements = _compact_policy_doc(doc)
+    if not statements:
+        return None
+    return [{"source": "boundary", "policy_arn": boundary_arn, "statements": statements}]
+
+
 def run_foundation_discovery(
     *,
     bundle_name: str,
@@ -812,6 +873,10 @@ def run_foundation_discovery(
             principal_name=role_name,
             max_policies=effective_limits.max_policies_per_principal,
         )
+        boundary_arn = (role_details.get("PermissionsBoundary") or {}).get("PermissionsBoundaryArn")
+        boundary_policy_permissions = _fetch_boundary_policy_permissions(
+            aws_client=aws_client, region=region, boundary_arn=boundary_arn,
+        )
         role_meta: dict = {
             "is_service_linked": False,
             "role_name": role_name,
@@ -820,12 +885,19 @@ def run_foundation_discovery(
             "attached_policy_arns": role_attached_arns,
             "attached_policy_names": [policy.get("PolicyName") for policy in attached_policies if policy.get("PolicyName")],
             "inline_policy_names": inline_policy_names,
-            "permissions_boundary_arn": (role_details.get("PermissionsBoundary") or {}).get("PermissionsBoundaryArn"),
+            "permissions_boundary_arn": boundary_arn,
+            "boundary_visibility": (
+                "no_boundary" if not boundary_arn
+                else "resolved" if boundary_policy_permissions is not None
+                else "unresolved"
+            ),
             "managed_policy_count": len(attached_policies),
             "inline_policy_count": len(inline_policy_names),
         }
         if policy_permissions:
             role_meta["policy_permissions"] = policy_permissions
+        if boundary_policy_permissions is not None:
+            role_meta["boundary_policy_permissions"] = boundary_policy_permissions
         resources.append(
             {
                 "service": "iam",
@@ -1476,6 +1548,41 @@ def _resolve_ssm_discovery_prefixes(*, target: TargetConfig, profiles: list) -> 
     return list(DEFAULT_SSM_DISCOVERY_PREFIXES)
 
 
+def _account_id_from_arn(arn: str) -> str | None:
+    """Extrai o account id de um ARN (5o segmento). None se o formato nao bate."""
+    parts = arn.split(":")
+    if len(parts) >= 5 and parts[0] == "arn":
+        return parts[4] or None
+    return None
+
+
+def _trust_policy_allows_principal(trust_principals: list[str] | None, principal_arn: str) -> bool:
+    """True se o trust policy (Principal.AWS de statements Allow) permite principal_arn.
+
+    trust_principals=None (chave ausente do metadata) significa que dados de
+    trust policy nao foram coletados para este recurso (ex.: fixture parcial
+    ou synthetic) — a checagem e ignorada, fallback permissivo identico ao
+    comportamento anterior ao Bloco 11 (so a permission policy decide).
+
+    trust_principals=[] (lista presente e vazia) significa que o discovery
+    rodou e nao encontrou nenhum Principal.AWS em statement Allow do trust
+    policy (ex.: role so-servico) — nesse caso nenhum principal IAM pode
+    assumir via trust, mesmo tendo sts:AssumeRole na propria identity policy.
+    """
+    if trust_principals is None:
+        return True
+    if "*" in trust_principals:
+        return True
+    if principal_arn in trust_principals:
+        return True
+    principal_account = _account_id_from_arn(principal_arn)
+    if principal_account:
+        root_arn = f"arn:aws:iam::{principal_account}:root"
+        if root_arn in trust_principals or principal_account in trust_principals:
+            return True
+    return False
+
+
 def _extract_trust_principals(policy_document) -> list[str]:
     if not policy_document:
         return []
@@ -1484,6 +1591,8 @@ def _extract_trust_principals(policy_document) -> list[str]:
         statements = [statements]
     principals: set[str] = set()
     for statement in statements:
+        if statement.get("Effect", "Allow") != "Allow":
+            continue
         principal = statement.get("Principal")
         if principal == "*":
             principals.add("*")
