@@ -327,6 +327,21 @@ class AwsClient(Protocol):
         """Retorna o documento da versão padrão de uma customer-managed policy, ou None."""
         ...
 
+    def list_service_control_policies(
+        self,
+        region: str,
+        account_id: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> Optional[list[Dict[str, Any]]]:
+        """Retorna os SCPs anexados diretamente à conta (Organizations), ou None.
+
+        None significa "não resolvível" (sem organizations:*, conta fora de uma
+        Org, sem trusted access etc) — nunca deve ser lido como "sem SCP".
+        Best-effort e parcial por design: não resolve SCPs herdados de OUs/root
+        acima da conta na hierarquia da Organization.
+        """
+        ...
+
     def get_role_inline_policy(
         self,
         region: str,
@@ -1145,6 +1160,50 @@ class Boto3AwsClient:
                 PolicyArn=policy_arn, VersionId=default_version_id
             )["PolicyVersion"]
             return version.get("Document")
+        except Exception:
+            return None
+
+    def list_service_control_policies(
+        self,
+        region: str,
+        account_id: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> Optional[list[Dict[str, Any]]]:
+        import json
+
+        try:
+            # Organizations e um servico global; o endpoint historicamente so
+            # existe em us-east-1, independente da region do discovery.
+            client = self._session(credentials).client("organizations", region_name="us-east-1")
+            summaries: list[Dict[str, Any]] = []
+            next_token: Optional[str] = None
+            while True:
+                kwargs: Dict[str, Any] = {"TargetId": account_id, "Filter": "SERVICE_CONTROL_POLICY"}
+                if next_token:
+                    kwargs["NextToken"] = next_token
+                page = client.list_policies_for_target(**kwargs)
+                summaries.extend(page.get("Policies", []))
+                next_token = page.get("NextToken")
+                if not next_token:
+                    break
+
+            policies: list[Dict[str, Any]] = []
+            for summary in summaries:
+                policy_id = summary.get("Id")
+                if not policy_id:
+                    continue
+                detail = client.describe_policy(PolicyId=policy_id)["Policy"]
+                content_raw = detail.get("Content")
+                if not content_raw:
+                    continue
+                document = json.loads(content_raw)
+                policies.append({
+                    "policy_id": policy_id,
+                    "name": summary.get("Name"),
+                    "aws_managed": summary.get("AwsManaged", False),
+                    "document": document,
+                })
+            return policies
         except Exception:
             return None
 

@@ -4918,6 +4918,81 @@ def test_capability_graph_assumable_by_missing_trust_principals_key_is_permissiv
     assert entry in role_res["metadata"]["assumable_by"]
 
 
+def test_discovery_governance_scp_visibility_unknown_without_organizations_access(tmp_path: Path) -> None:
+    """FakeAwsClient padrao nao implementa list_service_control_policies → visibility unknown."""
+    target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
+    authorization_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path)
+    _, _, snapshot = run_foundation_discovery(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        client=FakeAwsClient(),
+    )
+    assert snapshot["governance"]["scp_visibility"] == "unknown"
+    assert snapshot["governance"]["scp_policy_count"] == 0
+    assert "scp_policies" not in snapshot["governance"]
+
+
+def test_discovery_governance_scp_visibility_resolved_when_client_supports_it(tmp_path: Path) -> None:
+    """Cliente que implementa list_service_control_policies → SCPs aparecem no snapshot."""
+
+    class ScpAwareFakeAwsClient(FakeAwsClient):
+        def list_service_control_policies(self, region, account_id, credentials=None):
+            return [{
+                "policy_id": "p-guardrail",
+                "name": "DenyLeaveOrganization",
+                "aws_managed": False,
+                "document": {"Statement": [
+                    {"Effect": "Deny", "Action": "organizations:LeaveOrganization", "Resource": "*"},
+                ]},
+            }]
+
+    target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
+    authorization_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path)
+    _, _, snapshot = run_foundation_discovery(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        client=ScpAwareFakeAwsClient(),
+    )
+    assert snapshot["governance"]["scp_visibility"] == "directly_attached_only"
+    assert snapshot["governance"]["scp_policy_count"] == 1
+    assert snapshot["governance"]["scp_policies"][0]["policy_id"] == "p-guardrail"
+
+
+def test_discovery_governance_scp_visibility_unknown_when_client_raises(tmp_path: Path) -> None:
+    """list_service_control_policies levantando excecao degrada para unknown, nunca propaga."""
+
+    class BrokenScpFakeAwsClient(FakeAwsClient):
+        def list_service_control_policies(self, region, account_id, credentials=None):
+            raise RuntimeError("AccessDeniedException")
+
+    target_path = Path(__file__).resolve().parents[1] / "examples" / "target_aws_foundation.local.json"
+    authorization_path = (
+        Path(__file__).resolve().parents[1] / "examples" / "authorization_aws_foundation.local.json"
+    )
+    target = load_target(target_path)
+    authorization = load_authorization(authorization_path)
+    _, _, snapshot = run_foundation_discovery(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path,
+        client=BrokenScpFakeAwsClient(),
+    )
+    assert snapshot["governance"]["scp_visibility"] == "unknown"
+
+
 # ---------------------------------------------------------------------------
 # Bloco 6b — _detect_aws_credentials
 # ---------------------------------------------------------------------------

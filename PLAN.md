@@ -914,11 +914,33 @@ descartado — nao entrava em nenhum calculo de capacidade.
 4. `_extract_trust_principals` passa a ignorar statements `Effect=Deny` do trust
    policy (nao contam mais como principal confiavel).
 
+**Fatia 2 (2026-08-04) — SCP visibility (so leitura, nao entra na computacao ainda)**
+
+`AwsClient.list_service_control_policies(account_id)` busca os SCPs anexados
+*diretamente* na conta via Organizations (`list_policies_for_target` +
+`describe_policy`), best-effort — qualquer excecao (sem `organizations:*`,
+conta fora de uma Org, sem trusted access) degrada para `None`, nunca para
+"lista vazia". O snapshot ganha `governance.scp_visibility`:
+`"directly_attached_only"` (vimos os SCPs da conta, mas nao os herdados de
+OUs/root acima na hierarquia) ou `"unknown"` (nao resolvivel).
+
+Decisao deliberada: os SCPs coletados **ainda nao entram** em
+`_principal_has_capability`. Diferente de boundary policy, SCP tem semantica
+de baseline "Allow all" (a policy AWS-managed `FullAWSAccess` por padrao) que
+so e restringida por Deny/`NotAction` — tratar SCP como "precisa de Allow
+explicito" do mesmo jeito que a boundary produziria falso negativo sistematico
+sempre que so guardrails de Deny estivessem anexados sem um Allow-all
+explicito visivel. Fazer isso direito exige (a) resolver a hierarquia de OUs
+(`list_parents` recursivo, que a credencial de entry point tipicamente nao
+tem) e (b) modelar o baseline Allow-all separado de Deny/`NotAction` — isso e
+trabalho do avaliador de politica do Bloco 12, nao uma extensao pontual de
+`_principal_has_capability`. Expor os SCPs no snapshot sem fingir que ja
+influenciam o grafo e a opcao honesta: visibilidade antes de enforcement.
+
 **Escopo explicitamente deixado de fora desta fatia** (nao esconder atras de "feito"):
 
-- SCP (Service Control Policy) e RCP — exige `organizations:*` API, que a
-  credencial de entry point raramente tem; precisa de visibilidade explicita
-  (`scp_visibility: unknown`) em vez de assumir "sem SCP" quando o acesso falha.
+- SCP como fator do calculo de `assumable_by`/`mutable_by`/etc — pendente, depende do Bloco 12
+- SCP herdado de OUs/root (so vemos o diretamente anexado a conta)
 - Boundary em `identity.user` — a boundary de role ja e resolvida; a de user
   requer estender o discovery de user (`iam:GetUser`) do mesmo jeito.
 - Cross-account de verdade (trust principal de outra conta que a discovery nao
@@ -932,18 +954,20 @@ descartado — nao entrava em nenhum calculo de capacidade.
 
 1. ~~`_principal_has_capability` respeita precedencia de Deny (identity + boundary)~~ DONE
 2. ~~`assumable_by` exige trust policy E permission policy~~ DONE
-3. ~~354 testes passando, sem regressao (341 anteriores + 13 novos)~~ DONE
-4. SCP/RCP — pendente
-5. Boundary em `identity.user` — pendente
-6. Revalidar os 6 chains do acme_showcase em AWS real com o novo `assumable_by`
+3. ~~SCP visibility no snapshot (`governance.scp_visibility`), best-effort~~ DONE
+4. ~~357 testes passando, sem regressao (341 base + 16 novos)~~ DONE
+5. SCP incorporado ao calculo de capacidade — pendente, depende do Bloco 12
+6. Boundary em `identity.user` — pendente
+7. Revalidar os 6 chains do acme_showcase em AWS real com o novo `assumable_by`
    mais restrito (nenhum falso negativo esperado, mas nao revalidado ainda)
 
 **Proximo experimento de maior leverage**
 
 Revalidar acme_showcase e o lab do Bloco 5 (5 users) contra o `assumable_by`
-mais restrito — confirmar que nenhum chain hoje provado depende de um trust
-policy que na verdade nao permitiria. Depois: SCP visibility (mesmo que so
-best-effort, com fallback honesto para `unknown`).
+mais restrito e confirmar `governance.scp_visibility` numa conta real dentro
+de uma Organization — nenhum dos dois foi validado contra AWS real ainda,
+so contra fixtures offline. Depois: boundary em `identity.user` (extensao
+pequena e contida) ou seguir para o avaliador de politica do Bloco 12.
 
 ---
 

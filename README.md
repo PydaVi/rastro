@@ -10,7 +10,7 @@ encadeamento, testa cada cadeia e prova o caminho completo de comprometimento.
 
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
-![Tests](https://img.shields.io/badge/tests-354%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-357%20passing-brightgreen)
 ![Status](https://img.shields.io/badge/status-engine%20R%26D-orange)
 
 ---
@@ -180,7 +180,7 @@ pip install -e ".[dev]"
 **Testes (sem LLM, sem AWS):**
 
 ```bash
-pytest                 # 354 testes, sem dependências externas
+pytest                 # 357 testes, sem dependências externas
 pytest -m integration  # requer AWS ou Ollama
 ```
 
@@ -237,8 +237,13 @@ bloquearia (via Deny explícito, boundary ou trust policy) não é uma prova, é
 e isso importa mais do que qualquer cobertura nova antes de estar corrigido. `assumable_by` hoje já
 cruza permission policy do candidato com o trust policy real da role (antes, só a permission policy
 decidia — um vetor de falso positivo real); `_principal_has_capability` já respeita precedência de
-Deny explícito e permission boundary quando resolvível. SCP/RCP, boundary em `identity.user` e
-cross-account real seguem pendentes dentro do próprio Bloco 11 (ver PLAN.md).
+Deny explícito e permission boundary quando resolvível. O snapshot já reporta
+`governance.scp_visibility` (SCPs anexados diretamente à conta, via Organizations, quando a
+credencial tem acesso — `unknown` de forma explícita quando não tem, nunca "sem SCP" silencioso),
+mas SCP ainda não entra no cálculo de capacidade — isso depende do avaliador de política do Bloco 12
+(SCP tem semântica de baseline "Allow all" diferente de boundary, que não dá pra tratar como uma
+extensão pontual). Boundary em `identity.user`, SCP herdado de OUs e cross-account real seguem
+pendentes dentro do próprio Bloco 11 (ver PLAN.md).
 
 O objetivo do Bloco 10 continua o mesmo: um engine verdadeiramente guiado por grafo, onde entrar em
 qualquer ambiente AWS, construir o grafo, achar caminhos por traversal e executar cada aresta não

@@ -804,6 +804,24 @@ def run_foundation_discovery(
     services_scanned: list[str] = []
     account_id = target.accounts[0]
 
+    _list_scps = getattr(aws_client, "list_service_control_policies", None)
+    scp_policies: list[dict] | None = None
+    if _list_scps is not None:
+        try:
+            scp_policies = _list_scps(region=region, account_id=account_id)
+        except Exception:
+            scp_policies = None
+    governance = {
+        # "directly_attached_only": vimos os SCPs anexados direto na conta,
+        # mas nao resolvemos herdados de OUs/root acima na hierarquia da Org.
+        # "unknown": sem acesso a organizations:* ou conta fora de uma Org —
+        # nunca deve ser lido como "sem SCP".
+        "scp_visibility": "directly_attached_only" if scp_policies is not None else "unknown",
+        "scp_policy_count": len(scp_policies) if scp_policies is not None else 0,
+    }
+    if scp_policies is not None:
+        governance["scp_policies"] = scp_policies
+
     users = aws_client.list_users(region=region)
     services_scanned.append("iam")
     evidence.append({"service": "iam", "api_calls": ["iam:ListUsers", "iam:ListAttachedUserPolicies", "iam:ListUserPolicies", "iam:GetUserPolicy", "iam:GetPolicyVersion"]})
@@ -1473,6 +1491,7 @@ def run_foundation_discovery(
         "discovery_config": {
             "ssm_prefixes": ssm_prefixes,
         },
+        "governance": governance,
     }
 
     output_dir.mkdir(parents=True, exist_ok=True)
