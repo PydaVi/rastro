@@ -1232,10 +1232,16 @@ cada observation — não é o dispatch por path que errou):
 - `aws-iam-create-access-key-pivot`: `CreateAccessKey` funcionou e o rollback
   limpou certinho (confirmado: só a access key do Terraform sobrou no user
   alvo), mas o `AssumeRole` subsequente falhou 5x com `InvalidClientTokenId` —
-  atraso de propagação conhecido da AWS pra access keys recém-criadas. O
-  runtime path-driven não tem retry-com-espera pra esse caso (nem o dispatch
-  por profile antigo tinha) — achado real, não urgente, registrado aqui pra
-  não se perder.
+  atraso de propagação conhecido da AWS pra access keys recém-criadas.
+  **Corrigido em 2026-08-05**: `_assume_role_with_retry`
+  (`src/execution/aws_executor.py`) faz retry local com backoff curto
+  (1s/2s/4s, até 4 tentativas) especificamente pra `InvalidClientTokenId` —
+  qualquer outro código de erro é relançado na primeira tentativa, sem
+  retry. Antes, o "retry" acontecia no nível errado: o planner reselecionava
+  a mesma action em steps seguintes, consumindo o orçamento de `max_steps`
+  da campanha sem nunca ter uma folga real de tempo pra propagação
+  acontecer. 5 testes novos (`tests/test_aws_executor_retry.py`), 430
+  passando.
 
 ---
 

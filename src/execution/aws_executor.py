@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,57 @@ import yaml
 
 from core.domain import Action, ActionType, Observation, Scope
 from execution.aws_client import AwsClient, AwsCredentials, Boto3AwsClient
+
+# Achado validando o Bloco 10 contra AWS real (2026-08-05): um access key
+# recem-criado via iam:CreateAccessKey pode nao estar propagado em todos os
+# endpoints da AWS ainda — o AssumeRole seguinte falha com InvalidClientTokenId
+# por alguns segundos, mesmo a credencial sendo valida. E um erro transitorio
+# conhecido, nao um erro real de autorizacao ou configuracao.
+_TRANSIENT_ASSUME_ROLE_ERROR_CODES = frozenset({"InvalidClientTokenId"})
+
+
+def _transient_error_code(exc: Exception) -> str | None:
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return None
+    return response.get("Error", {}).get("Code")
+
+
+def _assume_role_with_retry(
+    client: AwsClient,
+    *,
+    region: str,
+    role_arn: str,
+    session_name: str,
+    credentials: AwsCredentials | None,
+    max_attempts: int = 4,
+    base_delay_seconds: float = 1.0,
+) -> dict:
+    """sts:AssumeRole com retry curto e local para o atraso de propagacao de
+    access key recem-criado (ver nota acima). Backoff exponencial curto
+    (1s/2s/4s) dentro de UMA unica chamada de tool — nao consome o orcamento
+    de step da campanha, que e onde o retry acontecia antes (o planner
+    re-selecionava a mesma action em steps seguintes, sem sucesso, ate
+    esgotar max_steps). Qualquer outro erro (autorizacao, configuracao) e
+    relancado na primeira tentativa, sem retry.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(max_attempts):
+        try:
+            return client.assume_role(
+                region=region,
+                role_arn=role_arn,
+                session_name=session_name,
+                credentials=credentials,
+            )
+        except Exception as exc:  # noqa: BLE001 - relancado abaixo se nao for transitorio
+            if _transient_error_code(exc) not in _TRANSIENT_ASSUME_ROLE_ERROR_CODES:
+                raise
+            last_exc = exc
+            if attempt < max_attempts - 1:
+                time.sleep(base_delay_seconds * (2**attempt))
+    assert last_exc is not None
+    raise last_exc
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +370,8 @@ class AwsRealExecutor:
             raise ValueError("iam_passrole requires role_arn or target")
         session_name = action.parameters.get("session_name", "rastro-audit-session")
         source_credentials = self._credentials_for_actor(action.actor)
-        assumed = client.assume_role(
+        assumed = _assume_role_with_retry(
+            client,
             region=region,
             role_arn=role_arn,
             session_name=session_name,

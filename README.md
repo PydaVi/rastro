@@ -16,7 +16,7 @@ o teto do produto. Ver [Visão de longo prazo](#visão-de-longo-prazo).
 
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
-![Tests](https://img.shields.io/badge/tests-425%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-430%20passing-brightgreen)
 ![Status](https://img.shields.io/badge/status-engine%20R%26D-orange)
 
 ---
@@ -215,7 +215,7 @@ pip install -e ".[dev]"
 **Testes (sem LLM, sem AWS):**
 
 ```bash
-pytest                 # 425 testes, sem dependências externas
+pytest                 # 430 testes, sem dependências externas
 pytest -m integration  # requer AWS ou Ollama
 ```
 
