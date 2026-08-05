@@ -1288,6 +1288,60 @@ essa aresta sem abrir nenhuma outra.
 
 ---
 
+### Bloco 15 — Auditor Offline Independente (FEITO, 2026-08-05)
+
+**Direção**: reprodutibilidade científica — código determinístico revalida
+as alegações do próprio run, nunca aceita "porque o relatório disse".
+
+**O que foi implementado**
+
+`src/operations/audit_verifier.py` — `audit_assessment(output_dir)` reabre
+`assessment.json`, `report.json` + `audit.jsonl` por campanha,
+`assessment_findings.json` e `discovery.json` (quando presentes) e reverifica,
+por campanha, quatro alegações sem confiar no self-report:
+
+1. **`scope_respected`** — nenhum step usou um serviço fora de
+   `execution_policy.allowed_services`, mesmo que o step tenha falhado (a
+   violação em si é o que importa, não só sucesso indevido).
+2. **`objective_claim_grounded`** — se `objective_met=True`, existe um step
+   cujo action+observation realmente satisfaz o `success_criteria.mode`
+   declarado (`assume_role_proved`/`policy_mutation_proved`/`access_proved`/
+   etc.) — `None` (não reprova) quando `objective_met=False`, nunca inferido.
+3. **`rollback_attempted_when_needed`** — toda mutação bem-sucedida
+   (`iam_attach_role_policy_mutate`/`iam_create_policy_version_mutate`/
+   `iam_create_access_key`) tem um evento `rollback_executed` correspondente
+   em `audit.jsonl`.
+4. **`evaluation_tier_consistent`** — recomputa o PRIMEIRO passo via
+   `PolicyEvaluator` (Bloco 12) a partir do `discovery.json` real e compara
+   com o `evaluation_tier` que o finding reivindica — `None` (não reprova)
+   quando não há `discovery.json`/finding correspondente pra checar.
+
+**Validado contra dados reais desta sessão, não só fixture** — rodado contra
+`outputs_bloco10_14_final_validation/` (o output do assessment que validou
+o Bloco 10 ao vivo): o auditor **redescobriu sozinho, sem nenhuma pista minha**,
+o mesmo bug de escopo do perfil `aws-credential-access-secret`
+(`service_not_allowed`) que eu tinha achado manualmente mais cedo — é a
+evidência mais forte de que o auditor tem valor real, não só passa nos
+próprios testes que escrevi pra ele.
+
+**Escopo explicitamente deixado de fora**: trace journal por chamada de LLM
+(prompt+resposta bruta persistida por chamada ao `StrategicPlanner`/`Planner`)
+— peça separada, exige instrumentar `openai_planner.py`/
+`openai_strategic_planner.py`, que esta sessão não tocou; adiado, não
+esquecido.
+
+**Critérios de saída**
+
+1. ~~4 checagens independentes, cada uma com estado ternário honesto
+   (True/False/None — nunca inferido quando não há dado suficiente)~~ DONE
+2. ~~16 testes cobrindo os quatro checks + leitura ponta a ponta do layout
+   real de diretório~~ DONE
+3. ~~Validado contra output real de assessment (não só fixture sintética)~~ DONE
+4. Trace journal de chamadas LLM — pendente, registrado acima
+5. ~~Subcomando `rastro audit <output_dir>`~~ DONE, testado contra output real
+
+---
+
 ### O que fica para depois dos Blocos 7–10
 
 Após o salto arquitetural, o roadmap de expansão horizontal volta a fazer sentido:

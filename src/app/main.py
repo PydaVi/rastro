@@ -38,6 +38,7 @@ from operations.service import (
     write_assessment_summary,
 )
 from operations.remediation import verify_remediation
+from operations.audit_verifier import audit_assessment
 from reporting.report import ReportGenerator
 
 
@@ -419,6 +420,51 @@ def verify_fix(
         f"Closed edges from {target_principal}: {result.closed_edges_from_principal} "
         f"| Newly opened edges anywhere: {result.newly_opened_edges}"
     )
+    if not output_path:
+        typer.echo(text)
+
+
+@app.command("audit")
+def audit(
+    output_dir: Path = typer.Argument(...),
+    output_path: Optional[Path] = typer.Option(None, "--out"),
+) -> None:
+    """Bloco 15: reverifica as alegações de um assessment já rodado, sem
+    confiar no self-report — zero chamada AWS, opera sobre os arquivos já
+    no disco (assessment.json, report.json, audit.jsonl, discovery.json).
+    """
+    try:
+        report = audit_assessment(output_dir)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+
+    payload = {
+        "output_dir": report.output_dir,
+        "all_passed": report.all_passed,
+        "campaigns": [
+            {
+                "profile": c.profile,
+                "output_dir": c.output_dir,
+                "passed": c.passed,
+                "scope_respected": c.scope_respected,
+                "out_of_scope_steps": c.out_of_scope_steps,
+                "objective_claim_grounded": c.objective_claim_grounded,
+                "rollback_attempted_when_needed": c.rollback_attempted_when_needed,
+                "missing_rollback_tools": c.missing_rollback_tools,
+                "evaluation_tier_claimed": c.evaluation_tier_claimed,
+                "evaluation_tier_reproduced": c.evaluation_tier_reproduced,
+                "evaluation_tier_consistent": c.evaluation_tier_consistent,
+            }
+            for c in report.campaigns
+        ],
+    }
+    text = json.dumps(payload, indent=2)
+    if output_path:
+        output_path.write_text(text)
+        typer.echo(f"Audit JSON: {output_path}")
+    typer.echo(f"All passed: {report.all_passed}")
+    for c in report.campaigns:
+        typer.echo(f"  {c.profile}: {'PASS' if c.passed else 'FAIL'}")
     if not output_path:
         typer.echo(text)
 

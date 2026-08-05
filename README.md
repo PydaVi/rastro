@@ -16,7 +16,7 @@ o teto do produto. Ver [Visão de longo prazo](#visão-de-longo-prazo).
 
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
-![Tests](https://img.shields.io/badge/tests-425%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-441%20passing-brightgreen)
 ![Status](https://img.shields.io/badge/status-engine%20R%26D-orange)
 
 ---
@@ -215,7 +215,7 @@ pip install -e ".[dev]"
 **Testes (sem LLM, sem AWS):**
 
 ```bash
-pytest                 # 425 testes, sem dependências externas
+pytest                 # 441 testes, sem dependências externas
 pytest -m integration  # requer AWS ou Ollama
 ```
 
@@ -268,6 +268,7 @@ authorization_document: "docs/authorization.pdf"
 | **12 — PolicyEvaluator** | Avaliação determinística de Action+Resource+Condition, camada "evaluated" | DONE (essencial) |
 | **10 — Execução por Caminho** | Executor segue paths do grafo pra qualquer hipótese que o BFS encontra | DONE (escopo reduzido) |
 | **14 — Deriva e Verificação de Remediação** | `rastro drift` / `rastro verify-fix` — confirma que uma correção fecha um caminho sem abrir outro | DONE |
+| **15 — Auditor Offline Independente** | `rastro audit` reverifica scope/objetivo/rollback/evaluation_tier sem confiar no self-report | DONE (essencial; trace journal de LLM pendente) |
 
 Bloco 11 foi priorizado antes do 10: um caminho que o engine reporta mas que a própria AWS já
 bloquearia (via Deny explícito, boundary ou trust policy) não é uma prova, é um erro de modelagem —
