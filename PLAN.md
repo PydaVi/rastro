@@ -6,6 +6,9 @@ Referencias:
 - `REGUA.md`: criterio permanente de generalizacao ofensiva vs operacionalizacao
 - `HISTORY.md`: historico experimental completo
 - `AGENTS.md`: contrato de desenvolvimento e arquitetura
+- `docs/frente1-self-serve-plan.md`: plano de produto self-serve ("Attack Path
+  Snapshot") e banco de ambientes de teste — gate de lançamento depende do
+  estado real do engine documentado neste PLAN.md, checar antes de assumir
 
 ---
 
