@@ -1342,6 +1342,54 @@ esquecido.
 
 ---
 
+### Bloco 17 (parcial) — Dívida técnica: `_derive_*` legados removidos, markers registrados (2026-08-05)
+
+**Achado ao investigar, não assumido**: dos quatro `_derive_*_hypotheses` legados
+que este documento vinha citando desde o Bloco 9 como "aposentados pelo BFS mas
+ainda vivos", só **um** (`_derive_hypotheses_from_snapshot`) de fato roda em
+produção (chamado em `run_discovery_driven_assessment`) — confirmado via grep
+zero-ambiguidade, não suposição. Os outros três
+(`_derive_credential_access_hypotheses`, `_derive_credential_pivot_hypotheses`,
+`_derive_create_access_key_hypotheses`) não tinham nenhum call site fora dos
+próprios testes que os exercitavam diretamente — código morto de verdade,
+coberto por `CapabilityGraph.derive_all_hypotheses` desde o Bloco 9 (mesmas
+classes de ataque: `credential_access_direct`, `credential_pivot`/`ssm_pivot`/
+`s3_pivot`, `iam_create_access_key_pivot`).
+
+**Removidos** (funções + as duas constantes que só elas usavam,
+`_DIRECT_READ_RESOURCE_TYPES`/`_PIVOT_READ_RESOURCE_TYPES`, + os 16 testes que
+testavam só o código morto — os helpers de fixture compartilhados com testes
+ainda vivos, tipo `_6d_user`/`_6d_role`, foram mantidos). `_derive_hypotheses_from_snapshot`
+**não foi tocado** — continua vivo de propósito como fallback depois da
+correção de ordem do Bloco 12 (grafo primeiro, legado só preenche o que sobrar).
+
+Markers de pytest (`integration`, `live`) registrados em `pyproject.toml` —
+gap conhecido desde a exploração inicial desta sessão (`pytest -m integration`
+não filtrava nada, gerava warning de marker desconhecido). Nenhum teste foi
+marcado como `integration` ainda — a suíte inteira já é offline por design;
+o registro só deixa o mecanismo pronto pra quando isso mudar (ex.: testes
+`tests/live/` de verdade contra Ollama, se algum dia existirem).
+
+**Não feito** (deliberadamente fora desta fatia): quebrar `tests/test_mvp.py`
+(ainda ~11.500 linhas) em módulos por domínio. Essa sessão já começou a
+mitigar isso na prática — todo código novo (Bloco 12 `policy_evaluator`, Bloco
+14 `graph_diff`/`remediation`, Bloco 15 `audit_verifier`) ganhou arquivo de
+teste próprio em vez de crescer o monólito — mas a quebra retroativa do que já
+existia é um trabalho mecânico grande, de risco desproporcional ao valor pra
+fazer sem supervisão. Registrado como próximo passo de Bloco 17, não executado.
+
+**Critérios de saída (parcial)**
+
+1. ~~3 funções `_derive_*` mortas removidas (zero call site em produção,
+   confirmado por grep antes de remover)~~ DONE
+2. ~~16 testes de código morto removidos, helpers compartilhados preservados~~ DONE
+3. ~~Markers de pytest registrados~~ DONE
+4. 425 testes passando (441 → 425, exatamente os 16 removidos, sem nenhuma
+   perda de cobertura real)
+5. Quebra de `test_mvp.py` em módulos por domínio — pendente, escopo maior
+
+---
+
 ### O que fica para depois dos Blocos 7–10
 
 Após o salto arquitetural, o roadmap de expansão horizontal volta a fazer sentido:

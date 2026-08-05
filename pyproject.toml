@@ -33,6 +33,10 @@ build-backend = "setuptools.build_meta"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "integration: requer AWS real ou Ollama local — não roda por padrão",
+    "live: invoca um backend de modelo real e pode gastar tokens",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
