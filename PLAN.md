@@ -1179,8 +1179,38 @@ já é o caminho de execução real pra toda hipótese que o BFS encontra hoje.
 1. ~~`BlindRealRuntime.enumerate_actions` deriva ações do path quando presente~~ DONE
 2. `_pivot_*_actions`/`_create_access_key_actions` removidos — NÃO feito (ver acima), mantidos como fallback deliberado
 3. ~~7 testes novos cobrindo path de 1 e 2 passos, path incompleto, avanço de estado, espera por actor extraído, fallback sem path~~ DONE
-4. Validação em AWS real (acme_showcase) — pendente no momento em que este trecho foi escrito, feita logo em seguida (ver registro de validação mais abaixo)
+4. ~~Validação em AWS real (acme_showcase)~~ DONE (2026-08-05, ver abaixo)
 5. 425 testes passando (413 após Bloco 10 + 12 do Bloco 14)
+
+**Validação em AWS real (2026-08-05) — path-driven execution, lab reaplicado**
+
+Reaplicado `acme_showcase_real` de novo (o lab tinha sido destruído entre as
+sessões) e rodado `assessment run --discovery-driven` de verdade contra ele.
+Três chains provadas ponta a ponta com o executor path-driven, trace exatamente
+como desenhado — zero passo de exploração desperdiçado:
+
+```
+aws-credential-pivot-s3: s3_read_sensitive (batch-runner) → iam_passrole (extracted) → admin-role   PROVADO
+aws-credential-pivot:    secretsmanager_read_secret (log-collector) → iam_passrole (extracted)       PROVADO
+aws-iam-ssm:             ssm_read_parameter (param-reader) — leitura direta                          PROVADO
+```
+
+Duas falhas, **nenhuma causada pelo Bloco 10** (confirmado lendo o `details` de
+cada observation — não é o dispatch por path que errou):
+
+- `aws-credential-access-secret`: bloqueada por `service_not_allowed` — o
+  `generated_scope.json` desse profile específico não inclui `secretsmanager`
+  em `allowed_services`, mesmo o alvo sendo um secret. Gap em
+  `campaign_synthesis.py`/`build_campaign_scope`, pré-existente, não relacionado
+  a path-driven (o mesmo bloqueio aconteceria com o dispatch por profile antigo
+  — é um gate de escopo anterior a `enumerate_actions`).
+- `aws-iam-create-access-key-pivot`: `CreateAccessKey` funcionou e o rollback
+  limpou certinho (confirmado: só a access key do Terraform sobrou no user
+  alvo), mas o `AssumeRole` subsequente falhou 5x com `InvalidClientTokenId` —
+  atraso de propagação conhecido da AWS pra access keys recém-criadas. O
+  runtime path-driven não tem retry-com-espera pra esse caso (nem o dispatch
+  por profile antigo tinha) — achado real, não urgente, registrado aqui pra
+  não se perder.
 
 ---
 
