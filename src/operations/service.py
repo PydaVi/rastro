@@ -856,14 +856,15 @@ def run_discovery_driven_assessment(
     scope_for_strategic = _build_scope_for_strategic_planner(target, authorization)
 
     # ── Phase 1: deterministic hypotheses (always runs, never fails) ─────────
-    det_hypotheses = _derive_hypotheses_from_snapshot(
-        discovery_snapshot, effective_entry_identities
-    )
-    logger.info(
-        "Deterministic hypotheses from derived_attack_targets: %d", len(det_hypotheses)
-    )
-
-    # Bloco 9: BFS do CapabilityGraph (determinístico, sem LLM)
+    # Bloco 9/11/12 (CapabilityGraph BFS) vem PRIMEIRO deliberadamente: carrega
+    # evaluation_tier (Bloco 12) e a checagem de trust policy real (Bloco 11).
+    # A função legada _derive_hypotheses_from_snapshot entra depois, só como
+    # rede de segurança para o que o grafo não cobrir — o merge abaixo mantém
+    # a PRIMEIRA ocorrência por (entry, target, profile_family), então a ordem
+    # aqui decide qual hipótese "vence" quando as duas encontram o mesmo alvo.
+    # Inverter isso (legado primeiro) mascara evaluation_tier silenciosamente:
+    # confirmado rodando contra AWS real (acme_showcase) antes desta correção.
+    det_hypotheses: list = []
     try:
         cap_graph = CapabilityGraph.build(discovery_snapshot)
         graph_hypotheses = cap_graph.derive_all_hypotheses(effective_entry_identities)
@@ -872,6 +873,14 @@ def run_discovery_driven_assessment(
             det_hypotheses.extend(graph_hypotheses)
     except Exception as exc:
         logger.warning("CapabilityGraph BFS failed: %s", exc)
+
+    legacy_hypotheses = _derive_hypotheses_from_snapshot(
+        discovery_snapshot, effective_entry_identities
+    )
+    logger.info(
+        "Deterministic hypotheses from derived_attack_targets: %d", len(legacy_hypotheses)
+    )
+    det_hypotheses.extend(legacy_hypotheses)
 
     # ── Phase 2: LLM enrichment (optional — only if strategic_planner provided) ──
     llm_hypotheses: list = []

@@ -113,6 +113,34 @@ def test_not_resource_excludes_listed_resource():
     assert r.decision == "NoMatch"
 
 
+def test_resource_secretsmanager_random_suffix_tolerance():
+    """Achado rodando contra AWS real (2026-08-04): statement de policy quase sempre
+    referencia o secret ARN COM o sufixo aleatório que a AWS anexa; o discovery guarda
+    o ARN "amigável" sem sufixo. Sem essa tolerância, toda hipótese de credential_pivot/
+    credential_access_direct via Secrets Manager fica presa em "structural" pra sempre."""
+    r = evaluate_scope(
+        [_perm("p", [{
+            "Effect": "Allow", "Action": "secretsmanager:GetSecretValue",
+            "Resource": "arn:aws:secretsmanager:us-east-1:123:secret:acme/svc/deploy-creds-VzNv2I",
+        }])],
+        "secretsmanager:GetSecretValue",
+        "arn:aws:secretsmanager:us-east-1:123:secret:acme/svc/deploy-creds",
+    )
+    assert r.decision == "Allow"
+
+
+def test_resource_secretsmanager_suffix_tolerance_does_not_match_different_secret():
+    r = evaluate_scope(
+        [_perm("p", [{
+            "Effect": "Allow", "Action": "secretsmanager:GetSecretValue",
+            "Resource": "arn:aws:secretsmanager:us-east-1:123:secret:other/secret-VzNv2I",
+        }])],
+        "secretsmanager:GetSecretValue",
+        "arn:aws:secretsmanager:us-east-1:123:secret:acme/svc/deploy-creds",
+    )
+    assert r.decision == "NoMatch"
+
+
 def test_resource_case_sensitive():
     """Resource ARN, ao contrário de Action, é case-sensitive."""
     r = evaluate_scope(

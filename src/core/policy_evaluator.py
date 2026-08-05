@@ -66,14 +66,27 @@ def _statement_matches_action(stmt: dict, action: str) -> bool:
     return any(_glob_match(action, p, case_insensitive=True) for p in patterns)
 
 
+def _resource_pattern_matches(pattern: str, resource_arn: str) -> bool:
+    if _glob_match(resource_arn, pattern, case_insensitive=False):
+        return True
+    # Secrets Manager anexa um sufixo aleatório de 6 chars ao ARN real do
+    # secret; o discovery guarda o ARN "amigável" sem sufixo (resource_arn
+    # aqui), mas o statement da policy quase sempre usa o ARN com sufixo.
+    # Mesma regra que _resource_covers_arn (discovery.py) já aplica no
+    # matching grosso do capability graph — replicada aqui pra não divergir.
+    if "secretsmanager" in pattern and pattern.startswith(resource_arn + "-"):
+        return True
+    return False
+
+
 def _statement_matches_resource(stmt: dict, resource_arn: str) -> bool:
     not_resource = stmt.get("NotResource")
     if not_resource is not None:
         patterns = _as_list(not_resource)
-        return not any(_glob_match(resource_arn, p, case_insensitive=False) for p in patterns)
+        return not any(_resource_pattern_matches(p, resource_arn) for p in patterns)
     resource_field = stmt.get("Resource", "*")
     patterns = _as_list(resource_field)
-    return any(_glob_match(resource_arn, p, case_insensitive=False) for p in patterns)
+    return any(_resource_pattern_matches(p, resource_arn) for p in patterns)
 
 
 # ---------------------------------------------------------------------------

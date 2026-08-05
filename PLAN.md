@@ -1060,15 +1060,62 @@ do `entry_arn`, uma identidade real — garantido por `_traverse`) é avaliado p
 8. Avaliar segundo/terceiro passo de paths de pivot (resolver identidade
    sintética → principal real) — pendente, maior escopo
 
+**Validação em AWS real (2026-08-04) — acme_showcase relançado via Terraform**
+
+Reaplicado `terraform-realistic-iam/acme_showcase_real` (estava destruído desde a
+última demo) contra a conta de lab real (`550192603632`), com `planner_config`
+forçado pra `mock` (backend determinístico — sem chave de LLM nesta sessão; BFS +
+PolicyEvaluator não dependem de LLM de qualquer forma) e rodado
+`assessment run --discovery-driven --bundle aws-iam-heavy` de verdade, com
+`RASTRO_ENABLE_AWS_REAL=1`. Isso expôs **dois bugs reais**, ambos corrigidos e
+cobertos por teste de regressão nesta mesma sessão:
+
+1. **Merge de hipóteses mascarava evaluation_tier.** `_derive_hypotheses_from_snapshot`
+   (a função legada que Bloco 9 deveria ter aposentado) rodava ANTES do
+   `CapabilityGraph` BFS na Fase 1 de `run_discovery_driven_assessment`, e o dedup por
+   `(entry, target, profile_family)` mantém a primeira ocorrência — então a versão
+   legada (sempre `evaluation_tier: structural`, nunca passa pelo `PolicyEvaluator`)
+   vencia silenciosamente sempre que colidia com a hipótese do grafo no mesmo alvo.
+   Confirmado ao vivo: `iam_privesc`/`role_chain` sempre `structural`, `s3_pivot`/
+   `iam_create_access_key_pivot` (que a legada não cobre) corretamente `evaluated`.
+   **Fix**: inverter a ordem — grafo primeiro, legado só preenche o que sobrar
+   (`src/operations/service.py`). Teste de regressão:
+   `test_discovery_driven_graph_hypothesis_wins_dedup_over_legacy_and_keeps_evaluation_tier`.
+2. **PolicyEvaluator não tolerava o sufixo aleatório do Secrets Manager.**
+   `_resource_covers_arn` (discovery.py, o matching grosso do Bloco 7) já tinha essa
+   tolerância; `policy_evaluator.py` (Bloco 12) não replicou — toda hipótese de
+   `credential_pivot`/`credential_access_direct` via Secrets Manager ficava presa em
+   `structural` porque o statement da policy real usa o ARN COM sufixo
+   (`...deploy-creds-VzNv2I`) e o discovery guarda o ARN sem sufixo. **Fix**: mesma
+   regra replicada em `_resource_pattern_matches` (`src/core/policy_evaluator.py`).
+
+Depois dos dois fixes: **20/20 hipóteses geradas pelo grafo BFS chegam como
+`evaluated`** (antes: só 9/20 — s3_pivot e create_access_key_pivot). 3 campanhas
+provadas com mutação real + rollback (`aws-credential-pivot-s3`,
+`aws-credential-pivot`, `aws-credential-pivot-ssm`) usando o planner mock
+determinístico — o BFS + PolicyEvaluator não precisaram de LLM em nenhum momento.
+
+**Achado novo, não corrigido nesta sessão**: o corte `hypotheses[:max_hypotheses]`
+(padrão 20) em `run_discovery_driven_assessment` não é ordenado por score/
+`evaluation_tier`/confidence antes de truncar — é ordem de iteração pura. Com os
+dois fixes acima o grafo passou a gerar 25 hipóteses cruas pro acme_showcase (mais
+do que antes, já que menos coisa se perde no dedup/matching), e isso empurrou
+`iam_attach_role_policy_privesc` (cicd-agent → ops-role, confirmado `evaluated`)
+pra fora do corte de 20 — mesmo sendo uma hipótese de alta confiança e já avaliada.
+O bônus de score do `evaluation_bonus` (+10) que já existe em
+`_hypotheses_to_candidates_payload` nunca chega a atuar sobre essa hipótese porque
+o corte acontece ANTES dela virar candidato. Vale ordenar por
+`(evaluation_tier, confidence)` antes do slice, ou subir `max_hypotheses` pro
+bundle `aws-iam-heavy` — não decidido ainda qual.
+
 **Próximo experimento de maior leverage**
 
-`evaluation_tier` já chega em `strategic_hypotheses.json` e `target_candidates.json`
-(os artefatos de pré-execução) e já influencia a priorização de candidatos. O que
-falta é o `ReportGenerator` (relatório final, pós-execução, MD/JSON/HTML) expor essa
-informação — hoje ele trabalha em cima de `StateSnapshot`/`AttackGraph`, não das
-hipóteses originais, então a linha entre "isso foi confirmado pelo avaliador antes
-de tentar" e "isso funcionou na execução real" ainda não aparece junta no artefato
-final que um administrador de verdade leria.
+Duas frentes concorrentes, nenhuma bloqueia a outra:
+1. Corrigir o corte não-priorizado de `max_hypotheses` (achado acima) — pequeno e
+   contido, reforça o que o Bloco 12 já entrega.
+2. Expor `evaluation_tier` no `ReportGenerator` (relatório final, pós-execução) —
+   hoje ele trabalha em cima de `StateSnapshot`/`AttackGraph`, não das hipóteses
+   originais.
 
 ---
 

@@ -3561,6 +3561,89 @@ def test_run_discovery_driven_without_strategic_planner_uses_rule_based(tmp_path
     assert len(target_selector_calls) == 1
 
 
+def test_discovery_driven_graph_hypothesis_wins_dedup_over_legacy_and_keeps_evaluation_tier(
+    tmp_path: Path,
+) -> None:
+    """Regressão real (achada rodando contra AWS de verdade, 2026-08-04): quando a função
+    legada _derive_hypotheses_from_snapshot e o CapabilityGraph BFS encontram a MESMA
+    hipótese (mesmo entry+target+profile), o merge por dedup tem que manter a versão do
+    grafo (que carrega evaluation_tier) — não a legada (sempre "structural", nunca passa
+    pelo PolicyEvaluator). Antes da correção, a legada entrava primeiro no merge e vencia
+    silenciosamente, mascarando o Bloco 12 pra qualquer alvo que a legada também cobrisse.
+    """
+    account = "550192603632"
+    analyst_arn = f"arn:aws:iam::{account}:user/analyst"
+    admin_role_arn = f"arn:aws:iam::{account}:role/AdminRole"
+
+    discovery_snapshot = {
+        "target": "test",
+        "caller_identity": {"Account": account},
+        "resources": [
+            {
+                "resource_type": "identity.user",
+                "identifier": analyst_arn,
+                "metadata": {
+                    "policy_permissions": [{"source": "p", "statements": [
+                        {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": admin_role_arn},
+                    ]}],
+                    # Popula a mesma hipótese role_chain via a função legada
+                    # (Bloco 4b), pra forçar a colisão de dedup com o grafo.
+                    "derived_attack_targets": [
+                        {"action": "sts:AssumeRole", "target_arn": admin_role_arn},
+                    ],
+                },
+            },
+            {
+                "resource_type": "identity.role",
+                "identifier": admin_role_arn,
+                "metadata": {
+                    "assumable_by": [analyst_arn],
+                    "trust_principals": [analyst_arn],
+                },
+            },
+        ],
+        "relationships": [],
+    }
+
+    target = load_target(Path("examples/target_aws_foundation.local.json"))
+    authorization = load_authorization(Path("examples/authorization_aws_foundation.local.json"))
+
+    def fake_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        p = output_dir / "discovery.json"
+        m = output_dir / "discovery.md"
+        p.write_text(json.dumps(discovery_snapshot))
+        m.write_text("")
+        return p, m, discovery_snapshot
+
+    def fake_campaign_synthesizer(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        plan_json = output_dir / "campaign_plan.json"
+        plan_md = output_dir / "campaign_plan.md"
+        payload = {"plans": [], "summary": {"plans_total": 0}}
+        plan_json.write_text(json.dumps(payload))
+        plan_md.write_text("")
+        return plan_json, plan_md, payload
+
+    run_discovery_driven_assessment(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "assessment",
+        runner=execute_run,
+        discovery_runner=fake_discovery_runner,
+        campaign_synthesizer=fake_campaign_synthesizer,
+        max_steps=4,
+    )
+
+    hyp_path = tmp_path / "assessment" / "target-selection" / "strategic_hypotheses.json"
+    hypotheses = json.loads(hyp_path.read_text())
+    role_chain = next(h for h in hypotheses if h["attack_class"] == "role_chain" and h["target"] == admin_role_arn)
+    assert role_chain["evaluation_tier"] == "evaluated"
+
+
 def test_hypotheses_to_candidates_payload_maps_attack_classes_to_profiles() -> None:
     from planner.strategic_planner import AttackHypothesis
     from operations.service import _hypotheses_to_candidates_payload
