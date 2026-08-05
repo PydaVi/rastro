@@ -1,12 +1,18 @@
 # Rastro
 
-> O problema da segurança em cloud não é detectar risco.
+> O problema da segurança não é detectar risco.
 > É entender quais riscos se conectam em um caminho real de comprometimento —
-> e provar isso com evidência auditável.
+> e provar isso com evidência auditável, antes que um atacante o faça.
 
-**Rastro** é um engine de simulação adversarial autônoma para AWS.
-Não lista vulnerabilidades — raciocina sobre o ambiente, formula hipóteses de
-encadeamento, testa cada cadeia e prova o caminho completo de comprometimento.
+**Rastro** é o canivete suíço do defensor: um engine de simulação adversarial
+autônoma para validar exposição real — rede, firewall, WAF, aplicação web,
+cloud e containers. Não lista vulnerabilidades — raciocina sobre o ambiente,
+formula hipóteses de encadeamento, testa cada cadeia e prova o caminho completo
+de comprometimento.
+
+Hoje a engine é madura numa única superfície, **AWS** — é onde a disciplina de
+discovery → grafo de capacidades → prova auditável foi validada primeiro, não
+o teto do produto. Ver [Visão de longo prazo](#visão-de-longo-prazo).
 
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
@@ -29,8 +35,37 @@ possíveis, e prova o que funciona com mutação real e rollback automático.
 **CSPM** (Wiz, Prisma) → mostra grafos teóricos, não prova explorabilidade  
 **BAS** → testa ataques conhecidos, não raciocina sobre o ambiente  
 **Pentest manual** → não escala com a velocidade de mudança do IAM  
+**Pentest automático genérico** → simula um atacante pra vender um relatório pontual; não é uma ferramenta que o defensor opera continuamente  
 
-**Rastro** → BFS determinístico + LLM opcional raciocinam sobre permissões reais → hipóteses → mutação real → prova auditável
+**Rastro** → ferramenta do defensor, não substituto dele: BFS determinístico + LLM opcional raciocinam sobre o ambiente real → hipóteses → prova controlada → evidência auditável, pro time que já é dono do ambiente se antecipar ao atacante
+
+---
+
+## Visão de longo prazo
+
+Rastro não é uma ferramenta de nicho cloud com Kubernetes como adendo distante.
+É o canivete suíço do defensor: a mesma disciplina — discovery real → grafo de
+capacidades → hipóteses por traversal → prova com evidência auditável — deve
+servir para qualquer superfície que o defensor precisa validar:
+
+- **Cloud (AWS)** — em produção; onde a profundidade do raciocínio (capability
+  graph, BFS, `PolicyEvaluator`) foi provada primeiro
+- **Containers (Kubernetes)** — segunda superfície candidata
+- **Rede** — segmentação, regras de firewall, reachability real entre zonas
+- **WAF** — regras efetivas vs. regras configuradas, bypass provado
+- **Aplicação web** — cadeias de exploração ponta a ponta, não um scanner de
+  OWASP Top 10
+
+A diferenciação de mercado não é "pentest automático" — é dar ao time de
+defesa a capacidade de se antecipar ao atacante: rodar, sob autorização e
+controle próprios, a mesma disciplina de prova que um atacante real usaria,
+com a frequência que a velocidade de mudança do ambiente exige, não num ciclo
+anual de pentest.
+
+Superfícies novas não herdam automaticamente o código de baixo nível de AWS,
+mas herdam o mesmo contrato e a mesma régua de honestidade de sinal definida
+em [REGUA.md](REGUA.md) — nenhuma superfície nova entra alegando cobertura que
+não foi provada.
 
 ---
 
@@ -269,7 +304,8 @@ exige adaptação de código para cada novo cenário de ataque.
 
 - Binário instalado `rastro ...` — CLI via Python por ora
 - Onboarding automatizado de conta AWS
-- Suporte a Kubernetes (AWS first)
+- Qualquer superfície além de AWS — Kubernetes, rede, firewall, WAF e
+  aplicação web estão na visão de longo prazo, não implementados
 - Produto 02 (attack path em CI/CD) — aguarda maturidade do Produto 01
 
 ---

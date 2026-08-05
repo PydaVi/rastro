@@ -9,15 +9,37 @@ Referencias:
 
 ---
 
-## Direcao estrategica fixa
+## Visao de longo prazo
 
-1. AWS primeiro
+Rastro nao e uma ferramenta de nicho cloud com Kubernetes como adendo distante.
+E o canivete suico do defensor: a mesma disciplina — discovery real -> grafo de
+capacidades -> hipoteses por traversal -> prova com evidencia auditavel — deve
+servir pra qualquer superficie que o defensor precisa validar: rede, firewall,
+WAF, aplicacao web, cloud (AWS) e containers (Kubernetes).
+
+A diferenciacao de mercado nao e "pentest automatico". E dar ao defensor a
+capacidade de se antecipar ao atacante: rodar, sob autorizacao e controle
+proprios, a mesma disciplina de prova que um atacante real usaria, com a
+frequencia que a velocidade de mudanca do ambiente exige — nao um ciclo anual
+de pentest.
+
+AWS e a primeira superficie porque foi onde essa disciplina foi provada
+primeiro (Blocos 1-14 deste documento), nao porque e o teto do produto.
+Detalhamento por superficie: README.md. Regua de honestidade de sinal que
+qualquer superficie nova precisa respeitar: REGUA.md.
+
+## Direcao estrategica fixa (tatica — sequenciamento, nao teto do produto)
+
+1. AWS primeiro — profundidade antes de expansao de superficie
 2. Produto 01 antes do Produto 02
 3. profundidade antes de expansao
-4. Kubernetes depois
+4. Kubernetes e a segunda superficie candidata; rede, firewall, WAF e
+   aplicacao web entram depois, na mesma regua de profundidade-antes-de-expansao
 
 O objetivo do Rastro nao e ser um bom executor de campaigns conhecidas.
-O objetivo e um engine que raciocina sobre o ambiente real e prova chains de comprometimento.
+O objetivo e um engine que raciocina sobre o ambiente real e prova chains de
+comprometimento — hoje em AWS, e por extensao da mesma disciplina, em
+qualquer superficie que o defensor precisa validar.
 
 ---
 

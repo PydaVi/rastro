@@ -7,15 +7,40 @@ Leia completamente antes de implementar qualquer código.
 
 ## O que é o Rastro
 
-Rastro é um engine de simulação adversarial autônoma focado em cloud.
+Rastro é o canivete suíço do defensor para validar exposição real — não uma
+ferramenta de nicho cloud. A engine hoje é madura numa única superfície (AWS);
+a visão de longo prazo é a mesma disciplina de raciocínio cobrindo qualquer
+superfície que um defensor precisa validar: rede, firewall, WAF, aplicação
+web, cloud (AWS) e containers (Kubernetes).
 
 O objetivo é:
-- raciocinar sobre caminhos de comprometimento
+- raciocinar sobre caminhos de comprometimento em qualquer superfície do ambiente do defensor
 - validar esses caminhos de forma controlada quando autorizado
 - produzir evidência auditável passo a passo
 
 Rastro não é scanner de vulnerabilidades.
-Rastro prova attack paths completos.
+Rastro não é uma ferramenta de pentest automático — não simula um atacante
+genérico pra vender um relatório pontual.
+Rastro é uma ferramenta do defensor: prova, com a mesma disciplina de evidência
+que um atacante real usaria, os caminhos de comprometimento do próprio ambiente
+— operada pelo time que já é dono desse ambiente, com a frequência que a
+velocidade de mudança exige, não num ciclo anual de pentest.
+
+---
+
+## Visão de longo prazo (o teto do produto, não o próximo bloco)
+
+Cada superfície nova segue o mesmo contrato que AWS já provou nos Blocos 7–14:
+discovery real → grafo de capacidades → hipóteses por traversal → prova com
+mutação controlada e evidência auditável. Superfícies não compartilham código
+de baixo nível automaticamente, mas compartilham a mesma régua de honestidade
+de sinal (`REGUA.md`) — nenhuma superfície nova entra alegando cobertura que
+não foi provada.
+
+AWS é a primeira superfície porque é onde essa disciplina foi provada primeiro,
+não porque é o limite do produto. Kubernetes é a segunda superfície candidata.
+Rede, firewall, WAF e aplicação web entram no roadmap de médio/longo prazo, na
+mesma régua de profundidade-antes-de-expansão que já rege o trabalho em AWS.
 
 ---
 
@@ -27,6 +52,8 @@ Rastro possui um engine central e dois produtos:
 - execução em AWS real autorizado
 - evidência real com ARNs, timestamps e respostas de API
 - relatório técnico e executivo com MITRE mapping
+- hoje escopado em AWS; o mesmo produto se estende a outras superfícies
+  conforme a visão de longo prazo acima amadurecer
 
 ### Produto 02 — Attack Path em CI/CD (futuro próximo)
 - análise de Terraform plan antes do deploy
@@ -35,14 +62,19 @@ Rastro possui um engine central e dois produtos:
 
 ---
 
-## Ordem estratégica obrigatória
+## Ordem estratégica obrigatória (sequenciamento tático, não teto do produto)
 
-1. AWS primeiro
+1. AWS primeiro — profundidade antes de expansão de superfície
 2. Produto 01 antes do Produto 02
 3. profundidade antes de expansão
-4. Kubernetes somente após maturidade AWS
+4. Kubernetes é a segunda superfície candidata; rede, firewall, WAF e
+   aplicação web entram depois, na mesma régua
 
-O agente deve respeitar essa ordem. Não implementar Kubernetes real.
+O agente deve respeitar essa ordem tática. Não implementar Kubernetes real,
+firewall, WAF ou validação de rede/web app antes de AWS sustentar o padrão de
+prova que os Blocos 7–14 estabeleceram (capability graph real, PolicyEvaluator,
+execução por caminho) — essa ordem é sobre sequência de esforço, não sobre
+reduzir a visão do produto a "AWS e talvez Kubernetes depois".
 Não iniciar Produto 02 antes de Produto 01 estar estável.
 
 ---

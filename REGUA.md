@@ -5,6 +5,11 @@ Documento permanente de referencia para julgar se o Rastro esta avancando em:
 ou
 - `operacionalizacao de campaigns conhecidas`
 
+Esta regua vale para qualquer superficie do produto — AWS hoje, Kubernetes,
+rede, firewall, WAF e aplicacao web conforme a visao de longo prazo (ver
+AGENTS.md/README.md) amadurecer. Nenhuma superficie nova ganha passe livre:
+o mesmo criterio de honestidade de sinal se aplica.
+
 Este documento nao substitui `PLAN.md`.
 Ele define a regua pela qual o plano deve ser lido.
 
