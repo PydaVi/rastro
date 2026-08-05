@@ -11835,6 +11835,183 @@ def test_b8_observe_real_does_not_register_identity_without_synthetic_actor():
 
 
 # ---------------------------------------------------------------------------
+# Bloco 10 — execução por caminho (BlindRealRuntime path-driven)
+# ---------------------------------------------------------------------------
+
+def _b10_scope(allowed_resources: list[str]) -> "Scope":
+    return Scope.model_validate({
+        "target": "aws",
+        "allowed_services": ["iam", "secretsmanager", "s3", "ssm"],
+        "allowed_actions": ["enumerate", "assume_role", "access_resource"],
+        "allowed_resources": allowed_resources,
+        "aws_account_ids": ["123"],
+        "allowed_regions": ["us-east-1"],
+        "authorized_by": "test",
+        "authorized_at": "2026-01-01",
+        "authorization_document": "docs/auth.pdf",
+        "dry_run": False,
+    })
+
+
+def test_capability_graph_role_chain_hypothesis_has_structured_path():
+    """role_chain (1 passo) mapeia integralmente pra tool real -> path não-vazio."""
+    user_arn = "arn:aws:iam::123:user/u"
+    role_arn = "arn:aws:iam::123:role/r"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _role(role_arn, assumable_by=[user_arn]),
+    ]))
+    hyp = next(h for h in g.derive_all_hypotheses([user_arn]) if h.attack_class == "role_chain")
+    assert len(hyp.path) == 1
+    assert hyp.path[0].step_type == "assume"
+    assert hyp.path[0].actor == user_arn
+    assert hyp.path[0].target == role_arn
+    assert hyp.path[0].tool == "iam_passrole"
+
+
+def test_capability_graph_ssm_pivot_hypothesis_has_two_step_structured_path():
+    """ssm_pivot (read + assume) -> path com 2 passos, na ordem certa."""
+    user_arn = "arn:aws:iam::123:user/u"
+    param_arn = "arn:aws:ssm:us-east-1:123:parameter/prod/key"
+    role_arn = "arn:aws:iam::123:role/r"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _ssm(param_arn, readable_by=[user_arn]),
+        _role(role_arn),
+    ]))
+    hyp = next(h for h in g.derive_all_hypotheses([user_arn]) if h.attack_class == "ssm_pivot")
+    assert [s.step_type for s in hyp.path] == ["read", "assume"]
+    assert hyp.path[0].tool == "ssm_read_parameter"
+    assert hyp.path[0].actor == user_arn
+    assert hyp.path[0].target == param_arn
+    assert hyp.path[1].tool == "iam_passrole"
+    assert hyp.path[1].actor == f"extracted://{param_arn}"
+    assert hyp.path[1].target == role_arn
+
+
+def test_capability_graph_mutate_without_real_tool_yields_empty_path():
+    """iam:PutRolePolicy não tem tool executável hoje -> path fica vazio (fallback por profile)."""
+    user_arn = "arn:aws:iam::123:user/u"
+    role_arn = "arn:aws:iam::123:role/r"
+    g = CapabilityGraph.build(_make_snapshot_b9([
+        _role(role_arn, mutable_by={"iam:PutRolePolicy": [user_arn]}),
+    ]))
+    hyp = next(h for h in g.derive_all_hypotheses([user_arn]) if h.attack_class == "iam_put_role_policy_privesc")
+    assert hyp.path == []
+
+
+def test_blind_real_runtime_path_driven_enumerate_returns_only_next_step():
+    """Com path presente, enumerate_actions ignora o dispatch por profile e
+    devolve so o proximo passo pendente."""
+    user_arn = "arn:aws:iam::123:user/u"
+    role_arn = "arn:aws:iam::123:role/r"
+    plan = {
+        "profile": "aws-iam-role-chaining",
+        "resource_arn": role_arn,
+        "signals": {"path": [
+            {"step_type": "assume", "actor": user_arn, "target": role_arn, "tool": "iam_passrole"},
+        ]},
+    }
+    runtime = BlindRealRuntime.build(
+        plan=plan,
+        discovery_snapshot={"resources": []},
+        scope=_b10_scope([role_arn]),
+        entry_identities=[user_arn],
+    )
+    actions = runtime.enumerate_actions(None)
+    assert len(actions) == 1
+    assert actions[0].tool == "iam_passrole"
+    assert actions[0].actor == user_arn
+    assert actions[0].target == role_arn
+    assert actions[0].action_type == ActionType.ASSUME_ROLE
+
+
+def test_blind_real_runtime_path_driven_advances_on_matching_observation():
+    """observe_real avanca path_index quando a action executada bate com o passo pendente."""
+    user_arn = "arn:aws:iam::123:user/u"
+    role_arn = "arn:aws:iam::123:role/r"
+    plan = {
+        "profile": "aws-iam-role-chaining",
+        "resource_arn": role_arn,
+        "signals": {"path": [
+            {"step_type": "assume", "actor": user_arn, "target": role_arn, "tool": "iam_passrole"},
+        ]},
+    }
+    runtime = BlindRealRuntime.build(
+        plan=plan,
+        discovery_snapshot={"resources": []},
+        scope=_b10_scope([role_arn]),
+        entry_identities=[user_arn],
+    )
+    action = runtime.enumerate_actions(None)[0]
+    runtime.observe_real(action, {"granted_role": role_arn})
+    assert runtime.state["path_index"] == 1
+    # path esgotado -> nenhuma acao nova ofertada
+    assert runtime.enumerate_actions(None) == []
+
+
+def test_blind_real_runtime_path_driven_second_step_waits_for_extracted_actor():
+    """No passo 2 (assume via identidade extraida), enumerate_actions nao oferece
+    nada ate o synthetic_actor do passo 1 ser registrado por observe_real."""
+    user_arn = "arn:aws:iam::123:user/u"
+    param_arn = "arn:aws:ssm:us-east-1:123:parameter/prod/key"
+    role_arn = "arn:aws:iam::123:role/r"
+    extracted = f"extracted://{param_arn}"
+    plan = {
+        "profile": "aws-credential-pivot-ssm",
+        "resource_arn": role_arn,
+        "signals": {"path": [
+            {"step_type": "read", "actor": user_arn, "target": param_arn, "tool": "ssm_read_parameter"},
+            {"step_type": "assume", "actor": extracted, "target": role_arn, "tool": "iam_passrole"},
+        ]},
+    }
+    runtime = BlindRealRuntime.build(
+        plan=plan,
+        discovery_snapshot={"resources": []},
+        scope=_b10_scope([param_arn, role_arn]),
+        entry_identities=[user_arn],
+    )
+    first = runtime.enumerate_actions(None)
+    assert len(first) == 1
+    assert first[0].tool == "ssm_read_parameter"
+    assert first[0].parameters["name"] == "/prod/key"
+
+    # antes do observe_real do passo 1, o passo 2 nao pode ser oferecido —
+    # o actor extraido ainda nao existe em state["identities"].
+    runtime.state["path_index"] = 1
+    assert runtime.enumerate_actions(None) == []
+
+    # volta o index e roda o observe_real de verdade, que registra o
+    # synthetic_actor E avanca o path na mesma chamada.
+    runtime.state["path_index"] = 0
+    runtime.observe_real(first[0], {
+        "response_summary": {"credential_extracted": True},
+        "synthetic_actor": extracted,
+    })
+    assert runtime.state["path_index"] == 1
+    second = runtime.enumerate_actions(None)
+    assert len(second) == 1
+    assert second[0].tool == "iam_passrole"
+    assert second[0].actor == extracted
+    assert second[0].target == role_arn
+
+
+def test_blind_real_runtime_without_path_falls_back_to_profile_dispatch():
+    """Sem signals.path (hipotese legada / rule-based), comportamento identico ao pre-Bloco-10."""
+    user_arn = "arn:aws:iam::123:user/u"
+    role_arn = "arn:aws:iam::123:role/r"
+    plan = {"profile": "aws-iam-role-chaining", "resource_arn": role_arn}
+    runtime = BlindRealRuntime.build(
+        plan=plan,
+        discovery_snapshot={"resources": [_role(role_arn)]},
+        scope=_b10_scope([role_arn]),
+        entry_identities=[user_arn],
+    )
+    assert "path" not in runtime.state or runtime.state["path"] == []
+    actions = runtime.enumerate_actions(None)
+    # dispatch por profile oferece iam_list_roles (enumeration), nao um unico passo fixo
+    assert any(a.tool == "iam_list_roles" for a in actions)
+
+
+# ---------------------------------------------------------------------------
 # Bloco 9 — CapabilityGraph
 # ---------------------------------------------------------------------------
 

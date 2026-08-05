@@ -778,6 +778,7 @@ def _hypotheses_to_candidates_payload(hypotheses, discovery_snapshot: dict, bund
             "signals": {
                 "reasoning": hyp.reasoning, "entry_identity": hyp.entry_identity,
                 "attack_steps": hyp.attack_steps, "evaluation_tier": hyp.evaluation_tier,
+                "path": [step.model_dump() for step in hyp.path],
             },
             "score_components": {
                 "lexical": 0, "structural": base_score,

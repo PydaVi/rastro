@@ -37,6 +37,7 @@ from operations.service import (
     validate_target,
     write_assessment_summary,
 )
+from operations.remediation import verify_remediation
 from reporting.report import ReportGenerator
 
 
@@ -323,6 +324,103 @@ def discovery_run(
     typer.echo(f"Discovery JSON: {discovery_json}")
     typer.echo(f"Discovery MD: {discovery_md}")
     typer.echo(f"Discovery resources: {len(snapshot['resources'])}")
+
+
+@app.command("drift")
+def drift(
+    old_discovery_path: Path = typer.Argument(...),
+    new_discovery_path: Path = typer.Argument(...),
+    output_path: Optional[Path] = typer.Option(None, "--out"),
+) -> None:
+    """Bloco 14: diffa dois snapshots de discovery — zero AWS, zero LLM.
+
+    Reporta arestas do CapabilityGraph que apareceram ou sumiram entre dois
+    momentos ("esse caminho não existia na semana passada").
+    """
+    from core.capability_graph import CapabilityGraph
+    from core.graph_diff import diff_capability_graphs
+
+    old_snapshot = json.loads(old_discovery_path.read_text())
+    new_snapshot = json.loads(new_discovery_path.read_text())
+    old_graph = CapabilityGraph.build(old_snapshot)
+    new_graph = CapabilityGraph.build(new_snapshot)
+    result = diff_capability_graphs(old_graph, new_graph)
+
+    payload = {
+        "old_snapshot": str(old_discovery_path),
+        "new_snapshot": str(new_discovery_path),
+        "has_changes": result.has_changes,
+        "added_total": result.added_total,
+        "removed_total": result.removed_total,
+        "added_can_read": result.added_can_read,
+        "removed_can_read": result.removed_can_read,
+        "added_can_assume": result.added_can_assume,
+        "removed_can_assume": result.removed_can_assume,
+        "added_can_create_key": result.added_can_create_key,
+        "removed_can_create_key": result.removed_can_create_key,
+        "added_can_mutate": result.added_can_mutate,
+        "removed_can_mutate": result.removed_can_mutate,
+    }
+    text = json.dumps(payload, indent=2)
+    if output_path:
+        output_path.write_text(text)
+        typer.echo(f"Drift JSON: {output_path}")
+    typer.echo(f"Has changes: {result.has_changes}")
+    typer.echo(f"Added edges: {result.added_total} | Removed edges: {result.removed_total}")
+    if not output_path:
+        typer.echo(text)
+
+
+@app.command("verify-fix")
+def verify_fix(
+    discovery_path: Path = typer.Argument(...),
+    proposed_policy_path: Path = typer.Argument(...),
+    target_principal: str = typer.Argument(...),
+    output_path: Optional[Path] = typer.Option(None, "--out"),
+) -> None:
+    """Bloco 14: confirma se uma política proposta fecha um caminho sem abrir outro.
+
+    proposed_policy_path é um JSON list[{"source": ..., "statements": [...]}]
+    — o mesmo formato de metadata.policy_permissions no discovery.json.
+    Zero chamada AWS: recomputa o grafo em memória sobre o snapshot já coletado.
+    """
+    discovery_snapshot = json.loads(discovery_path.read_text())
+    proposed_policy_permissions = json.loads(proposed_policy_path.read_text())
+
+    try:
+        result = verify_remediation(
+            discovery_snapshot,
+            target_principal=target_principal,
+            proposed_policy_permissions=proposed_policy_permissions,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+
+    payload = {
+        "target_principal": result.target_principal,
+        "remediation_effective": result.remediation_effective,
+        "closed_edges_from_principal": result.closed_edges_from_principal,
+        "newly_opened_edges": result.newly_opened_edges,
+        "added_can_read": result.diff.added_can_read,
+        "removed_can_read": result.diff.removed_can_read,
+        "added_can_assume": result.diff.added_can_assume,
+        "removed_can_assume": result.diff.removed_can_assume,
+        "added_can_create_key": result.diff.added_can_create_key,
+        "removed_can_create_key": result.diff.removed_can_create_key,
+        "added_can_mutate": result.diff.added_can_mutate,
+        "removed_can_mutate": result.diff.removed_can_mutate,
+    }
+    text = json.dumps(payload, indent=2)
+    if output_path:
+        output_path.write_text(text)
+        typer.echo(f"Verify-fix JSON: {output_path}")
+    typer.echo(f"Remediation effective: {result.remediation_effective}")
+    typer.echo(
+        f"Closed edges from {target_principal}: {result.closed_edges_from_principal} "
+        f"| Newly opened edges anywhere: {result.newly_opened_edges}"
+    )
+    if not output_path:
+        typer.echo(text)
 
 
 @target_selection_app.command("run")

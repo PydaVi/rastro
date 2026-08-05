@@ -8,6 +8,19 @@ from pydantic import BaseModel, Field
 from core.domain import Scope
 
 
+class PathStep(BaseModel):
+    """Bloco 10: um passo executável do path que o CapabilityGraph atravessou.
+
+    step_type espelha os tipos de aresta do CapabilityGraph (assume/read/
+    create_key/mutate); tool é o nome exato do YAML em tools/aws/ que executa
+    esse passo — o mesmo nome que o executor e o ToolRegistry já conhecem.
+    """
+    step_type: Literal["assume", "read", "create_key", "mutate"]
+    actor: str
+    target: str
+    tool: str
+
+
 class AttackHypothesis(BaseModel):
     entry_identity: str
     target: str
@@ -37,6 +50,9 @@ class AttackHypothesis(BaseModel):
     # com certain=True — Action+Resource+Condition avaliados de verdade contra
     # identity+boundary+SCP, não só a classe de action.
     evaluation_tier: Literal["structural", "evaluated"] = "structural"
+    # Bloco 10: path executável (vazio quando não mapeável integralmente pra
+    # tools existentes — nesse caso o executor cai no dispatch por profile).
+    path: list[PathStep] = Field(default_factory=list)
 
 
 class StrategicPlanner(ABC):

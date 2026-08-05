@@ -10,7 +10,7 @@ encadeamento, testa cada cadeia e prova o caminho completo de comprometimento.
 
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
-![Tests](https://img.shields.io/badge/tests-406%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-425%20passing-brightgreen)
 ![Status](https://img.shields.io/badge/status-engine%20R%26D-orange)
 
 ---
@@ -180,7 +180,7 @@ pip install -e ".[dev]"
 **Testes (sem LLM, sem AWS):**
 
 ```bash
-pytest                 # 406 testes, sem dependências externas
+pytest                 # 425 testes, sem dependências externas
 pytest -m integration  # requer AWS ou Ollama
 ```
 
@@ -230,8 +230,9 @@ authorization_document: "docs/authorization.pdf"
 | ~~8 — Tool Effects Declarativos~~ | ~~Tool YAML declara o que produz; executor para de crescer~~ | DONE |
 | ~~9 — Graph Traversal Hypotheses~~ | ~~BFS substitui zoo de funções `_derive_*` hardcoded~~ | DONE |
 | **11 — Governança Real** | Deny explícito, permission boundary e trust policy corretos no CapabilityGraph | em andamento |
-| **12 — PolicyEvaluator** | Avaliação determinística de Action+Resource+Condition, camada "evaluated" | em andamento |
-| 10 — Execução por Caminho | Executor segue paths do grafo; profile deixa de ser repositório de ataque | pendente |
+| **12 — PolicyEvaluator** | Avaliação determinística de Action+Resource+Condition, camada "evaluated" | DONE (essencial) |
+| **10 — Execução por Caminho** | Executor segue paths do grafo pra qualquer hipótese que o BFS encontra | DONE (escopo reduzido) |
+| **14 — Deriva e Verificação de Remediação** | `rastro drift` / `rastro verify-fix` — confirma que uma correção fecha um caminho sem abrir outro | DONE |
 
 Bloco 11 foi priorizado antes do 10: um caminho que o engine reporta mas que a própria AWS já
 bloquearia (via Deny explícito, boundary ou trust policy) não é uma prova, é um erro de modelagem —

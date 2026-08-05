@@ -1135,6 +1135,107 @@ do que estava quando o roadmap foi desenhado.
 
 ---
 
+### Bloco 10 — Execução por Caminho (FEITO — escopo reduzido, 2026-08-04)
+
+**Direção**: executor segue o caminho da hipótese, não o template do profile.
+
+**O que foi implementado**
+
+Descoberta ao implementar: `AttackHypothesis` nunca carregava o path estruturado —
+`_path_to_hypothesis` (Bloco 9) já tinha o `path: list[_Step]` internamente, mas
+colapsava tudo em `attack_steps: list[str]` (texto solto) antes de devolver a
+hipótese. O executor nunca recebia dado estruturado nenhum, só o nome do profile.
+Corrigido: `PathStep` (novo modelo Pydantic — step_type/actor/target/tool) e
+`AttackHypothesis.path: list[PathStep]`, populado por
+`CapabilityGraph._build_structured_path`, que mapeia cada passo interno pra uma
+tool real de `tools/aws/*.yaml`. Se QUALQUER passo não mapear pra tool executável
+(caso real: `iam:PutRolePolicy` — não existe `iam_put_role_policy_mutate.yaml`
+hoje), o path inteiro fica `[]` em vez de parcial — evita travar o runtime no meio.
+
+`path` propaga pela mesma cadeia de `signals` que `evaluation_tier` já usa
+(candidato → `plan["signals"]`) até `BlindRealRuntime.build()`.
+`BlindRealRuntime.enumerate_actions` agora bifurca: se `state["path"]` existe,
+devolve só o próximo passo pendente (`_next_pending_step` — actor tem que estar
+ativo; senão espera); `observe_real` avança `path_index` quando a action
+executada bate com o passo pendente. Sem path, cai no dispatch por profile
+antigo (renomeado `_enumerate_actions_by_profile`), inalterado.
+
+**Escopo reduzido em relação ao critério original — decisão deliberada**
+
+O critério original (`_pivot_*_actions` e `_create_access_key_actions`
+REMOVIDOS) foi trocado por: path-driven é o mecanismo PRIMÁRIO pra qualquer
+hipótese que vem do `CapabilityGraph` (que desde a correção do Bloco 12 já é
+a fonte que ganha o dedup contra a função legada), e o dispatch por profile
+antigo fica como fallback pra tudo que não tem path (hipóteses do
+`target_selector` rule-based, profiles fora do que o grafo cobre —
+`external_entry_*`, `compute_pivot`, etc.). Risco avaliado: remover os
+métodos de profile de uma vez, numa sessão só, sem ter mapeado todo esse
+segundo grupo de profiles, arriscava quebrar cobertura comprovada em AWS
+real por uma reformulação que não precisava ser tudo-ou-nada. Path-driven
+já é o caminho de execução real pra toda hipótese que o BFS encontra hoje.
+
+**Critérios de saída**
+
+1. ~~`BlindRealRuntime.enumerate_actions` deriva ações do path quando presente~~ DONE
+2. `_pivot_*_actions`/`_create_access_key_actions` removidos — NÃO feito (ver acima), mantidos como fallback deliberado
+3. ~~7 testes novos cobrindo path de 1 e 2 passos, path incompleto, avanço de estado, espera por actor extraído, fallback sem path~~ DONE
+4. Validação em AWS real (acme_showcase) — pendente no momento em que este trecho foi escrito, feita logo em seguida (ver registro de validação mais abaixo)
+5. 425 testes passando (413 após Bloco 10 + 12 do Bloco 14)
+
+---
+
+### Bloco 14 — Deriva e Verificação de Remediação (FEITO, 2026-08-04)
+
+**Direção**: proteger um ambiente é contínuo, não um assessment único.
+
+**O que foi implementado**
+
+`src/core/graph_diff.py` — `diff_capability_graphs(old, new) -> GraphDiff`, puro,
+compara os quatro tipos de aresta (`can_read`/`can_assume`/`can_create_key`/
+`can_mutate`) entre dois `CapabilityGraph` já construídos. Zero AWS, zero LLM.
+
+`src/operations/remediation.py` — `verify_remediation(snapshot, target_principal,
+proposed_policy_permissions) -> RemediationResult`. Recomputa o grafo com a
+policy do principal alvo substituída pela proposta (via o mesmo
+`_compute_capability_graph` do Bloco 7, em memória, sem tocar AWS) e diffa
+contra o original. `remediation_effective` só é `True` se fechou pelo menos
+uma aresta do principal E não abriu nenhuma aresta nova em lugar nenhum do
+grafo — a pergunta que uma prova de ataque isolada nunca responde.
+
+**Bug real achado escrevendo os testes (não em produção, mas documentado porque
+é exatamente a classe de erro que este bloco existe pra evitar)**:
+`_compute_capability_graph` só GRAVA um campo (`readable_by`/`assumable_by`/etc)
+quando o resultado novo é não-vazio — regra desenhada pra preservar anotação
+manual de fixture de teste (Bloco 7). Rodar essa função direto em cima de um
+snapshot que já tem esses campos pré-computados (como um `discovery.json` real)
+faz uma permissão REMOVIDA não refletir — o campo antigo fica grudado. Corrigido
+com `_strip_capability_annotations` antes de recomputar os dois lados (original
+E proposto) do mesmo jeito, garantindo que a comparação parte da mesma base.
+
+Dois comandos novos de CLI: `rastro drift <old.json> <new.json>` e
+`rastro verify-fix <discovery.json> <policy_proposta.json> <principal_arn>` —
+ambos testados funcionalmente contra discovery.json real (não só fixture) desta
+sessão: `drift` detectou corretamente as 10 arestas novas entre o snapshot antes
+e depois do lab acme_showcase ser aplicado; `verify-fix` confirmou corretamente
+que remover `iam:AttachRolePolicy` da policy do cicd-agent fecha exatamente
+essa aresta sem abrir nenhuma outra.
+
+**Escopo explicitamente deixado de fora**:
+- Persistência de snapshots ao longo do tempo (`drift` hoje compara dois
+  arquivos que o operador já tem em mãos — não há um histórico automático)
+- SCP na verificação de remediação (mesma limitação do Bloco 11/12 — SCP
+  ainda não entra no cálculo de capacidade)
+
+**Critérios de saída**
+
+1. ~~`diff_capability_graphs` testado com casos de mesa~~ DONE (6 testes)
+2. ~~`verify_remediation` confirma corretamente 2+ casos, incluindo um
+   cenário com a forma real do acme_showcase~~ DONE (6 testes)
+3. ~~Subcomandos `rastro drift` e `rastro verify-fix`~~ DONE, validados contra
+   discovery.json real, não só fixture
+
+---
+
 ### O que fica para depois dos Blocos 7–10
 
 Após o salto arquitetural, o roadmap de expansão horizontal volta a fazer sentido:

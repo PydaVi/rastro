@@ -29,6 +29,11 @@ class BlindRealRuntime:
             identity: {"active": True}
             for identity in entry_identities
         }
+        # Bloco 10: path estruturado do CapabilityGraph, quando presente
+        # (signals.path — ver planner/strategic_planner.PathStep). Ausente ou
+        # vazio (hipótese não veio do grafo, ou algum passo não mapeou pra
+        # tool real) -> enumerate_actions cai no dispatch por profile abaixo.
+        path = (plan.get("signals") or {}).get("path") or []
         return cls(
             target_arn=plan["resource_arn"],
             profile_name=plan["profile"],
@@ -39,6 +44,8 @@ class BlindRealRuntime:
                 "flags": [],
                 "identities": identities,
                 "discovered_roles": cls._discovered_roles(discovery_snapshot),
+                "path": path,
+                "path_index": 0,
             },
         )
 
@@ -61,8 +68,20 @@ class BlindRealRuntime:
         return value
 
     def enumerate_actions(self, snapshot) -> list[Action]:
-        actions: list[Action] = []
         region = _resource_region(self.target_arn) or (self.scope.allowed_regions[0] if self.scope.allowed_regions else "us-east-1")
+        # Bloco 10: quando a hipótese trouxe um path executável, a superfície
+        # de ação é exatamente o próximo passo pendente — nenhum dispatch por
+        # profile, nenhuma adaptação de código pra um cenário novo que o
+        # CapabilityGraph já sabe descrever.
+        if self.state.get("path"):
+            step = self._next_pending_step()
+            if step is None:
+                return []
+            return [self._step_to_action(step, region)]
+        return self._enumerate_actions_by_profile(region)
+
+    def _enumerate_actions_by_profile(self, region: str) -> list[Action]:
+        actions: list[Action] = []
         discovered_roles = self.state.get("discovered_roles", [])
         for actor, actor_state in self.state.get("identities", {}).items():
             if not actor_state.get("active", False):
@@ -105,7 +124,108 @@ class BlindRealRuntime:
             identities = state.setdefault("identities", {})
             if synthetic_actor not in identities:
                 identities[synthetic_actor] = {"active": True, "extracted": True}
+        # Bloco 10: avança o path se a action executada é exatamente o passo
+        # pendente — mesmo critério de "sucesso" que o resto deste método já
+        # usa (success fica sempre True aqui; falha real vira exceção antes
+        # de chegar em observe_real).
+        path_steps = state.get("path") or []
+        idx = state.get("path_index", 0)
+        if idx < len(path_steps):
+            pending = path_steps[idx]
+            if (
+                action.tool == pending["tool"]
+                and action.actor == pending["actor"]
+                and action.target == pending["target"]
+            ):
+                state["path_index"] = idx + 1
         return Observation(success=success, details=details)
+
+    def _next_pending_step(self) -> dict[str, Any] | None:
+        """Bloco 10: próximo passo do path cujo actor já está ativo, ou None."""
+        steps = self.state.get("path") or []
+        idx = self.state.get("path_index", 0)
+        if idx >= len(steps):
+            return None
+        step = steps[idx]
+        actor_state = self.state.get("identities", {}).get(step["actor"])
+        if not actor_state or not actor_state.get("active", False):
+            return None
+        return step
+
+    def _step_to_action(self, step: dict[str, Any], region: str) -> Action:
+        """Bloco 10: constrói a Action executável de um passo do path.
+
+        Os nomes de parâmetro por tool espelham exatamente o que
+        AwsRealExecutor exige (ver src/execution/aws_executor.py,
+        _required_parameter por tool) — não os parâmetros que o dispatch por
+        profile antigo usava em ramos que nunca chegavam a essas tools.
+        """
+        tool = step["tool"]
+        actor = step["actor"]
+        target = step["target"]
+
+        if tool == "iam_passrole":
+            return Action(
+                action_type=ActionType.ASSUME_ROLE,
+                actor=actor,
+                target=target,
+                parameters={"service": "iam", "region": region, "role_arn": target},
+                tool=tool,
+                technique=_technique("T1098", "Account Manipulation"),
+            )
+        if tool == "iam_create_access_key":
+            return Action(
+                action_type=ActionType.ACCESS_RESOURCE,
+                actor=actor,
+                target=target,
+                parameters={"service": "iam", "region": region, "user_arn": target},
+                tool=tool,
+                technique=_technique("T1098", "Account Manipulation"),
+            )
+        if tool == "secretsmanager_read_secret":
+            return Action(
+                action_type=ActionType.ACCESS_RESOURCE,
+                actor=actor,
+                target=target,
+                parameters={"service": "secretsmanager", "region": region, "secret_id": target},
+                tool=tool,
+                technique=_technique("T1552", "Unsecured Credentials"),
+            )
+        if tool == "ssm_read_parameter":
+            param_name = "/" + target.split(":parameter/", 1)[1] if ":parameter/" in target else target
+            return Action(
+                action_type=ActionType.ACCESS_RESOURCE,
+                actor=actor,
+                target=target,
+                parameters={"service": "ssm", "region": region, "name": param_name},
+                tool=tool,
+                technique=_technique("T1552", "Unsecured Credentials"),
+            )
+        if tool == "s3_read_sensitive":
+            bucket, object_key = _split_s3_arn(target)
+            return Action(
+                action_type=ActionType.ACCESS_RESOURCE,
+                actor=actor,
+                target=target,
+                parameters={"service": "s3", "region": region, "bucket": bucket, "object_key": object_key or ""},
+                tool=tool,
+                technique=_technique("T1530", "Data from Cloud Storage"),
+            )
+        if tool in ("iam_attach_role_policy_mutate", "iam_create_policy_version_mutate"):
+            params: dict[str, Any] = {"service": "iam", "region": region, "role_arn": target}
+            if tool == "iam_create_policy_version_mutate":
+                policy_arn = self._customer_policy_arn_for_role(target)
+                if policy_arn:
+                    params["policy_arn"] = policy_arn
+            return Action(
+                action_type=ActionType.ACCESS_RESOURCE,
+                actor=actor,
+                target=target,
+                parameters=params,
+                tool=tool,
+                technique=_policy_probe_technique(tool),
+            )
+        raise ValueError(f"BlindRealRuntime: sem mapeamento de execução para a tool {tool!r} do path")
 
     def _enumeration_actions(self, actor: str, region: str) -> list[Action]:
         if "iam" not in self.scope.allowed_services:

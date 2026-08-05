@@ -48,6 +48,25 @@ _READ_ACTION_BY_RESOURCE_TYPE: dict[str, str] = {
     "data_store.s3_bucket":   "s3:GetObject",
 }
 
+# Bloco 10: resource_type do alvo de um passo "read" → tool de tools/aws/*.yaml
+# que o executor sabe rodar. Ação e tool são conceitos distintos (Bloco 12
+# usa action pra avaliar política; Bloco 10 usa tool pra executar de verdade)
+# mas nascem do mesmo resource_type, por isso os dois dicts ficam lado a lado.
+_READ_TOOL_BY_RESOURCE_TYPE: dict[str, str] = {
+    "secret.secrets_manager": "secretsmanager_read_secret",
+    "secret.ssm_parameter":   "ssm_read_parameter",
+    "data_store.s3_object":   "s3_read_sensitive",
+}
+
+# mutate action → tool executável. iam:PutRolePolicy fica de fora de propósito:
+# não existe tools/aws/iam_put_role_policy_mutate.yaml hoje — sem tool real,
+# o path fica incompleto e o hypothesis não ganha path estruturado (ver
+# _build_structured_path), preservando o fallback por profile.
+_MUTATE_ACTION_TO_TOOL: dict[str, str] = {
+    "iam:AttachRolePolicy":    "iam_attach_role_policy_mutate",
+    "iam:CreatePolicyVersion": "iam_create_policy_version_mutate",
+}
+
 
 @dataclass
 class CapabilityGraph:
@@ -301,7 +320,38 @@ class CapabilityGraph:
             confidence=confidence,
             reasoning=reasoning,
             evaluation_tier=self._compute_evaluation_tier(entry_arn, path),
+            path=self._build_structured_path(path),
         )
+
+    def _step_tool(self, step: _Step) -> str | None:
+        """Bloco 10: tool executável de um passo, ou None se não há tool real ainda."""
+        stype, _from_a, to_a, extra = step
+        if stype == "assume":
+            return "iam_passrole"
+        if stype == "create_key":
+            return "iam_create_access_key"
+        if stype == "mutate":
+            return _MUTATE_ACTION_TO_TOOL.get(extra)
+        if stype == "read":
+            return _READ_TOOL_BY_RESOURCE_TYPE.get(self.resource_types.get(to_a, ""))
+        return None
+
+    def _build_structured_path(self, path: list[_Step]) -> list:
+        """Bloco 10: converte o path interno em list[PathStep] executável.
+
+        Retorna [] (não parcial) se QUALQUER passo não mapear pra uma tool
+        real — um path parcialmente executável travaria o runtime no meio;
+        melhor deixar vazio e cair no dispatch por profile (fallback).
+        """
+        from planner.strategic_planner import PathStep  # lazy import, evita ciclo
+
+        steps = []
+        for stype, from_a, to_a, extra in path:
+            tool = self._step_tool((stype, from_a, to_a, extra))
+            if tool is None:
+                return []
+            steps.append(PathStep(step_type=stype, actor=from_a, target=to_a, tool=tool))
+        return steps
 
     def _step_action(self, step: _Step) -> str | None:
         """Action concreta de um passo, para o PolicyEvaluator. None se nao mapeavel."""
