@@ -182,6 +182,7 @@ def run_generated_campaign(
 ) -> CampaignResult:
     profile_resolver = profile_resolver or get_profile
     profile_name = plan["profile"]
+    evaluation_tier = (plan.get("signals") or {}).get("evaluation_tier")
     validate_profile_access(profile_name, authorization)
     generated_scope_path = Path(plan["generated_scope"])
     generated_objective_path = Path(plan["generated_objective"])
@@ -256,6 +257,7 @@ def run_generated_campaign(
                 preflight_ok=False,
                 preflight_details={},
                 error=f"no credential profile for {entry_identities[0]}",
+                evaluation_tier=evaluation_tier,
             )
 
     try:
@@ -286,6 +288,7 @@ def run_generated_campaign(
             preflight_ok=status != "preflight_failed",
             preflight_details={},
             error=message,
+            evaluation_tier=evaluation_tier,
         )
     objective_met = result["objective_met"]
     preflight = result.get("preflight", {})
@@ -300,6 +303,7 @@ def run_generated_campaign(
         preflight_details=preflight.get("details", {}),
         report_json=result["report_json"],
         report_md=result["report_md"],
+        evaluation_tier=evaluation_tier,
     )
 
 
@@ -771,7 +775,10 @@ def _hypotheses_to_candidates_payload(hypotheses, discovery_snapshot: dict, bund
             "confidence": hyp.confidence,
             "evaluation_tier": hyp.evaluation_tier,
             "selection_reason": [f"strategic:{hyp.attack_class}", *hyp.attack_steps[:2]],
-            "signals": {"reasoning": hyp.reasoning, "entry_identity": hyp.entry_identity, "attack_steps": hyp.attack_steps},
+            "signals": {
+                "reasoning": hyp.reasoning, "entry_identity": hyp.entry_identity,
+                "attack_steps": hyp.attack_steps, "evaluation_tier": hyp.evaluation_tier,
+            },
             "score_components": {
                 "lexical": 0, "structural": base_score,
                 "privilege_bonus": priv_bonus, "evaluation_bonus": evaluation_bonus,
@@ -908,7 +915,17 @@ def run_discovery_driven_assessment(
             llm_hypotheses.append(h)
 
     try:
-        hypotheses = _scope_enforce_hypotheses(llm_hypotheses, target)[:max_hypotheses]
+        # Achado validando contra AWS real (2026-08-04): o corte de max_hypotheses
+        # não era ordenado — hipóteses "evaluated" de alta confiança podiam ser
+        # descartadas por pura ordem de iteração antes de virarem candidatas.
+        # Ordenação estável: evaluated antes de structural, depois por confidence
+        # — preserva a ordem original (LLM antes de determinístico) como
+        # desempate final, sem introduzir não-determinismo novo.
+        enforced_hypotheses = _scope_enforce_hypotheses(llm_hypotheses, target)
+        enforced_hypotheses.sort(
+            key=lambda h: (0 if h.evaluation_tier == "evaluated" else 1, -_confidence_to_score(h.confidence))
+        )
+        hypotheses = enforced_hypotheses[:max_hypotheses]
         if hypotheses:
             strategic_payload = _hypotheses_to_candidates_payload(
                 hypotheses, discovery_snapshot, bundle_name
@@ -1193,6 +1210,7 @@ def build_assessment_findings(result: AssessmentResult) -> list[AssessmentFindin
                 evidence_level=evidence_level,
                 proof_mode=proof_mode,
                 mitre_techniques=[item.get("mitre_id") for item in report.get("mitre_techniques", []) if item.get("mitre_id")],
+                evaluation_tier=campaign.evaluation_tier,
             ),
         }
     findings = [bucket["finding"] for bucket in aggregated.values()]
@@ -1489,6 +1507,7 @@ def _render_assessment_findings_markdown(payload: dict) -> str:
         lines.append(f"- Confidence: {finding['confidence']}")
         lines.append(f"- Evidence level: {finding['evidence_level']}")
         lines.append(f"- Proof mode: {finding.get('proof_mode', 'structural')}")
+        lines.append(f"- Evaluation tier (pre-execução): {finding.get('evaluation_tier') or '-'}")
         lines.append(f"- Target resource: {finding['target_resource']}")
         lines.append(f"- Entry point: {finding.get('entry_point') or '-'}")
         lines.append(f"- Principal multiplicity: {finding.get('principal_multiplicity', 1)}")

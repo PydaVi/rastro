@@ -1108,14 +1108,30 @@ o corte acontece ANTES dela virar candidato. Vale ordenar por
 `(evaluation_tier, confidence)` antes do slice, ou subir `max_hypotheses` pro
 bundle `aws-iam-heavy` — não decidido ainda qual.
 
+**As duas frentes acima foram fechadas em seguida (2026-08-04):**
+
+1. ~~Corte de `max_hypotheses` sem prioridade~~ DONE — `run_discovery_driven_assessment`
+   agora ordena (`evaluated` antes de `structural`, depois por `confidence`) com sort
+   estável antes do `[:max_hypotheses]`. Teste de regressão reproduz exatamente o caso
+   achado ao vivo (entry alfabeticamente anterior sem policy_permissions vs. entry
+   posterior com policy_permissions reais).
+2. ~~`evaluation_tier` exposto até o artefato final~~ DONE — em vez de mexer no
+   `ReportGenerator` (que não conhece a hipótese de origem), o campo foi propagado pela
+   cadeia que já existia: `signals.evaluation_tier` no candidato → `plan["signals"]` →
+   `CampaignResult.evaluation_tier` (novo campo) → `AssessmentFinding.evaluation_tier`
+   (novo campo), com linha nova em `assessment_findings.md`. 406 testes passando (+2).
+
 **Próximo experimento de maior leverage**
 
-Duas frentes concorrentes, nenhuma bloqueia a outra:
-1. Corrigir o corte não-priorizado de `max_hypotheses` (achado acima) — pequeno e
-   contido, reforça o que o Bloco 12 já entrega.
-2. Expor `evaluation_tier` no `ReportGenerator` (relatório final, pós-execução) —
-   hoje ele trabalha em cima de `StateSnapshot`/`AttackGraph`, não das hipóteses
-   originais.
+Bloco 12 está com o essencial fechado: avaliador determinístico, integrado ao grafo,
+validado contra AWS real com 2 bugs achados e corrigidos, e visível do início ao fim
+do pipeline (hipótese → candidato → plano → campanha → finding). O que resta dentro
+do próprio Bloco 12 (avaliar 2º/3º passo de paths de pivot, resource-based policy) é
+escopo maior, não urgente. Os próximos blocos que fazem mais sentido agora: **Bloco 10**
+(execução por caminho — o próprio projeto já tinha isso como próximo antes deste desvio
+pro 11/12) ou revisitar o **Bloco 14** (deriva + verificação de remediação) do roadmap
+reformulado, já que a base determinística pra sustentar isso está bem mais sólida agora
+do que estava quando o roadmap foi desenhado.
 
 ---
 

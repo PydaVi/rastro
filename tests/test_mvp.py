@@ -3644,6 +3644,95 @@ def test_discovery_driven_graph_hypothesis_wins_dedup_over_legacy_and_keeps_eval
     assert role_chain["evaluation_tier"] == "evaluated"
 
 
+def test_discovery_driven_max_hypotheses_truncation_prioritizes_evaluated_tier(
+    tmp_path: Path,
+) -> None:
+    """Achado validando contra AWS real (2026-08-04): o corte [:max_hypotheses] não era
+    ordenado — uma hipótese "evaluated" de alta confiança podia perder o corte pra uma
+    "structural" só por ordem de iteração. Este teste força exatamente essa colisão:
+    entry alfabeticamente ANTES (sem policy_permissions, fica structural) vs. entry
+    alfabeticamente DEPOIS (com policy_permissions reais, fica evaluated). Com
+    max_hypotheses=1, o sobrevivente tem que ser o evaluated, não o primeiro na ordem.
+    """
+    account = "550192603632"
+    structural_entry = f"arn:aws:iam::{account}:user/a-structural-user"
+    evaluated_entry = f"arn:aws:iam::{account}:user/z-evaluated-user"
+    role1_arn = f"arn:aws:iam::{account}:role/RoleOne"
+    role2_arn = f"arn:aws:iam::{account}:role/RoleTwo"
+
+    discovery_snapshot = {
+        "target": "test",
+        "caller_identity": {"Account": account},
+        "resources": [
+            {
+                "resource_type": "identity.user",
+                "identifier": structural_entry,
+                "metadata": {},  # sem policy_permissions -> tier fica structural
+            },
+            {
+                "resource_type": "identity.role",
+                "identifier": role1_arn,
+                "metadata": {"assumable_by": [structural_entry], "trust_principals": [structural_entry]},
+            },
+            {
+                "resource_type": "identity.user",
+                "identifier": evaluated_entry,
+                "metadata": {
+                    "policy_permissions": [{"source": "p", "statements": [
+                        {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": role2_arn},
+                    ]}],
+                },
+            },
+            {
+                "resource_type": "identity.role",
+                "identifier": role2_arn,
+                "metadata": {"assumable_by": [evaluated_entry], "trust_principals": [evaluated_entry]},
+            },
+        ],
+        "relationships": [],
+    }
+
+    target = load_target(Path("examples/target_aws_foundation.local.json"))
+    authorization = load_authorization(Path("examples/authorization_aws_foundation.local.json"))
+
+    def fake_discovery_runner(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        p = output_dir / "discovery.json"
+        m = output_dir / "discovery.md"
+        p.write_text(json.dumps(discovery_snapshot))
+        m.write_text("")
+        return p, m, discovery_snapshot
+
+    def fake_campaign_synthesizer(**kwargs):
+        output_dir = kwargs["output_dir"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        plan_json = output_dir / "campaign_plan.json"
+        plan_md = output_dir / "campaign_plan.md"
+        payload = {"plans": [], "summary": {"plans_total": 0}}
+        plan_json.write_text(json.dumps(payload))
+        plan_md.write_text("")
+        return plan_json, plan_md, payload
+
+    run_discovery_driven_assessment(
+        bundle_name="aws-foundation",
+        target=target,
+        authorization=authorization,
+        output_dir=tmp_path / "assessment",
+        runner=execute_run,
+        discovery_runner=fake_discovery_runner,
+        campaign_synthesizer=fake_campaign_synthesizer,
+        max_steps=4,
+        max_hypotheses=1,
+    )
+
+    hyp_path = tmp_path / "assessment" / "target-selection" / "strategic_hypotheses.json"
+    hypotheses = json.loads(hyp_path.read_text())
+    assert len(hypotheses) == 1
+    assert hypotheses[0]["entry_identity"] == evaluated_entry
+    assert hypotheses[0]["evaluation_tier"] == "evaluated"
+
+
 def test_hypotheses_to_candidates_payload_maps_attack_classes_to_profiles() -> None:
     from planner.strategic_planner import AttackHypothesis
     from operations.service import _hypotheses_to_candidates_payload
@@ -4170,6 +4259,54 @@ def test_write_assessment_summary_prefers_effective_entry_identity_for_findings(
 
     findings = json.loads((tmp_path / "assessment_findings.json").read_text())
     assert findings["findings"][0]["entry_point"] == "arn:aws:iam::123456789012:role/starting-role"
+
+
+def test_assessment_finding_inherits_evaluation_tier_from_campaign(tmp_path: Path) -> None:
+    """Bloco 12: evaluation_tier da hipótese de origem chega no finding final —
+    fecha o loop entre "confirmado pelo avaliador antes de executar" e o
+    artefato que um administrador de verdade leria."""
+    campaign_dir = tmp_path / "campaign"
+    campaign_dir.mkdir(parents=True, exist_ok=True)
+    (campaign_dir / "report.json").write_text(
+        json.dumps(
+            {
+                "objective": {"target": "arn:aws:iam::123456789012:role/AdminRole"},
+                "executive_summary": {
+                    "initial_identity": "arn:aws:iam::123456789012:user/analyst",
+                    "effective_entry_identity": "arn:aws:iam::123456789012:user/analyst",
+                    "final_resource": "arn:aws:iam::123456789012:role/AdminRole",
+                },
+                "execution_policy": {"allowed_services": ["iam"]},
+                "mitre_techniques": [],
+                "steps": [],
+            }
+        )
+    )
+    (campaign_dir / "report.md").write_text("# report\n")
+    result = AssessmentResult(
+        bundle="aws-foundation",
+        target="lab",
+        campaigns=[
+            CampaignResult(
+                status="passed",
+                profile="aws-iam-role-chaining",
+                output_dir=campaign_dir,
+                generated_scope=campaign_dir / "scope.json",
+                objective_met=True,
+                preflight_ok=True,
+                report_json=campaign_dir / "report.json",
+                report_md=campaign_dir / "report.md",
+                evaluation_tier="evaluated",
+            )
+        ],
+    )
+
+    write_assessment_summary(result, tmp_path)
+
+    findings = json.loads((tmp_path / "assessment_findings.json").read_text())
+    assert findings["findings"][0]["evaluation_tier"] == "evaluated"
+    findings_md = (tmp_path / "assessment_findings.md").read_text()
+    assert "Evaluation tier (pre-execução): evaluated" in findings_md
 
 
 def test_campaign_synthesis_can_use_candidate_embedded_paths_without_profile_resolver(tmp_path: Path) -> None:

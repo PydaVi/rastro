@@ -10,7 +10,7 @@ encadeamento, testa cada cadeia e prova o caminho completo de comprometimento.
 
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
-![Tests](https://img.shields.io/badge/tests-404%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-406%20passing-brightgreen)
 ![Status](https://img.shields.io/badge/status-engine%20R%26D-orange)
 
 ---
@@ -180,7 +180,7 @@ pip install -e ".[dev]"
 **Testes (sem LLM, sem AWS):**
 
 ```bash
-pytest                 # 404 testes, sem dependências externas
+pytest                 # 406 testes, sem dependências externas
 pytest -m integration  # requer AWS ou Ollama
 ```
 

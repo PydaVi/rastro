@@ -54,6 +54,10 @@ class CampaignResult(BaseModel):
     error: str | None = None
     report_json: Path | None = None
     report_md: Path | None = None
+    # Bloco 12: herdado do signals.evaluation_tier da hipótese que originou o
+    # plano (quando presente) — "a hipótese foi confirmada pelo PolicyEvaluator
+    # antes de executar", não "a execução funcionou" (isso é objective_met).
+    evaluation_tier: str | None = None
 
 
 class AssessmentFinding(BaseModel):
@@ -75,6 +79,11 @@ class AssessmentFinding(BaseModel):
     evidence_level: Literal["proved", "observed"] = "proved"
     proof_mode: Literal["real", "simulation", "structural"] = "structural"
     mitre_techniques: list[str] = Field(default_factory=list)
+    # Bloco 12: "evaluated" se o primeiro passo da hipótese de origem foi
+    # confirmado pelo PolicyEvaluator (Action+Resource+Condition reais) antes
+    # da execução; None quando a finding não veio de uma hipótese do grafo
+    # (ex.: rule-based fallback) ou a informação não foi propagada.
+    evaluation_tier: str | None = None
 
 
 class AssessmentResult(BaseModel):
