@@ -4386,8 +4386,8 @@ def test_mixed_generalization_variant_p_supports_enterprise_discovery_driven_end
         max_steps=10,
     )
 
-    assert assessment.summary["campaigns_total"] == 9
-    assert assessment.summary["campaigns_passed"] == 9
+    assert assessment.summary["campaigns_total"] == 7
+    assert assessment.summary["campaigns_passed"] == 7
 
 
 def test_campaign_synthesis_run_cli_reports_artifacts(tmp_path: Path) -> None:
@@ -5776,23 +5776,6 @@ def test_serverless_business_app_variant_a_supports_foundation_discovery_driven_
     assert assessment.summary["campaigns_passed"] == 4
 
 
-def test_serverless_business_app_variant_a_selects_advanced_lambda_and_kms_targets(
-    tmp_path: Path,
-) -> None:
-    discovery_snapshot = json.loads(
-        (Path(__file__).resolve().parents[1] / "fixtures" / "serverless_business_app_variant_a.discovery.json").read_text()
-    )
-
-    _, _, payload = select_foundation_targets(
-        discovery_snapshot=discovery_snapshot,
-        output_dir=tmp_path,
-        bundle_name="aws-advanced",
-    )
-
-    top_lambda = next(candidate for candidate in payload["candidates"] if candidate["profile_family"] == "aws-iam-lambda-data")
-    assert top_lambda["resource_arn"] == "arn:aws:lambda:us-east-1:123456789012:function:payroll-handler"
-
-
 def test_serverless_business_app_variant_b_adds_kms_without_breaking_foundation_selection(
     tmp_path: Path,
 ) -> None:
@@ -5814,14 +5797,6 @@ def test_serverless_business_app_variant_b_adds_kms_without_breaking_foundation_
     assert top_secret["resource_arn"] == "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key"
     assert top_ssm["resource_arn"] == "arn:aws:ssm:us-east-1:123456789012:parameter/prod/payroll/api_key"
     assert top_role["resource_arn"] == "arn:aws:iam::123456789012:role/PayrollHandlerRole"
-
-    _, _, advanced_payload = select_foundation_targets(
-        discovery_snapshot=discovery_snapshot,
-        output_dir=tmp_path / "advanced",
-        bundle_name="aws-advanced",
-    )
-    top_kms = next(candidate for candidate in advanced_payload["candidates"] if candidate["profile_family"] == "aws-iam-kms-data")
-    assert top_kms["resource_arn"] == "arn:aws:kms:us-east-1:123456789012:key/payroll-runtime"
 
 
 def test_serverless_business_app_variant_c_keeps_foundation_targets_stable_under_public_api_noise(
@@ -5923,8 +5898,8 @@ def test_serverless_business_app_variant_a_supports_advanced_discovery_driven_en
         max_steps=8,
     )
 
-    assert assessment.summary["campaigns_total"] == 5
-    assert assessment.summary["campaigns_passed"] == 5
+    assert assessment.summary["campaigns_total"] == 4
+    assert assessment.summary["campaigns_passed"] == 4
 
 
 def test_serverless_business_app_variant_b_supports_advanced_discovery_driven_end_to_end(
@@ -5959,8 +5934,8 @@ def test_serverless_business_app_variant_b_supports_advanced_discovery_driven_en
         max_steps=8,
     )
 
-    assert assessment.summary["campaigns_total"] == 6
-    assert assessment.summary["campaigns_passed"] == 6
+    assert assessment.summary["campaigns_total"] == 4
+    assert assessment.summary["campaigns_passed"] == 4
 
 
 def test_serverless_business_app_variant_c_supports_advanced_discovery_driven_end_to_end(
@@ -5995,8 +5970,8 @@ def test_serverless_business_app_variant_c_supports_advanced_discovery_driven_en
         max_steps=8,
     )
 
-    assert assessment.summary["campaigns_total"] == 6
-    assert assessment.summary["campaigns_passed"] == 6
+    assert assessment.summary["campaigns_total"] == 4
+    assert assessment.summary["campaigns_passed"] == 4
 
 
 def test_compute_pivot_app_variant_a_has_coherent_compute_inventory_and_foundation_targets(
@@ -6429,8 +6404,8 @@ def test_mixed_generalization_variant_supports_enterprise_discovery_driven_end_t
     )
     assessment_json, assessment_md = write_assessment_summary(assessment, tmp_path / "mixed_generalization_variant_a")
 
-    assert assessment.summary["campaigns_total"] == 8
-    assert assessment.summary["campaigns_passed"] == 8
+    assert assessment.summary["campaigns_total"] == 6
+    assert assessment.summary["campaigns_passed"] == 6
     assert assessment_json.exists()
     assert assessment_md.exists()
     findings_md = tmp_path / "mixed_generalization_variant_a" / "assessment_findings.md"
@@ -6482,37 +6457,9 @@ def test_mixed_generalization_variant_p_infers_execution_fixture_sets_structural
 
     assert by_profile["aws-external-entry-data"]["execution_fixture_set"] == "mixed-generalization"
     assert by_profile["aws-iam-compute-iam"]["execution_fixture_set"] == "compute-pivot-app"
-    assert by_profile["aws-iam-lambda-data"]["execution_fixture_set"] == "serverless-business-app"
-    assert by_profile["aws-iam-kms-data"]["execution_fixture_set"] == "serverless-business-app"
     assert by_profile["aws-cross-account-data"]["execution_fixture_set"] == "mixed-generalization"
     assert by_profile["aws-multi-step-data"]["execution_fixture_set"] == "mixed-generalization"
     assert by_profile["aws-external-entry-data"]["fixture_path"].endswith("mixed_generalization_external_entry_lab.json")
-    assert by_profile["aws-iam-lambda-data"]["scope_template_path"].endswith(
-        "scope_serverless_business_app_iam_lambda_data.json"
-    )
-
-
-def test_mixed_generalization_variant_p_infers_execution_fixture_sets_structurally(
-    tmp_path: Path,
-) -> None:
-    discovery_snapshot = json.loads(
-        (Path(__file__).resolve().parents[1] / "fixtures" / "mixed_generalization_variant_p.discovery.json").read_text()
-    )
-
-    _, _, payload = select_foundation_targets(
-        discovery_snapshot=discovery_snapshot,
-        output_dir=tmp_path,
-        bundle_name="aws-enterprise",
-    )
-
-    by_profile = {candidate["profile_family"]: candidate for candidate in payload["candidates"]}
-
-    assert by_profile["aws-external-entry-data"]["execution_fixture_set"] == "mixed-generalization"
-    assert by_profile["aws-iam-compute-iam"]["execution_fixture_set"] == "compute-pivot-app"
-    assert by_profile["aws-iam-lambda-data"]["execution_fixture_set"] == "serverless-business-app"
-    assert by_profile["aws-iam-kms-data"]["execution_fixture_set"] == "serverless-business-app"
-    assert by_profile["aws-cross-account-data"]["execution_fixture_set"] == "mixed-generalization"
-    assert by_profile["aws-multi-step-data"]["execution_fixture_set"] == "mixed-generalization"
 
 
 def test_mixed_generalization_variant_b_supports_enterprise_discovery_driven_end_to_end(
@@ -6548,8 +6495,8 @@ def test_mixed_generalization_variant_b_supports_enterprise_discovery_driven_end
         max_steps=9,
     )
 
-    assert assessment.summary["campaigns_total"] == 8
-    assert assessment.summary["campaigns_passed"] == 8
+    assert assessment.summary["campaigns_total"] == 6
+    assert assessment.summary["campaigns_passed"] == 6
 
 
 def test_mixed_generalization_variant_c_keeps_best_targets_on_top_under_same_surface_competition(
@@ -6611,8 +6558,8 @@ def test_mixed_generalization_variant_c_supports_enterprise_discovery_driven_end
         max_steps=9,
     )
 
-    assert assessment.summary["campaigns_total"] == 8
-    assert assessment.summary["campaigns_passed"] == 8
+    assert assessment.summary["campaigns_total"] == 6
+    assert assessment.summary["campaigns_passed"] == 6
 
 
 def test_mixed_generalization_variant_d_prefers_higher_quality_public_entry_path(
@@ -6643,8 +6590,8 @@ def test_mixed_generalization_variant_d_prefers_higher_quality_public_entry_path
 
 def test_mixed_generalization_resolver_uses_execution_fixture_set_from_plan() -> None:
     serverless_profile = get_mixed_synthetic_profile(
-        "aws-iam-kms-data",
-        {"execution_fixture_set": "serverless-business-app", "resource_arn": "arn:aws:kms:us-east-1:123456789012:key/payroll-runtime"},
+        "aws-iam-secrets",
+        {"execution_fixture_set": "serverless-business-app", "resource_arn": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/payroll-api-key"},
     )
     compute_profile = get_mixed_synthetic_profile(
         "aws-external-entry-data",
@@ -6693,8 +6640,8 @@ def test_mixed_generalization_variant_d_supports_enterprise_discovery_driven_end
         max_steps=9,
     )
 
-    assert assessment.summary["campaigns_total"] == 8
-    assert assessment.summary["campaigns_passed"] == 8
+    assert assessment.summary["campaigns_total"] == 6
+    assert assessment.summary["campaigns_passed"] == 6
 
 
 def test_mixed_generalization_variant_e_prefers_deeper_multi_step_but_keeps_cross_account_direct(
@@ -6753,8 +6700,8 @@ def test_mixed_generalization_variant_e_supports_enterprise_discovery_driven_end
         max_steps=10,
     )
 
-    assert assessment.summary["campaigns_total"] == 9
-    assert assessment.summary["campaigns_passed"] == 9
+    assert assessment.summary["campaigns_total"] == 7
+    assert assessment.summary["campaigns_passed"] == 7
 
 
 def test_mixed_generalization_variant_f_infers_structural_paths_from_relationships(
@@ -6829,8 +6776,8 @@ def test_mixed_generalization_variant_f_supports_enterprise_discovery_driven_end
         max_steps=10,
     )
 
-    assert assessment.summary["campaigns_total"] == 9
-    assert assessment.summary["campaigns_passed"] == 9
+    assert assessment.summary["campaigns_total"] == 7
+    assert assessment.summary["campaigns_passed"] == 7
 
 
 def test_mixed_generalization_variant_g_removes_semantic_tags_and_stays_stable(
@@ -6891,8 +6838,8 @@ def test_mixed_generalization_variant_g_supports_enterprise_discovery_driven_end
         max_steps=10,
     )
 
-    assert assessment.summary["campaigns_total"] == 9
-    assert assessment.summary["campaigns_passed"] == 9
+    assert assessment.summary["campaigns_total"] == 7
+    assert assessment.summary["campaigns_passed"] == 7
 
 
 def test_mixed_generalization_variant_h_obfuscates_pivot_names_and_stays_stable(
@@ -6959,8 +6906,8 @@ def test_mixed_generalization_variant_h_supports_enterprise_discovery_driven_end
         max_steps=10,
     )
 
-    assert assessment.summary["campaigns_total"] == 9
-    assert assessment.summary["campaigns_passed"] == 9
+    assert assessment.summary["campaigns_total"] == 7
+    assert assessment.summary["campaigns_passed"] == 7
 
 
 def test_mixed_generalization_variant_i_obfuscates_enterprise_target_names(
@@ -7018,8 +6965,8 @@ def test_mixed_generalization_variant_i_supports_enterprise_discovery_driven_end
         max_steps=10,
     )
 
-    assert assessment.summary["campaigns_total"] == 9
-    assert assessment.summary["campaigns_passed"] == 9
+    assert assessment.summary["campaigns_total"] == 7
+    assert assessment.summary["campaigns_passed"] == 7
 
 
 def test_mixed_generalization_variant_j_reduces_enterprise_keyword_support(
@@ -7078,8 +7025,8 @@ def test_mixed_generalization_variant_j_supports_enterprise_discovery_driven_end
         max_steps=10,
     )
 
-    assert assessment.summary["campaigns_total"] == 9
-    assert assessment.summary["campaigns_passed"] == 9
+    assert assessment.summary["campaigns_total"] == 7
+    assert assessment.summary["campaigns_passed"] == 7
 
 
 def test_mixed_generalization_variant_k_obfuscates_local_s3_and_ssm_targets(
@@ -7136,8 +7083,8 @@ def test_mixed_generalization_variant_k_supports_enterprise_discovery_driven_end
         max_steps=10,
     )
 
-    assert assessment.summary["campaigns_total"] == 9
-    assert assessment.summary["campaigns_passed"] == 9
+    assert assessment.summary["campaigns_total"] == 7
+    assert assessment.summary["campaigns_passed"] == 7
 
 
 def test_mixed_generalization_variant_l_obfuscates_local_secret_and_shifts_external_entry(
@@ -7194,8 +7141,8 @@ def test_mixed_generalization_variant_l_supports_enterprise_discovery_driven_end
         max_steps=10,
     )
 
-    assert assessment.summary["campaigns_total"] == 9
-    assert assessment.summary["campaigns_passed"] == 9
+    assert assessment.summary["campaigns_total"] == 7
+    assert assessment.summary["campaigns_passed"] == 7
 
 
 def test_mixed_generalization_variant_m_further_obfuscates_local_secret_and_preserves_external_entry(
@@ -7252,8 +7199,8 @@ def test_mixed_generalization_variant_m_supports_enterprise_discovery_driven_end
         max_steps=10,
     )
 
-    assert assessment.summary["campaigns_total"] == 9
-    assert assessment.summary["campaigns_passed"] == 9
+    assert assessment.summary["campaigns_total"] == 7
+    assert assessment.summary["campaigns_passed"] == 7
 
 
 def test_mixed_generalization_variant_n_obfuscates_enterprise_deep_targets_with_low_lexical_support(
@@ -7311,8 +7258,8 @@ def test_mixed_generalization_variant_n_supports_enterprise_discovery_driven_end
         max_steps=10,
     )
 
-    assert assessment.summary["campaigns_total"] == 9
-    assert assessment.summary["campaigns_passed"] == 9
+    assert assessment.summary["campaigns_total"] == 7
+    assert assessment.summary["campaigns_passed"] == 7
 
 
 def test_mixed_generalization_variant_o_uses_fixture_alias_support_for_local_and_enterprise_targets(
@@ -7370,8 +7317,8 @@ def test_mixed_generalization_variant_o_supports_enterprise_discovery_driven_end
         max_steps=10,
     )
 
-    assert assessment.summary["campaigns_total"] == 9
-    assert assessment.summary["campaigns_passed"] == 9
+    assert assessment.summary["campaigns_total"] == 7
+    assert assessment.summary["campaigns_passed"] == 7
 
 
 def test_mixed_generalization_variant_p_reduces_curated_metadata_and_preserves_selection(
@@ -7431,8 +7378,8 @@ def test_mixed_generalization_variant_p_supports_enterprise_discovery_driven_end
         max_steps=10,
     )
 
-    assert assessment.summary["campaigns_total"] == 9
-    assert assessment.summary["campaigns_passed"] == 9
+    assert assessment.summary["campaigns_total"] == 7
+    assert assessment.summary["campaigns_passed"] == 7
 
 
 def test_run_discovery_driven_assessment_generates_artifacts_and_campaigns(tmp_path: Path) -> None:

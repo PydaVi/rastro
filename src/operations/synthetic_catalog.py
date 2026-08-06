@@ -81,22 +81,6 @@ SERVERLESS_BUSINESS_APP_SYNTHETIC_PROFILES: dict[str, ProfileDefinition] = {
         objective_path=_path("examples", "objective_serverless_business_app_iam_role_chaining.json"),
         scope_path=_path("examples", "scope_serverless_business_app_iam_role_chaining.json"),
     ),
-    "aws-iam-lambda-data": ProfileDefinition(
-        name="aws-iam-lambda-data",
-        bundle="aws-advanced-sba-synthetic",
-        description="Synthetic IAM to Lambda to data for serverless-business-app.",
-        fixture_path=_path("fixtures", "serverless_business_app_unified_lab.json"),
-        objective_path=_path("examples", "objective_serverless_business_app_iam_lambda_data.json"),
-        scope_path=_path("examples", "scope_serverless_business_app_iam_lambda_data.json"),
-    ),
-    "aws-iam-kms-data": ProfileDefinition(
-        name="aws-iam-kms-data",
-        bundle="aws-advanced-sba-synthetic",
-        description="Synthetic IAM to KMS to data for serverless-business-app.",
-        fixture_path=_path("fixtures", "serverless_business_app_unified_lab.json"),
-        objective_path=_path("examples", "objective_serverless_business_app_iam_kms_data.json"),
-        scope_path=_path("examples", "scope_serverless_business_app_iam_kms_data.json"),
-    ),
 }
 
 

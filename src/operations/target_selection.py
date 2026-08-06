@@ -37,8 +37,6 @@ PROFILE_RULES = {
     "aws-external-entry-data": {"resource_types": {"data_store.s3_object", "secret.secrets_manager", "secret.ssm_parameter"}},
     "aws-cross-account-data": {"resource_types": {"data_store.s3_object", "secret.secrets_manager", "secret.ssm_parameter"}},
     "aws-multi-step-data": {"resource_types": {"data_store.s3_object", "secret.secrets_manager", "secret.ssm_parameter"}},
-    "aws-iam-lambda-data": {"resource_types": {"compute.lambda_function"}},
-    "aws-iam-kms-data": {"resource_types": {"crypto.kms_key"}},
 }
 
 BUNDLE_RULES = {
@@ -55,8 +53,6 @@ BUNDLE_RULES = {
         "aws-iam-role-chaining",
         "aws-iam-compute-iam",
         "aws-external-entry-data",
-        "aws-iam-lambda-data",
-        "aws-iam-kms-data",
     ],
     "aws-enterprise": [
         "aws-iam-s3",
@@ -67,8 +63,6 @@ BUNDLE_RULES = {
         "aws-external-entry-data",
         "aws-cross-account-data",
         "aws-multi-step-data",
-        "aws-iam-lambda-data",
-        "aws-iam-kms-data",
     ],
     "aws-iam-heavy": [
         "aws-iam-role-chaining",
@@ -396,34 +390,6 @@ def _build_candidate(profile_name: str, resource: dict, structural_index: dict) 
         score -= 5
         lexical_score -= 5
         reasons.append("token_penalty")
-    if profile_name == "aws-iam-lambda-data" and ("lambda" in lowered or "lambda" in normalized):
-        score += 10
-        structural_score += 10
-        reasons.append("lambda_surface")
-    if profile_name == "aws-iam-lambda-data" and ("handler" in lowered or "handler" in normalized):
-        score += 15
-        structural_score += 15
-        reasons.append("handler_signal")
-    if profile_name == "aws-iam-lambda-data" and ("payroll" in lowered or "payroll" in normalized):
-        score += 15
-        lexical_score += 15
-        reasons.append("payroll_signal")
-    if profile_name == "aws-iam-lambda-data" and ("admin" in lowered or "admin" in normalized):
-        score -= 10
-        lexical_score -= 10
-        reasons.append("admin_penalty")
-    if profile_name == "aws-iam-kms-data" and ("kms" in lowered or "kms" in normalized):
-        score += 10
-        structural_score += 10
-        reasons.append("kms_surface")
-    if profile_name == "aws-iam-kms-data" and ("payroll" in lowered or "payroll" in normalized):
-        score += 15
-        lexical_score += 15
-        reasons.append("payroll_signal")
-    if profile_name == "aws-iam-kms-data" and ("runtime" in lowered or "runtime" in normalized):
-        score += 10
-        structural_score += 10
-        reasons.append("runtime_signal")
     semantic_tags = metadata.get("semantic_tags", [])
     if semantic_tags:
         matched_tags = [tag for tag in semantic_tags if tag in lowered]
@@ -700,10 +666,6 @@ def _infer_candidate_profiles(resource: dict, structural_index: dict) -> list[st
         inferred.append("aws-iam-secrets")
     elif resource_type == "secret.ssm_parameter":
         inferred.append("aws-iam-ssm")
-    elif resource_type == "compute.lambda_function":
-        inferred.append("aws-iam-lambda-data")
-    elif resource_type == "crypto.kms_key":
-        inferred.append("aws-iam-kms-data")
     elif resource_type == "identity.role":
         inferred.append("aws-iam-role-chaining")
         if structural_index["role_to_instance_profiles"].get(identifier) or structural_index["role_to_instances"].get(identifier):
@@ -815,10 +777,6 @@ def _infer_execution_fixture_set(resource: dict, profile_name: str, structural_i
     pivot_chain = _resolved_pivot_chain(resource, structural_index, reachable_roles)
     chain_depth = _resolved_chain_depth(resource, reachable_roles, pivot_chain, structural_index) or 0
 
-    if resource_type == "compute.lambda_function" or profile_name == "aws-iam-lambda-data":
-        return "serverless-business-app"
-    if resource_type == "crypto.kms_key" or profile_name == "aws-iam-kms-data":
-        return "serverless-business-app"
     if resource_account and caller_account and resource_account != caller_account:
         return "mixed-generalization"
     if chain_depth >= 3 and profile_name in {"aws-multi-step-data", "aws-cross-account-data"}:

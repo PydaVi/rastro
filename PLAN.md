@@ -1480,6 +1480,68 @@ completo — o mesmo tratamento que IAM/S3/Secrets/SSM já tiveram) ou sai do
 repositório. Nenhuma tool fica em estado ambíguo daqui pra frente — é a mesma
 disciplina que motivou remover os `_derive_*` mortos no Bloco 17.
 
+#### Resultado da auditoria (FEITO, 2026-08-06)
+
+Cobertura real de serviço hoje, confirmada por rastreio de código (não por lista
+de arquivos): **IAM + S3 + Secrets + SSM**. Cada uma das três tools ambíguas foi
+rastreada em quatro pontos — YAML, executor, `BlindRealRuntime`/path-driven e
+aresta no `CapabilityGraph` — e recebeu decisão explícita:
+
+**`ec2_instance_profile_pivot` → MANTIDO (vira cobertura real, primeiro alvo da
+16.3).** É a única das três com executor real e substancial
+(`_execute_ec2_instance_profile_pivot` em `src/execution/aws_executor.py`:
+`get_instance_profile` + `list_instance_profile_associations` +
+`describe_instance` + evidência de rede + credential acquisition) e com testes
+de verdade em `test_mvp.py`. O gap é só o que a 16.3 fecha: nenhuma aresta no
+`CapabilityGraph`, nenhum passo path-driven (`_step_tool`), e nunca é oferecido
+pelo `BlindRealRuntime` — ou seja, o executor existe mas nenhum caminho real de
+execução chega nele. Não é código morto: é meio-caminho legítimo, mantido.
+
+**`lambda_invoke` + `kms_decrypt` → REMOVIDOS do repositório.** Os dois `.py`
+eram placeholder de uma linha (docstring, zero implementação), sem executor, sem
+aresta de grafo, sem path-driven. Modelavam, ainda por cima, o ataque errado em
+relação ao que a 16.3 planeja construir (`lambda_invoke` = T1648 "invocar pra
+alcançar dado", não o pivot por execution-role/env-var que a 16.3 descreve). A
+cobertura real de Lambda/KMS será construída do zero na 16.3, não estendida
+destes stubs.
+
+**Achado mais grave da auditoria (a razão real de remover, não só o stub):**
+existiam *campanhas de Lambda e KMS que "passavam"* sem nenhuma execução real. O
+mecanismo: profiles completos (`aws-iam-lambda-data`/`aws-iam-kms-data`)
+ligados aos bundles `aws-advanced`/`aws-enterprise` com regra de seleção de alvo
+real, mas com `success_criteria` caindo no `else` → `target_observed` (o exato
+anti-padrão que a REGUA marca como dívida crítica) e execução via a tool
+placeholder, que o dry-run conta como sucesso por `safe_simulation: true`. Isso
+é `campaigns_passed` como proxy de generalização — alerta duro da REGUA, não
+progresso. Empiricamente: remover só as tools derrubava 5/5→4/4 nas campanhas
+serverless-advanced e 8/8→6/6 nas mixed-enterprise, provando que o "passe" vinha
+do placeholder, não de execução.
+
+Removido nesta fatia (decisão do autor: "remover do repositório agora"):
+- tools `tools/aws/lambda_invoke.{yaml,py}` + `tools/aws/kms_decrypt.{yaml,py}`
+- profiles `aws-iam-lambda-data`/`aws-iam-kms-data` de `target_selection.py`
+  (`PROFILE_RULES` + bundles `aws-advanced`/`aws-enterprise`), incluindo o
+  scoring lexical morto por keyword (payroll/handler/runtime/kms — heurística que
+  a REGUA condena) e a inferência que injetaria esses profiles fantasma em
+  `inferred_profiles`/`execution_fixture_set`
+- rank em `campaign_synthesis.py`, 2 ProfileDefinitions sintéticas em
+  `synthetic_catalog.py`, 4 arquivos de exemplo (objective/scope) e os 2 labs
+  standalone órfãos (`serverless_business_app_iam_{lambda,kms}_data_lab.json`)
+- testes: removido o teste de seleção lambda/kms e uma duplicata sombreada;
+  recontadas as ~20 campanhas dos e2e serverless-advanced e mixed-enterprise
+  (deltas confirmados 1:1 contra o conteúdo de cada fixture, não colados cegos)
+
+Residual honesto (não escondido atrás de "feito"): `serverless_business_app_unified_lab.json`
+(ainda usado pelos profiles s3/secrets/ssm/role-chaining) mantém recursos
+`compute.lambda_function`/`crypto.kms_key` como inventário sintético realista e
+duas transições scriptadas inertes que referenciam os nomes das tools removidas —
+nenhum profile vivo dispara essas transições. Deixado de propósito: reescrever
+JSON aninhado profundo pra remover isso arriscava malformar um fixture do qual 5+
+testes dependem, por ganho funcional zero. O produto não anuncia mais cobertura
+Lambda/KMS em lugar nenhum; o resíduo é dado de fixture, não andaime de produto.
+
+436 testes passando (437 → 436, exatamente o teste de seleção removido).
+
 ### 16.1 — Validação de escala (antes de qualquer serviço novo)
 
 Discovery e geração de hipóteses nunca foram testados contra uma conta grande

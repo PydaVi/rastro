@@ -206,8 +206,6 @@ def _profile_specificity_rank(profile_name: str) -> int:
         "aws-cross-account-data": 1,
         "aws-external-entry-data": 2,
         "aws-iam-compute-iam": 3,
-        "aws-iam-lambda-data": 4,
-        "aws-iam-kms-data": 5,
         "aws-iam-role-chaining": 6,
         "aws-iam-secrets": 7,
         "aws-iam-ssm": 8,
