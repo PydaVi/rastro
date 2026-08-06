@@ -1556,6 +1556,73 @@ novo multiplica o espaço de hipóteses — melhor descobrir o limite da
 arquitetura atual com o que já existe do que empilhar mais coisa em cima de
 uma base que ainda não sabemos se aguenta escala.
 
+#### Resultado (FEITO, 2026-08-06) — a arquitetura NÃO aguenta escala hoje
+
+Construído o gerador combinatório da Camada C (`scripts/gen_synthetic_environment.py`,
+determinístico por seed, anota com o `_compute_capability_graph` real — não
+faked) e o harness de escala (`scripts/run_bloco16_scale_validation.py`), que
+mede o caminho de produção da Fase 1 determinística de
+`run_discovery_driven_assessment`: `CapabilityGraph.build` → `derive_all_hypotheses`
+→ sort estável → `[:max_hypotheses]`. Offline, sem LLM, sem AWS.
+
+```
+scale  recursos  users  roles  annot_s   bfs_s  sort_s   raw_hyps  cut  peak_MB  total_s
+   20        80     20     20    0.016   0.808   0.025      2.621   20      8.1    0.851
+   50       200     50     50    0.059   5.987   0.332     15.706   20     48.3    6.379
+  100       400    100    100    0.282  25.331   0.996     61.916   20    190.8   26.611
+  200       800    200    200    1.427  95.869   3.868    245.828   20    758.4  101.175
+```
+
+**Achado central: a geração CRUA de hipóteses é O(n²) no tamanho do ambiente.**
+`raw_hyps / recursos²` fica ~0.38 constante nos quatro tamanhos — crescimento
+quadrático limpo, não linear. A 800 recursos (uma conta AWS média, não grande):
+**245 mil hipóteses cruas, 96s só no BFS, 758 MB de pico**. Extrapolando pra uma
+conta real de milhares de recursos, isso vira minutos e múltiplos GB — estoura
+tempo e memória bem antes do tamanho de produção que a promessa "aponte pra sua
+conta" precisa aguentar.
+
+**O corte `max_hypotheses` NÃO protege da explosão** — ele roda DEPOIS de gerar,
+enforce-ar e ordenar a lista crua inteira. A `cut` volta 20 em todos os tamanhos,
+mas o custo (tempo, memória, o sort O(H log H)) é pago sobre os 245 mil, não
+sobre os 20. Responde direto à pergunta da 16.1: o corte não "consegue lidar" com
+a explosão, porque está no lugar errado do pipeline.
+
+**Diagnóstico do termo dominante:** o pivot por credencial em `_traverse`
+(`src/core/capability_graph.py`) varre `self._all_role_arns` — TODOS os roles
+não-service da conta — pra CADA recurso de credencial legível (secret/SSM/S3) e
+pra cada `create_key`, gerando uma hipótese por role. Isso é a heurística
+"identidade extraída pode assumir qualquer role" (comentário na linha ~210), que
+é ao mesmo tempo (a) a fonte da explosão O(users × roles) e (b) ofensivamente
+falsa na maioria dos casos — uma credencial extraída só assume os roles que ela
+de fato pode, não todos. As classes `credential_pivot`/`ssm_pivot`/`s3_pivot`/
+`iam_create_access_key_pivot` dominam a contagem (no lab de 32 recursos: 384 de
+459 hipóteses vinham desses sweeps). O estágio de anotação
+(`_compute_capability_graph`, O(principals × recursos)) também é quadrático mas
+pequeno em termos absolutos (1.4s a 800 recursos) — não é o gargalo.
+
+**Canário de regressão:** `tests/test_scale_validation.py` trava o crescimento
+quadrático (raw(20)/raw(10) ≈ 3.7×, esperado ~4×). Quando a correção domar o
+sweep, esse teste vira vermelho DE PROPÓSITO — é o alvo a derrubar, não
+invariante permanente.
+
+**Candidatos de correção (decisão de arquitetura, não executada nesta fatia —
+15.1 era medir, não consertar):**
+1. **Gatear o sweep por assumability** — em vez de `_all_role_arns`, só os roles
+   que a credencial extraída plausivelmente assume (ex.: roles cujo
+   `trust_principals` inclui o user-fonte, ou herança de trust do próprio
+   recurso). Reduz O(users × roles) → O(users × k). É também mais honesto
+   ofensivamente. Risco: pode derrubar cobertura de pivot legítima onde o
+   mapeamento credencial→principal é desconhecido — precisa de decisão.
+2. **Mover a triagem pra ANTES da materialização** — gerar candidatos preguiçosos
+   / cortar por score durante o BFS, não depois. É o gancho natural pro modelo de
+   ranking da 16.4, que este resultado torna urgente (não só otimização de custo
+   de self-serve, como o doc de produto colocava — é requisito de escala).
+3. **Teto duro de fan-out por passo** com priorização, como rede de segurança
+   independente da 1/2.
+
+Qual seguir (e se 16.4 vem antes de expandir serviço, dado que a explosão é
+bloqueante) fica como a decisão de maior leverage a levar pro autor.
+
 ### 16.2 — Banco de ambientes como prática contínua, não gate único
 
 A composição de amostra já desenhada em `docs/frente1-self-serve-plan.md`

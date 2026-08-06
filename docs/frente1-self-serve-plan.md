@@ -169,6 +169,10 @@ Sequenciamento revisado:
    seção definiu desde o início.
 3. Estatística pública e lançamento comercial só depois de 1 e 2 fechados —
    critério de saída completo no Bloco 16 do `PLAN.md`.
+4. Canal de aquisição (Seção 7) não é uma etapa depois das três acima — a
+   parte de conteúdo já começa junto do Bloco 16.2, porque é o mesmo
+   artefato (labs testados) servindo dois propósitos. Só o lançamento de
+   pico da Seção 7.5 espera o gate comercial completo.
 
 ---
 
