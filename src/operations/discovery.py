@@ -169,6 +169,15 @@ _SSM_COMMAND_ACTIONS = frozenset({
     "*",
 })
 
+# Bloco 16.3 (KMS): read-gate. Um recurso cifrado com CMK customer-managed só é
+# realmente legível por quem também tem kms:Decrypt na chave — refina readable_by
+# pra reduzir falso positivo (ter GetSecretValue não basta se você não decifra).
+_KMS_DECRYPT_ACTIONS = frozenset({
+    "kms:decrypt",
+    "kms:*",
+    "*",
+})
+
 # IAM mutation actions on identity.role — tracked separately in mutable_by dict.
 # Key = canonical action name stored in mutable_by; value = frozenset that matches it.
 _ROLE_MUTATION_ACTIONS: dict[str, frozenset] = {
@@ -266,6 +275,38 @@ def _compute_capability_graph(resources: list[dict]) -> None:
         ]
         if readable_by:
             _set_resource_meta(data_res, "readable_by", readable_by)
+
+    # --- KMS read-gate (Bloco 16.3) ---
+    # decryptable_by por CMK; depois restringe readable_by dos recursos cifrados
+    # com CMK pra interseção com quem decifra. Só CMKs presentes no snapshot com
+    # decryptable_by resolvido restringem — chave ausente/AWS-managed preserva
+    # readable_by (não inventa falso negativo por discovery incompleto).
+    decryptable_by_key: dict[str, set[str]] = {}
+    for key_res in resources:
+        if key_res.get("resource_type") != "crypto.kms_key":
+            continue
+        key_arn = key_res.get("identifier", "")
+        decryptable = [
+            p["identifier"] for p in principals
+            if _principal_has_capability(p, _KMS_DECRYPT_ACTIONS, key_arn)
+        ]
+        decryptable_by_key[key_arn] = set(decryptable)
+        if decryptable:
+            _set_resource_meta(key_res, "decryptable_by", sorted(decryptable))
+
+    if decryptable_by_key:
+        for data_res in resources:
+            if data_res.get("resource_type") not in _DATA_READ_ACTIONS:
+                continue
+            meta = data_res.get("metadata") or {}
+            key_id = meta.get("kms_key_id")
+            readable = meta.get("readable_by")
+            if not key_id or not readable or key_id not in decryptable_by_key:
+                continue
+            # interseção: quem lê E decifra. Pode virar [] (cifrado com chave que
+            # ninguém do snapshot decifra) — aí o recurso não tem leitor real.
+            gated = [p for p in readable if p in decryptable_by_key[key_id]]
+            meta["readable_by"] = gated
 
     # --- createkey_by em identity.user ---
     for user_res in resources:
@@ -1114,6 +1155,8 @@ def run_foundation_discovery(
     # pra lista vazia, nunca quebram (mesma disciplina do boundary do Bloco 11).
     _list_functions = getattr(aws_client, "list_functions", None)
     lambda_functions = _list_functions(region=region) if callable(_list_functions) else []
+    _list_kms = getattr(aws_client, "list_kms_keys", None)
+    kms_keys = _list_kms(region=region) if callable(_list_kms) else []
     services_scanned.append("ec2")
     evidence.append(
         {
@@ -1562,6 +1605,26 @@ def run_foundation_discovery(
                     "target": fn.get("Role"),
                     "type": "uses_execution_role",
                 })
+
+    # Bloco 16.3 (KMS): CMKs customer-managed como recurso — decryptable_by é
+    # computado por _compute_capability_graph e gateia readable_by dos recursos
+    # cifrados. (Capturar o kms_key_id POR recurso cifrado — secret/S3 — é peça
+    # de discovery da fase de labs; ver PLAN.md 16.3 KMS.)
+    if kms_keys:
+        services_scanned.append("kms")
+        evidence.append({"service": "kms", "api_calls": ["kms:ListKeys", "kms:DescribeKey"]})
+        for key in kms_keys:
+            key_arn = key.get("Arn")
+            if not key_arn:
+                continue
+            resources.append({
+                "service": "kms",
+                "resource_type": "crypto.kms_key",
+                "identifier": key_arn,
+                "region": region,
+                "metadata": {"key_id": key.get("KeyId")},
+                "source": "aws_api",
+            })
 
     _compute_privilege_scores(resources)
     _derive_attack_targets(resources)

@@ -1776,6 +1776,43 @@ função no `intermediate_resource` distingue no finding). 9 testes novos
 (`tests/test_lambda_env_pivot.py`), 461 no total. Condição 4 (AWS real) na fase
 de labs, junto com os outros serviços.
 
+#### KMS read-gate — fatia offline (FEITO, 2026-08-06; decisão do autor)
+
+**Decisão do autor (2026-08-06):** KMS NÃO é superfície de pivot-pra-identidade —
+`kms:Decrypt` dá texto-plano, não uma role. Das opções levantadas (read-gate /
+mutação de key policy / pular), o autor escolheu o **read-gate**: modelar KMS como
+REFINAMENTO do `readable_by` existente, não como aresta de escalação nova. Um
+recurso cifrado com CMK customer-managed só é realmente legível por quem tem
+TAMBÉM `kms:Decrypt` na chave — ter `GetSecretValue`/`s3:GetObject` não basta se
+você não decifra. É a opção mais honesta e a única que reduz falso positivo (mais
+alinhada à REGUA que inflar cobertura com uma aresta KMS de valor duvidoso).
+
+**Mecanismo (offline, testado):** `_compute_capability_graph` ganhou, depois de
+computar `readable_by`: (a) `decryptable_by` por `crypto.kms_key` (quem tem
+`kms:Decrypt`, via `_principal_has_capability` → respeita Deny/boundary); (b) o
+gate — pra cada recurso de dados com `kms_key_id` apontando pra uma CMK presente
+no snapshot, `readable_by ∩ decryptable_by(cmk)`, podendo virar `[]` (cifrado com
+chave que ninguém decifra → sem leitor real). Efeito end-to-end: um principal com
+`GetSecretValue` mas sem `kms:Decrypt` some do `readable_by` → nenhuma hipótese
+`credential_access`/`credential_pivot` parte dele sobre aquele secret. 7 testes
+novos (`tests/test_kms_read_gate.py`), 468 no total.
+
+**Honestidade deliberada (não inventar falso negativo):** o gate SÓ restringe
+quando a CMK está no snapshot com `decryptable_by` resolvido E o recurso tem
+`kms_key_id`. Chave ausente do discovery, AWS-managed, ou recurso sem `kms_key_id`
+→ `readable_by` preservado (comportamento anterior). Melhor um falso positivo
+residual que um falso negativo por discovery incompleto.
+
+**Peça de discovery adiada pra fase de labs (registrada, não escondida):** a
+coleta de CMK customer-managed já entra (best-effort `list_kms_keys` +
+`describe_key`, só `KeyManager=CUSTOMER`, getattr-defensivo). Mas a captura do
+`kms_key_id` POR recurso cifrado (secret via `describe_secret`, S3 via
+`get_bucket_encryption`) — o gatilho do gate — ainda não é coletada em run real
+(o `list_secrets` de hoje retorna só nomes). Sem ela o gate fica inerte num run
+real (não erra, só não restringe). Enriquecer a coleta de secret/S3 com o KeyId é
+trabalho da fase de labs, onde há recurso cifrado real pra validar. O mecanismo
+está pronto e testado; ativa quando a relação de cifragem for coletada.
+
 ### 16.4 — Modelo de ranking (reaproveita a ideia de ML da Seção 4.4 do doc de produto)
 
 A motivação original ("reduzir custo de execução pro self-serve") continua

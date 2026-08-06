@@ -288,6 +288,61 @@ def generate_lambda_environment(scale: int, seed: int = 909) -> dict:
     }
 
 
+def generate_kms_gated_environment(scale: int, seed: int = 55) -> dict:
+    """Camada C — secrets cifrados com CMK + read-gate de KMS (Bloco 16.3).
+
+    Cada secret é cifrado com uma CMK. Metade dos users tem GetSecretValue+Decrypt
+    (leitores reais); a outra metade só GetSecretValue (deve ser gateada pra fora
+    do readable_by — falso positivo evitado). Anota via código de produção.
+    """
+    rng = random.Random(seed)
+    resources: list[dict] = []
+    user_arns = [_arn("user", f"kms-user-{i:04d}") for i in range(scale)]
+    key_arns = [f"arn:aws:kms:{REGION}:{ACCOUNT}:key/cmk-{i:04d}" for i in range(scale)]
+    secret_arns = [_arn("secret", f"prod/kms-{i:04d}") for i in range(scale)]
+
+    def stmt(actions, res):
+        return {"Effect": "Allow", "Action": actions, "Resource": res}
+
+    for i, uarn in enumerate(user_arns):
+        read_secret = secret_arns[i % len(secret_arns)]
+        key_for_secret = key_arns[i % len(key_arns)]
+        statements = [stmt(["secretsmanager:GetSecretValue"], [read_secret])]
+        # metade dos users também decifra (leitor real); a outra metade é gateada
+        if i % 2 == 0:
+            statements.append(stmt(["kms:Decrypt"], [key_for_secret]))
+        resources.append({
+            "service": "iam", "resource_type": "identity.user", "identifier": uarn,
+            "region": REGION,
+            "metadata": {"user_name": uarn.split("/")[-1],
+                         "policy_permissions": [{"source": "inline", "statements": statements}]},
+            "source": "synthetic",
+        })
+    for karn in key_arns:
+        resources.append({
+            "service": "kms", "resource_type": "crypto.kms_key", "identifier": karn,
+            "region": REGION, "metadata": {"key_id": karn.split("/")[-1]}, "source": "synthetic",
+        })
+    for i, sarn in enumerate(secret_arns):
+        resources.append({
+            "service": "secretsmanager", "resource_type": "secret.secrets_manager",
+            "identifier": sarn, "region": REGION,
+            "metadata": {"name": sarn.split(":secret:")[-1], "kms_key_id": key_arns[i % len(key_arns)]},
+            "source": "synthetic",
+        })
+
+    _compute_capability_graph(resources)
+    return {
+        "target": f"synthetic-kms-scale-{scale}",
+        "bundle": "aws-iam-heavy",
+        "caller_identity": {"Account": ACCOUNT, "Arn": user_arns[0]},
+        "services_scanned": ["iam", "secretsmanager", "kms"],
+        "regions_scanned": [REGION],
+        "resources": resources,
+        "summary": {"resource_count": len(resources)},
+    }
+
+
 def generate_secure_baseline(scale: int, seed: int = 7) -> dict:
     """Camada B — baseline seguro: recursos existem, mas NENHUM caminho de ataque.
 
@@ -348,6 +403,6 @@ if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "iam"
     scale = int(sys.argv[2]) if len(sys.argv) > 2 else 100
     fn = {"iam": generate_environment, "ec2": generate_ec2_environment,
-          "lambda": generate_lambda_environment,
+          "lambda": generate_lambda_environment, "kms": generate_kms_gated_environment,
           "baseline": generate_secure_baseline}[mode]
     print(json.dumps(fn(scale), indent=2))

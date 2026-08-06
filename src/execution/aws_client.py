@@ -136,6 +136,13 @@ class AwsClient(Protocol):
     ) -> list[Dict[str, Any]]:
         ...
 
+    def list_kms_keys(
+        self,
+        region: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[Dict[str, Any]]:
+        ...
+
     def list_instance_profile_associations(
         self,
         region: str,
@@ -679,6 +686,30 @@ class Boto3AwsClient:
                     "Role": fn.get("Role"),
                 })
         return functions
+
+    def list_kms_keys(
+        self,
+        region: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[Dict[str, Any]]:
+        client = self._session(credentials).client("kms", region_name=region)
+        keys: list[Dict[str, Any]] = []
+        paginator = client.get_paginator("list_keys")
+        for page in paginator.paginate():
+            for entry in page.get("Keys", []):
+                key_id = entry.get("KeyId")
+                if not key_id:
+                    continue
+                try:
+                    meta = client.describe_key(KeyId=key_id).get("KeyMetadata", {})
+                except Exception:
+                    continue
+                # só CMKs customer-managed importam pro read-gate (AWS-managed
+                # concede decrypt implicitamente a quem tem a read action do serviço)
+                if meta.get("KeyManager") != "CUSTOMER":
+                    continue
+                keys.append({"Arn": meta.get("Arn"), "KeyId": meta.get("KeyId")})
+        return keys
 
     def list_instance_profile_associations(
         self,
