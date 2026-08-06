@@ -130,10 +130,54 @@ def build_challenge_multihop_chain():
             "description": "Chain de 2 hops de role. Desafia o BFS single-level do engine."},
            _snapshot("challenge_multihop_chain", resources),
            [{"id": "hop1", "entry": user, "target": r1, "class": "role_chain",
-             "in_coverage": True, "note": "assume direto — engine acha"},
+             "in_coverage": True, "note": "assume direto"},
             {"id": "hop2", "entry": user, "target": r2, "class": "role_chain_multihop",
+             "in_coverage": True,
+             "note": "coberto desde o fix multi-level do BFS (fase de labs, 2026-08-06)"}])
+
+
+def build_challenge_role_then_read():
+    # DESAFIO: user → R1 (assumível); R1 pode ler secret S; user NÃO pode ler S.
+    # BFS single-level erra: R1 nunca é atravessada, então o acesso a S via R1 some.
+    user, r1 = _u("rtr-entry"), _r("rtr-role")
+    secret = f"arn:aws:secretsmanager:{REGION}:{ACCT}:secret:prod/db-creds"
+    resources = [
+        {"resource_type": "identity.user", "identifier": user, "metadata": {"policy_permissions": [
+            {"source": "i", "statements": [_allow(["sts:AssumeRole"], [r1])]}]}},
+        {"resource_type": "identity.role", "identifier": r1, "metadata": {
+            "trust_principals": [user],
+            "policy_permissions": [{"source": "i", "statements": [
+                _allow(["secretsmanager:GetSecretValue"], [secret])]}]}},
+        {"resource_type": "secret.secrets_manager", "identifier": secret, "metadata": {"name": "prod/db-creds"}},
+    ]
+    _write("challenge_role_then_read",
+           {"name": "challenge_role_then_read", "layer": "C", "held_out": False, "challenge": True,
+            "description": "Assume role e depois ler secret com ela. Desafia o BFS single-level."},
+           _snapshot("challenge_role_then_read", resources),
+           [{"id": "assume", "entry": user, "target": r1, "class": "role_chain", "in_coverage": True},
+            {"id": "read_via_role", "entry": user, "target": secret, "class": "credential_access_via_role",
+             "in_coverage": True,
+             "note": "coberto desde o fix multi-level do BFS (fase de labs, 2026-08-06)"}])
+
+
+def build_challenge_cross_account():
+    # DESAFIO GENUINAMENTE FORA DE COBERTURA (não some com multi-level): role em
+    # OUTRA conta confia o user. Discovery é single-account → a role da conta B nem
+    # aparece no snapshot, então nenhuma aresta é gerada. Fica como plant permanente.
+    user = _u("xacct-user")
+    role_b = "arn:aws:iam::999888777666:role/partner-admin"
+    resources = [
+        {"resource_type": "identity.user", "identifier": user, "metadata": {"policy_permissions": [
+            {"source": "i", "statements": [_allow(["sts:AssumeRole"], [role_b])]}]}},
+        # a role_b NÃO está no snapshot (outra conta, discovery não enumerou)
+    ]
+    _write("challenge_cross_account",
+           {"name": "challenge_cross_account", "layer": "C", "held_out": False, "challenge": True,
+            "description": "Assume role cross-account. Discovery single-account não vê a role alvo."},
+           _snapshot("challenge_cross_account", resources),
+           [{"id": "xacct", "entry": user, "target": role_b, "class": "cross_account_role_chain",
              "in_coverage": False,
-             "limitation": "BFS single-level: role assumida (R1) não é re-atravessada, então user→R2 via R1 não é gerado"}])
+             "limitation": "discovery single-account: a role da conta B não está no snapshot, sem aresta"}])
 
 
 def build_heldout_ec2_variant():
@@ -156,6 +200,34 @@ def build_heldout_ec2_variant():
              "in_coverage": True}])
 
 
+def build_heldout_multihop_4():
+    # HELD-OUT: chain de 4 hops (user→R1→R2→R3→R4). Valida que o fix multi-level
+    # GENERALIZA (h1-h3, cobertos) E carrega o plant fora-de-cobertura do novo
+    # limite: R4 está em depth 4 > max_depth=3, então é perdido de propósito.
+    # Nunca tocar pra ajustar o engine.
+    user = _u("ho-chain")
+    r1, r2, r3, r4 = _r("ho-h1"), _r("ho-h2"), _r("ho-h3"), _r("ho-h4-admin")
+    def role(arn, trust, assumes):
+        return {"resource_type": "identity.role", "identifier": arn, "metadata": {
+            "trust_principals": [trust],
+            "policy_permissions": ([{"source": "i", "statements": [_allow(["sts:AssumeRole"], [assumes])]}]
+                                   if assumes else [])}}
+    resources = [
+        {"resource_type": "identity.user", "identifier": user, "metadata": {"policy_permissions": [
+            {"source": "i", "statements": [_allow(["sts:AssumeRole"], [r1])]}]}},
+        role(r1, user, r2), role(r2, r1, r3), role(r3, r2, r4), role(r4, r3, None),
+    ]
+    _write("heldout_multihop_4",
+           {"name": "heldout_multihop_4", "layer": "C", "held_out": True, "challenge": True,
+            "description": "HELD-OUT — chain de 4 hops; valida generalização (h1-h3) + limite max_depth (h4)."},
+           _snapshot("heldout_multihop_4", resources),
+           [{"id": "h1", "entry": user, "target": r1, "class": "role_chain", "in_coverage": True},
+            {"id": "h2", "entry": user, "target": r2, "class": "role_chain", "in_coverage": True},
+            {"id": "h3", "entry": user, "target": r3, "class": "role_chain", "in_coverage": True},
+            {"id": "h4", "entry": user, "target": r4, "class": "role_chain_4hop", "in_coverage": False,
+             "limitation": "max_depth=3: R4 está em depth 4, além do teto de travessia"}])
+
+
 if __name__ == "__main__":
     LABS.mkdir(exist_ok=True)
     print("construindo labs semente...")
@@ -163,5 +235,8 @@ if __name__ == "__main__":
     build_pos_ec2_ssm_pivot()
     build_pos_lambda_env_pivot()
     build_challenge_multihop_chain()
+    build_challenge_role_then_read()
+    build_challenge_cross_account()
     build_heldout_ec2_variant()
+    build_heldout_multihop_4()
     print("pronto.")

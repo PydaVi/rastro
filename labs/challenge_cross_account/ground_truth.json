@@ -1,0 +1,13 @@
+{
+  "lab": "challenge_cross_account",
+  "true_paths": [
+    {
+      "id": "xacct",
+      "entry": "arn:aws:iam::123456789012:user/xacct-user",
+      "target": "arn:aws:iam::999888777666:role/partner-admin",
+      "class": "cross_account_role_chain",
+      "in_coverage": false,
+      "limitation": "discovery single-account: a role da conta B n\u00e3o est\u00e1 no snapshot, sem aresta"
+    }
+  ]
+}

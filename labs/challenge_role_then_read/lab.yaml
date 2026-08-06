@@ -1,0 +1,5 @@
+name: challenge_role_then_read
+layer: C
+held_out: false
+challenge: true
+description: Assume role e depois ler secret com ela. Desafia o BFS single-level.

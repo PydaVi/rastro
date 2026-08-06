@@ -233,19 +233,31 @@ class CapabilityGraph:
             if depth >= max_depth:
                 continue
 
-            # CanAssume: current → role (terminal — gerou uma hipótese)
+            # CanAssume: current → role. Multi-level (fase de labs): a role assumida
+            # é ENFILEIRADA pra continuar a travessia (role-chain real, role→read,
+            # role→mutate). Só arestas REAIS enfileiram — o sweep especulativo do
+            # pivot (roles-alvo por palpite) continua terminal, pra não compor
+            # especulação em cima de especulação. Bound: visited + max_depth + o
+            # teto de fan-out da 16.1 no sweep do pivot.
             for role_arn in self.can_assume.get(current_arn, []):
                 full_path = path + [("assume", current_arn, role_arn, None)]
                 hyp = self._path_to_hypothesis(entry_arn, role_arn, full_path)
                 if hyp is not None:
                     hypotheses.append(hyp)
+                if role_arn not in visited_identities:
+                    visited_identities.add(role_arn)
+                    queue.append((role_arn, full_path, depth + 1))
 
-            # CanPivotCompute: current → role via EC2 instance profile (terminal, Bloco 16.3)
+            # CanPivotCompute: current → role via EC2 instance profile (Bloco 16.3).
+            # A role alcançada é real → também continua a travessia.
             for (role_arn, profile_arn) in self.can_pivot_compute.get(current_arn, []):
                 full_path = path + [("compute_pivot", current_arn, role_arn, profile_arn)]
                 hyp = self._path_to_hypothesis(entry_arn, role_arn, full_path)
                 if hyp is not None:
                     hypotheses.append(hyp)
+                if role_arn not in visited_identities:
+                    visited_identities.add(role_arn)
+                    queue.append((role_arn, full_path, depth + 1))
 
             # CanMutate: current → role/resource (terminal)
             for (resource_arn, action) in self.can_mutate.get(current_arn, []):

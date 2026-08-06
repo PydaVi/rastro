@@ -7,15 +7,15 @@
       "target": "arn:aws:iam::123456789012:role/hop1-role",
       "class": "role_chain",
       "in_coverage": true,
-      "note": "assume direto \u2014 engine acha"
+      "note": "assume direto"
     },
     {
       "id": "hop2",
       "entry": "arn:aws:iam::123456789012:user/chain-entry",
       "target": "arn:aws:iam::123456789012:role/hop2-admin",
       "class": "role_chain_multihop",
-      "in_coverage": false,
-      "limitation": "BFS single-level: role assumida (R1) n\u00e3o \u00e9 re-atravessada, ent\u00e3o user\u2192R2 via R1 n\u00e3o \u00e9 gerado"
+      "in_coverage": true,
+      "note": "coberto desde o fix multi-level do BFS (fase de labs, 2026-08-06)"
     }
   ]
 }

@@ -1,0 +1,5 @@
+name: heldout_multihop_4
+layer: C
+held_out: true
+challenge: true
+description: HELD-OUT — chain de 4 hops; valida generalização (h1-h3) + limite max_depth (h4).

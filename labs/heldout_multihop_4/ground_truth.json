@@ -1,0 +1,34 @@
+{
+  "lab": "heldout_multihop_4",
+  "true_paths": [
+    {
+      "id": "h1",
+      "entry": "arn:aws:iam::123456789012:user/ho-chain",
+      "target": "arn:aws:iam::123456789012:role/ho-h1",
+      "class": "role_chain",
+      "in_coverage": true
+    },
+    {
+      "id": "h2",
+      "entry": "arn:aws:iam::123456789012:user/ho-chain",
+      "target": "arn:aws:iam::123456789012:role/ho-h2",
+      "class": "role_chain",
+      "in_coverage": true
+    },
+    {
+      "id": "h3",
+      "entry": "arn:aws:iam::123456789012:user/ho-chain",
+      "target": "arn:aws:iam::123456789012:role/ho-h3",
+      "class": "role_chain",
+      "in_coverage": true
+    },
+    {
+      "id": "h4",
+      "entry": "arn:aws:iam::123456789012:user/ho-chain",
+      "target": "arn:aws:iam::123456789012:role/ho-h4-admin",
+      "class": "role_chain_4hop",
+      "in_coverage": false,
+      "limitation": "max_depth=3: R4 est\u00e1 em depth 4, al\u00e9m do teto de travessia"
+    }
+  ]
+}

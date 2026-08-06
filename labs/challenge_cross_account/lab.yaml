@@ -1,0 +1,5 @@
+name: challenge_cross_account
+layer: C
+held_out: false
+challenge: true
+description: Assume role cross-account. Discovery single-account não vê a role alvo.

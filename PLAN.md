@@ -1880,6 +1880,42 @@ promessa.
 
 ---
 
+## Fase de labs — mecanismo de integridade primeiro (INICIADA, 2026-08-06)
+
+Exigência do autor pra abrir a fase: **nada de labs como viés de confirmação** —
+quem construiu o engine não pode plantar só o que o engine acerta. Antes de gerar
+qualquer lab, foi construído o mecanismo que torna isso impossível de esconder
+(`docs/lab-integrity.md`, `scripts/lab_scorer.py`, `scripts/build_seed_labs.py`,
+`tests/test_lab_scorer.py`): ground truth INDEPENDENTE (da intenção, nunca da
+saída do engine), plants fora-de-cobertura obrigatórios, controles negativos
+(Camada B), held-out separado, e uma guarda que ALERTA quando um suite de desafio
+dá 100%/0-FP sem plant (perfeição sem desafio = red flag, não sucesso).
+
+**O mecanismo já provou seu valor rendendo uma correção de núcleo (não teatro):**
+os labs de desafio expuseram que o `CapabilityGraph` BFS era SINGLE-LEVEL — a fila
+do `_traverse` nunca crescia, então role assumida não era re-atravessada e
+`max_depth=3` era código morto. Consequência real: role-chain multi-hop e
+role→read não eram cobertos pelo caminho de PRODUÇÃO atual, apesar do HISTORY.md
+afirmar "multi-hop confirmado" (aquilo foi no caminho antigo do planner/simulador,
+não no BFS). Seguindo a REGUA regra 7 (subcobertura = problema de núcleo primeiro),
+`_traverse` virou multi-level: enfileira roles alcançadas por aresta REAL
+(`can_assume`, `can_pivot_compute`), bounded por `visited` + `max_depth` + o teto
+de fan-out da 16.1 (o sweep especulativo do pivot continua terminal, pra não compor
+especulação). Escala revalidada: +2.4x no volume cru mas ainda LINEAR
+(raw/recursos constante ~34, sem regressão pra O(n²); 800 recursos em ~11s/93MB).
+Held-out `heldout_multihop_4` (nunca usado no fix) confirmou generalização (h1-h3
+achados) e carrega o novo limite como plant (h4 em depth 4 > max_depth). Plants
+permanentes que sobrevivem ao fix: cross-account (discovery single-account) e
+chain > max_depth. 472 testes.
+
+**Próximo na fase:** Camada A real (lab externo aplicado pelo autor, ground truth
+da descrição do próprio lab), métrica de PROVA no scorer (2ª coluna sobre execução
+real), mais plants de desafio (SCP não-enforçado, Condition de trust em 2º salto,
+cadeia de credencial de 3 saltos), e captura do `kms_key_id` por recurso (ativa o
+read-gate KMS em run real).
+
+---
+
 ## Gate de medio prazo
 
 ### Blind Hybrid Challenge Readiness (`Wyatt` gate)

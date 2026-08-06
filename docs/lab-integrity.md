@@ -19,11 +19,21 @@ o engine **deve errar hoje** por limite conhecido de arquitetura. Miss deles é
 **esperado e registrado**, não mascarado. Um suite de desafio SEM nenhum plant
 fora-de-cobertura é viés de confirmação por construção — só tem alvo fácil.
 
-Exemplo real (lab `challenge_multihop_chain`): o BFS do engine é single-level —
-não re-atravessa uma role assumida. Então `user → R1 → R2` (assumir R1, e de R1
-assumir R2) tem o segundo salto perdido. O lab planta `user→R2` como
-`in_coverage: false`; o scorer reporta o miss com a limitação escrita. Nenhum lab
-"fácil" jamais expõe isso — só um plant honesto expõe.
+Exemplo real que já rendeu correção de núcleo (2026-08-06): o BFS do engine era
+single-level — não re-atravessava uma role assumida. Os labs `challenge_multihop_chain`
+(`user→R1→R2`) e `challenge_role_then_read` (`user→R1`, R1 lê secret) plantaram os
+saltos perdidos como `in_coverage: false`, e o scorer reportou os misses. Isso
+motivou o fix multi-level do `_traverse` (enfileira roles alcançadas por aresta
+real, bounded por visited + max_depth + o teto de fan-out da 16.1). Depois do fix,
+os dois viraram `in_coverage: true` e o held-out `heldout_multihop_4` — um lab
+NUNCA usado durante o fix — confirmou que a correção GENERALIZA (h1-h3 achados),
+carregando o novo limite como plant: `h4` está em depth 4 > `max_depth=3`, então é
+perdido de propósito. Nenhum lab "fácil" jamais exporia nada disso — só plants
+honestos expõem, e só um held-out prova que o fix não foi tunado.
+
+Limites conhecidos que continuam plants permanentes (não some com o fix): chain
+cross-account (`challenge_cross_account` — discovery single-account não vê a role
+alvo) e chain de role acima de `max_depth=3` (`heldout_multihop_4` h4).
 
 ### 3. Controles negativos
 Todo suite tem labs seguros (`true_paths: []`, Camada B). A resposta certa é
@@ -87,5 +97,7 @@ regressão é travada.
   próprio lab, sem olhar a saída do Rastro. Exige `terraform apply` (autor roda).
 - **Métrica de prova** — segunda coluna no scorer, sobre execução real.
 - **Enriquecer o `challenge` set** — mais limites conhecidos como plants: SCP
-  não-enforçado, Condition de trust não avaliada em 2º salto, cross-account,
-  cadeia de credencial de 3 saltos.
+  não-enforçado, Condition de trust não avaliada em 2º salto, cadeia de credencial
+  de 3 saltos (read→assume→read — o extracted identity não é re-atravessado de
+  propósito, pra não compor especulação). Cross-account e chain > max_depth já
+  estão plantados.

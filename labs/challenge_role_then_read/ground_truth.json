@@ -1,0 +1,20 @@
+{
+  "lab": "challenge_role_then_read",
+  "true_paths": [
+    {
+      "id": "assume",
+      "entry": "arn:aws:iam::123456789012:user/rtr-entry",
+      "target": "arn:aws:iam::123456789012:role/rtr-role",
+      "class": "role_chain",
+      "in_coverage": true
+    },
+    {
+      "id": "read_via_role",
+      "entry": "arn:aws:iam::123456789012:user/rtr-entry",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/db-creds",
+      "class": "credential_access_via_role",
+      "in_coverage": true,
+      "note": "coberto desde o fix multi-level do BFS (fase de labs, 2026-08-06)"
+    }
+  ]
+}
