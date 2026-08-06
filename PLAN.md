@@ -1450,6 +1450,119 @@ Após o salto arquitetural, o roadmap de expansão horizontal volta a fazer sent
 
 ---
 
+## Bloco 16 — Cobertura Ampla Validada por Variação Máxima (planejado, 2026-08-05)
+
+**Direção**: a promessa "aponte pra sua conta AWS de produção e receba resultado
+confiável" só é honesta depois de três coisas acontecerem juntas — correção do
+que já existe, amplitude de serviço, e validação contra variação que ninguém
+aqui desenhou. As três já estavam mapeadas em documentos separados (este
+PLAN.md pro engine, `docs/frente1-self-serve-plan.md` seção 4 pro banco de
+ambientes) — este bloco funde os dois porque são a mesma pergunta feita de
+dois jeitos: "o engine generaliza, ou só funciona nos labs que a gente mesmo
+fez pra funcionar?"
+
+**Diagnóstico que motivou a fusão (2026-08-05)**: uma auditoria rápida do que
+"parece coberto" achou o mesmo padrão do código morto do Bloco 17 — `tools/aws/
+kms_decrypt.yaml` e `lambda_invoke.yaml` não têm implementação nenhuma no
+executor; `ec2_instance_profile_pivot` tem executor mas nunca é oferecido pelo
+`BlindRealRuntime` (nenhum caminho real de execução chega nele); o
+`CapabilityGraph` não computa nenhuma aresta pra Lambda, KMS ou EC2. Cobertura
+de serviço real hoje é só IAM + S3 + Secrets + SSM — o resto é andaime que
+parece existir e não está ligado a nada. Esse é exatamente o tipo de lacuna
+que só aparece testando contra variação real, não lendo a lista de arquivos
+`tools/aws/*.yaml` e assumindo que ela significa cobertura.
+
+### 16.0 — Auditoria do andaime existente (pré-requisito, pequeno)
+
+Pra cada tool que "meio existe" (Lambda, KMS, EC2 pivot): decidir explicitamente
+se vira cobertura de verdade (capability graph edges + path-driven + executor
+completo — o mesmo tratamento que IAM/S3/Secrets/SSM já tiveram) ou sai do
+repositório. Nenhuma tool fica em estado ambíguo daqui pra frente — é a mesma
+disciplina que motivou remover os `_derive_*` mortos no Bloco 17.
+
+### 16.1 — Validação de escala (antes de qualquer serviço novo)
+
+Discovery e geração de hipóteses nunca foram testados contra uma conta grande
+— tudo até hoje foi 10–40 recursos. Usar a Camada C (geração combinatória, ver
+16.2) pra montar um ambiente sintético com centenas de recursos e confirmar:
+discovery não trava nem estoura rate limit da AWS, o volume de hipóteses cruas
+não explode combinatorialmente de um jeito que o corte de `max_hypotheses`
+não consiga lidar direito (já vimos 25 hipóteses cruas num lab pequeno hoje —
+numa conta grande isso escala rápido), e o tempo de execução continua dentro
+de um teto razoável. Isso vem **antes** de mais serviços porque cada serviço
+novo multiplica o espaço de hipóteses — melhor descobrir o limite da
+arquitetura atual com o que já existe do que empilhar mais coisa em cima de
+uma base que ainda não sabemos se aguenta escala.
+
+### 16.2 — Banco de ambientes como prática contínua, não gate único
+
+A composição de amostra já desenhada em `docs/frente1-self-serve-plan.md`
+(Camada A — CloudGoat/IAM Vulnerable/TerraGoat/AWSGoat, não adaptados, pra
+credibilidade de independência; Camada B — baselines seguros, pra medir falso
+positivo; Camada C — geração combinatória, pra volume) continua valendo, mas
+muda de papel: em vez de um gate final aplicado uma vez só depois de tudo
+pronto (como o sequenciamento original da Seção 5 desse documento sugeria),
+vira uma prática contínua rodada a cada fatia de cobertura nova — "apanhar o
+máximo possível" cedo, não no fim. Held-out set (nunca ajustar o engine contra
+o mesmo conjunto usado pra gerar a estatística final) continua um princípio
+inegociável — só muda de quando é aplicado (também durante o desenvolvimento,
+não só na medição final).
+
+### 16.3 — Expansão serviço por serviço, cada um com Definition of Done própria
+
+Ordem sugerida: EC2 instance-profile pivot primeiro (já tem meio-caminho
+andado no executor), depois Lambda (execution role + env vars como fonte de
+credencial, mesmo padrão de pivot que Secrets/SSM/S3 já usam), depois KMS
+(grants/key policy como aresta), depois RDS. Pra cada serviço, "coberto" só
+conta quando os quatro itens fecham juntos — nenhum sozinho basta:
+
+1. `CapabilityGraph` computa aresta real pro serviço (não só resource_type descoberto)
+2. Path-driven: `BlindRealRuntime`/`_step_tool` sabem gerar o passo executável
+3. Executor completo (não só YAML) com teste offline
+4. Validado contra pelo menos 1 lab de cada camada (A/B/C) que exercite esse
+   serviço especificamente, achando e corrigindo o que aparecer antes de
+   declarar fechado
+
+### 16.4 — Modelo de ranking (reaproveita a ideia de ML da Seção 4.4 do doc de produto)
+
+A motivação original ("reduzir custo de execução pro self-serve") continua
+válida, mas ganha uma segunda razão mais urgente: é a resposta de arquitetura
+pro problema de triagem que o 16.1 vai expor — quando o espaço de hipóteses
+cresce (mais serviços, contas maiores), um corte cego por `max_hypotheses`
+não escala bem mesmo com a ordenação por `evaluation_tier` que já existe hoje.
+Os pares rotulados que a Camada C já produz de graça (estado do ambiente,
+caminho provado ou não) alimentam um modelo simples de ranking sem trabalho
+de anotação extra — não é feature nova, é o mesmo dataset servindo dois
+propósitos.
+
+### 16.5 — Estatística final
+
+Só depois de 16.0–16.4 fechados: número público (achados em ambiente
+vulnerável, falso positivo em baseline seguro) calculado sobre o held-out set,
+nunca antes. Ver `docs/frente1-self-serve-plan.md` seção 4.1 pro princípio
+completo de independência.
+
+### Por que isso vem antes do resto do gate comercial
+
+`docs/frente1-self-serve-plan.md` seção 1.1 já dizia "fechar Bloco 11 antes de
+vender". Esta sessão mostrou que "fechar Bloco 11" sozinho não é suficiente
+pra promessa de "qualquer conta de produção" — SCP e cross-account fecham a
+lacuna de governança, mas a lacuna de amplitude de serviço (Bloco 16) e a
+lacuna de validação contra variação desconhecida (Camadas A/B/C) são
+independentes e igualmente bloqueantes. Bloco 11 (SCP/cross-account) e Bloco
+16 podem — e devem — andar em paralelo; nenhum dos dois sozinho fecha a
+promessa.
+
+**Critérios de saída**
+
+1. Auditoria do andaime (16.0) — decisão registrada pra cada tool ambígua
+2. Validação de escala (16.1) — rodado contra ambiente sintético grande
+3. Pelo menos EC2 e Lambda fechados com as 4 condições da 16.3
+4. Modelo de ranking (16.4) — protótipo rodando sobre os primeiros labs da Camada C
+5. Held-out set definido e nunca tocado durante o desenvolvimento
+
+---
+
 ## Gate de medio prazo
 
 ### Blind Hybrid Challenge Readiness (`Wyatt` gate)

@@ -137,13 +137,38 @@ A saída de prova do próprio Rastro (chain provada ou não, junto com o grafo d
 
 ## 5. Sequenciamento sugerido
 
-Ver o gate de maturidade na Seção 1.1 antes de tratar isto como cronograma de lançamento comercial. Dentro desse gate:
+**Atualizado em 2026-08-05 — ver `PLAN.md`, seção "Bloco 16 — Cobertura Ampla
+Validada por Variação Máxima".** Uma sessão de trabalho no engine revelou que
+o gate de maturidade original (só "fechar Bloco 11") era necessário mas não
+suficiente: uma auditoria rápida achou que cobertura de serviço além de IAM/
+S3/Secrets/SSM é, em grande parte, andaime desconectado (tools com YAML mas
+sem execução real ligada a nenhum caminho, `CapabilityGraph` sem arestas pra
+Lambda/KMS/EC2). A promessa "aponte pra sua conta AWS de produção e receba
+resultado confiável" depende de três coisas fechando juntas, não uma:
 
-1. Fechar Bloco 11 (Governança Real) — prioridade máxima, é o que decide se o produto pode prometer prova auditável de verdade.
-2. Construir o onboarding automatizado (Blocos 2 e 3 deste documento) em paralelo ao item 1 — não depende dele, é trilha de engenharia separada.
-3. Gerar a fatia pequena de validação externa (Camadas A e B, ~10–15 ambientes) assim que o Bloco 11 fechar, como portão de qualidade antes de qualquer venda.
-4. Só então lançar o Attack Path Snapshot.
-5. Depois do lançamento, expandir o banco de ambientes até 100+ (Camada C incluída) — o dataset já tem valor standalone como conteúdo técnico (newsletters, candidatura futura a fundos como Alpha-Omega) mesmo rodando em paralelo aos itens acima, mas a estatística de venda só deve ser publicada depois que a metodologia estiver congelada e o Bloco 11 estiver fechado (ver Seção 4.1).
+1. **Governança (Bloco 11)** — SCP herdado de OU/root e cross-account real.
+   `Condition` de trust policy já fechado (2026-08-05).
+2. **Amplitude de serviço validada (Bloco 16, novo)** — cada serviço novo
+   (EC2, Lambda, KMS, RDS) só conta como coberto com capability graph +
+   execução por caminho + executor completo + validação contra as Camadas
+   A/B/C abaixo, não só "tem YAML".
+3. **Validação contra variação (Camadas A/B/C desta seção)** — deixa de ser
+   um gate final aplicado uma vez e passa a rodar em loop junto com cada
+   fatia de cobertura nova (Bloco 16.2) — "apanhar o máximo possível" cedo,
+   não no fim.
+
+Sequenciamento revisado:
+
+1. Bloco 11 (governança) e Bloco 16 (amplitude + validação contínua) andam
+   **em paralelo** — nenhum dos dois sozinho fecha a promessa de "qualquer
+   conta de produção", então não faz sentido serializar um atrás do outro.
+2. Onboarding automatizado (Seções 2 e 3 deste documento) segue como trilha
+   de engenharia separada, sem depender de 1 — mas **não é mais o próximo
+   passo natural**: construir a loja antes do produto que ela vende estar
+   confiável em qualquer conta real inverteria a prioridade que esta mesma
+   seção definiu desde o início.
+3. Estatística pública e lançamento comercial só depois de 1 e 2 fechados —
+   critério de saída completo no Bloco 16 do `PLAN.md`.
 
 ---
 
