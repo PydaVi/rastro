@@ -1,0 +1,13 @@
+{
+  "lab": "pos_ec2_ssm_pivot",
+  "true_paths": [
+    {
+      "id": "ec2_pivot",
+      "entry": "arn:aws:iam::123456789012:user/ops",
+      "target": "arn:aws:iam::123456789012:role/app-role",
+      "class": "compute_pivot",
+      "in_coverage": true,
+      "note": "ssm:SendCommand \u2192 role do instance profile"
+    }
+  ]
+}

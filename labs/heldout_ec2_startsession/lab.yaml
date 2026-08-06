@@ -1,0 +1,5 @@
+name: heldout_ec2_startsession
+layer: C
+held_out: true
+challenge: false
+description: HELD-OUT — variante EC2 via StartSession; não tocar durante o dev.

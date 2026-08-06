@@ -1,0 +1,5 @@
+name: pos_ec2_ssm_pivot
+layer: C
+held_out: false
+challenge: false
+description: EC2 compute pivot em-cobertura — o engine DEVE achar.

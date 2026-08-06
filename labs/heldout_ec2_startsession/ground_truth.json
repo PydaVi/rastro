@@ -1,0 +1,12 @@
+{
+  "lab": "heldout_ec2_startsession",
+  "true_paths": [
+    {
+      "id": "ec2_pivot_ss",
+      "entry": "arn:aws:iam::123456789012:user/ho-ops",
+      "target": "arn:aws:iam::123456789012:role/ho-role",
+      "class": "compute_pivot",
+      "in_coverage": true
+    }
+  ]
+}

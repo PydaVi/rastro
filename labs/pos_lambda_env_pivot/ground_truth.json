@@ -1,0 +1,12 @@
+{
+  "lab": "pos_lambda_env_pivot",
+  "true_paths": [
+    {
+      "id": "lambda_pivot",
+      "entry": "arn:aws:iam::123456789012:user/dev",
+      "target": "arn:aws:iam::123456789012:role/exec-role",
+      "class": "lambda_pivot",
+      "in_coverage": true
+    }
+  ]
+}
