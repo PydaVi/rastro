@@ -1600,28 +1600,58 @@ de fato pode, não todos. As classes `credential_pivot`/`ssm_pivot`/`s3_pivot`/
 (`_compute_capability_graph`, O(principals × recursos)) também é quadrático mas
 pequeno em termos absolutos (1.4s a 800 recursos) — não é o gargalo.
 
-**Canário de regressão:** `tests/test_scale_validation.py` trava o crescimento
-quadrático (raw(20)/raw(10) ≈ 3.7×, esperado ~4×). Quando a correção domar o
-sweep, esse teste vira vermelho DE PROPÓSITO — é o alvo a derrubar, não
-invariante permanente.
+**Candidatos de correção considerados:**
+1. **Gatear o sweep por assumability** (`can_assume`) — DESCARTADO: os testes do
+   Bloco 9 (`test_b9_derive_credential_pivot_secret_to_role`,
+   `test_b9_derive_create_access_key_pivot`) provam que um role SEM aresta de
+   assumability precisa ser alcançável pelo pivot — é a essência do ataque
+   (assumir role que você não podia). A aresta `assumable_by` vem da policy de
+   OUTROS principals, não da identidade extraída, cujo dono real o discovery não
+   resolve. Gatear por `can_assume` derrubaria cobertura de pivot legítima
+   provada em AWS real.
+2. **Triagem antes da materialização / modelo de ranking** — é o Bloco 16.4;
+   escopo maior, adiado, mas a explosão torna 16.4 mais urgente do que o doc de
+   produto original assumia (é requisito de escala, não só custo de self-serve).
+3. **Teto duro de fan-out por passo com priorização** — ESCOLHIDO E APLICADO.
 
-**Candidatos de correção (decisão de arquitetura, não executada nesta fatia —
-15.1 era medir, não consertar):**
-1. **Gatear o sweep por assumability** — em vez de `_all_role_arns`, só os roles
-   que a credencial extraída plausivelmente assume (ex.: roles cujo
-   `trust_principals` inclui o user-fonte, ou herança de trust do próprio
-   recurso). Reduz O(users × roles) → O(users × k). É também mais honesto
-   ofensivamente. Risco: pode derrubar cobertura de pivot legítima onde o
-   mapeamento credencial→principal é desconhecido — precisa de decisão.
-2. **Mover a triagem pra ANTES da materialização** — gerar candidatos preguiçosos
-   / cortar por score durante o BFS, não depois. É o gancho natural pro modelo de
-   ranking da 16.4, que este resultado torna urgente (não só otimização de custo
-   de self-serve, como o doc de produto colocava — é requisito de escala).
-3. **Teto duro de fan-out por passo** com priorização, como rede de segurança
-   independente da 1/2.
+**Correção aplicada (FEITO, 2026-08-06) — teto de fan-out do pivot:**
 
-Qual seguir (e se 16.4 vem antes de expandir serviço, dado que a explosão é
-bloqueante) fica como a decisão de maior leverage a levar pro autor.
+`_MAX_PIVOT_FANOUT = 8` em `src/core/capability_graph.py`. `_traverse` deixou de
+varrer `self._all_role_arns` (todos os roles) nos dois branches de pivot (leitura
+de credencial e create-key) e passou a varrer `_pivot_target_roles()`: os top-N
+roles priorizados por `(is_high_value_target, privilege_score)` (Bloco 4c, quando
+o discovery os computou; senão ordem de ARN, determinística). O executor
+path-driven ainda resolve a identidade extraída real em runtime — cortar
+hipóteses especulativas na geração é exatamente o certo. N=8 é alto o bastante
+pra não cortar nenhum lab existente (maior fixture tem 12 roles, mas nenhum
+gera pivot BFS porque não têm anotações; unit tests têm ≤2 roles).
+
+Resultado medido (mesmo harness, agora até 3200 recursos):
+
+```
+scale  recursos   raw_hyps   bfs_s   peak_MB     antes (raw_hyps / bfs_s / MB)
+  200       800     11.588   2.862      35.0     245.828 / 95.9s / 758  → 21x/33x/22x
+  400      1600     23.247   6.135      70.1     (não rodava em tempo hábil)
+  800      3200     46.444  10.855     140.1     conta grande, agora em 30s total
+```
+
+`raw_hyps / recursos` vira CONSTANTE em 14.5 → crescimento **linear O(n)**, não
+mais quadrático. O gargalo restante a 3200 recursos passa a ser o estágio de
+anotação `_compute_capability_graph` (19s, O(principals × recursos)) — do lado
+do discovery, mais tratável, registrado como o próximo alvo de escala se/quando
+contas maiores exigirem. `max_hypotheses` continua cortando pra 20, agora sobre
+uma lista crua linear e barata.
+
+**Canário atualizado** (`tests/test_scale_validation.py`, 3 testes): trava o
+crescimento linear (raw(20)/raw(10) ≈ 2.0, não ~3.7), o teto por identidade
+extraída, e a priorização por high-value target. Se o sweep total voltar, o
+crescimento vira super-linear e os testes pegam. 439 testes passando.
+
+**Consequência pro roadmap:** a explosão bloqueante foi domada, então 16.3
+(expansão de serviço) não está mais empilhando em cima de uma base que não
+aguenta escala. 16.4 (ranking) continua sendo a resposta mais fina pra triagem
+quando o espaço crescer com mais serviços, mas deixou de ser pré-requisito
+bloqueante — virou otimização, não correção.
 
 ### 16.2 — Banco de ambientes como prática contínua, não gate único
 

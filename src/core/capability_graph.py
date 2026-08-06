@@ -58,6 +58,19 @@ _READ_TOOL_BY_RESOURCE_TYPE: dict[str, str] = {
     "data_store.s3_object":   "s3_read_sensitive",
 }
 
+# Bloco 16.1: teto de fan-out do pivot. Uma credencial extraída (de um secret,
+# SSM, S3 ou create-key) pode, na modelagem, assumir roles que NÃO têm aresta de
+# assumability visível — porque a aresta é computada a partir da policy de OUTROS
+# principals, não da identidade extraída, cujo dono real o discovery não resolve.
+# Por isso o sweep não pode ser gateado por `can_assume` (os testes do Bloco 9
+# provam que um role sem `assumable_by` precisa ser alcançável). Mas varrer TODOS
+# os roles gera explosão O(users × roles) (medido na 16.1: 245k hipóteses a 800
+# recursos). Solução: varrer só os TOP-N roles por valor de alvo — um atacante
+# pivota pra privilégio, não pra qualquer role. O executor path-driven ainda
+# resolve a identidade extraída real em runtime; cortar hipóteses especulativas
+# aqui é exatamente o certo. N alto o bastante pra não cortar labs pequenos.
+_MAX_PIVOT_FANOUT = 8
+
 # mutate action → tool executável. iam:PutRolePolicy fica de fora de propósito:
 # não existe tools/aws/iam_put_role_policy_mutate.yaml hoje — sem tool real,
 # o path fica incompleto e o hypothesis não ganha path estruturado (ver
@@ -86,6 +99,11 @@ class CapabilityGraph:
     resource_types: dict[str, str] = field(default_factory=dict)
     # all non-service role ARNs in the environment
     _all_role_arns: list[str] = field(default_factory=list)
+    # role_arn → (is_high_value_target, privilege_score) para priorizar o fan-out
+    # do pivot (Bloco 16.1). Vazio quando o discovery não computou scores.
+    _role_priority: dict[str, tuple[bool, int]] = field(default_factory=dict)
+    # cache do top-N de roles-alvo do pivot (computado sob demanda em _traverse)
+    _pivot_roles_cache: list[str] | None = None
     # identity_arn (real, nao sintetica) → {"policy_permissions": [...], "boundary_policy_permissions": [...] | None}
     _principal_policy_data: dict[str, dict] = field(default_factory=dict)
     # SCPs diretamente anexados a conta (Bloco 11), ou None se nao resolvivel
@@ -107,6 +125,11 @@ class CapabilityGraph:
                 g.resource_types[arn] = rtype
             if rtype == "identity.role" and ":role/aws-service-role/" not in arn:
                 g._all_role_arns.append(arn)
+                rmeta = r.get("metadata") or {}
+                g._role_priority[arn] = (
+                    bool(rmeta.get("is_high_value_target", False)),
+                    int(rmeta.get("privilege_score", 0) or 0),
+                )
             if rtype in ("identity.user", "identity.role") and arn:
                 meta = r.get("metadata") or {}
                 g._principal_policy_data[arn] = {
@@ -164,6 +187,27 @@ class CapabilityGraph:
     # Internals
     # ------------------------------------------------------------------
 
+    def _pivot_target_roles(self) -> list[str]:
+        """Bloco 16.1: top-N roles-alvo do pivot, priorizados por valor de alvo.
+
+        Uma identidade extraída pode assumir roles sem aresta de assumability
+        visível (ver _MAX_PIVOT_FANOUT), então não dá pra gatear por `can_assume`.
+        Prioriza high-value target e privilege_score (Bloco 4c) quando o discovery
+        os computou; empate/ausência cai em ordem de ARN (determinístico). Corta
+        em _MAX_PIVOT_FANOUT pra evitar a explosão O(users × roles) da 16.1.
+        """
+        if self._pivot_roles_cache is None:
+            ordered = sorted(
+                self._all_role_arns,
+                key=lambda arn: (
+                    0 if self._role_priority.get(arn, (False, 0))[0] else 1,  # high-value primeiro
+                    -self._role_priority.get(arn, (False, 0))[1],             # privilege_score desc
+                    arn,                                                       # desempate estável
+                ),
+            )
+            self._pivot_roles_cache = ordered[:_MAX_PIVOT_FANOUT]
+        return self._pivot_roles_cache
+
     def _traverse(self, entry_arn: str, max_depth: int) -> list:
         """BFS de um entry identity. Retorna hipóteses encontradas."""
         hypotheses: list = []
@@ -207,8 +251,9 @@ class CapabilityGraph:
                     extracted_arn = f"extracted://{resource_arn}"
                     if extracted_arn not in visited_identities:
                         visited_identities.add(extracted_arn)
-                        # Heurística: identidade extraída pode assumir qualquer role disponível
-                        for role_arn in self._all_role_arns:
+                        # Identidade extraída: assume os top-N roles-alvo (Bloco 16.1,
+                        # antes varria todos os roles → explosão O(users × roles))
+                        for role_arn in self._pivot_target_roles():
                             pivot_path = full_path + [("assume", extracted_arn, role_arn, None)]
                             hyp = self._path_to_hypothesis(
                                 entry_arn, role_arn, pivot_path,
@@ -223,7 +268,7 @@ class CapabilityGraph:
                 extracted_arn = f"extracted://iam_user/{user_arn}"
                 if extracted_arn not in visited_identities:
                     visited_identities.add(extracted_arn)
-                    for role_arn in self._all_role_arns:
+                    for role_arn in self._pivot_target_roles():
                         pivot_path = full_path + [("assume", extracted_arn, role_arn, None)]
                         hyp = self._path_to_hypothesis(
                             entry_arn, role_arn, pivot_path,

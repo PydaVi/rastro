@@ -195,3 +195,52 @@ Objetivo: dar ao projeto credibilidade que resista a auditoria (plano prático) 
 - Tom consistente em todo lugar que alguém for olhar: repositório, landing page, relatório PDF, resposta a issue no GitHub. Inconsistência de tom entre lugares diferentes mina confiança de um jeito sutil, mesmo quando ninguém consegue nomear o porquê.
 - Responder issue e contato em horas, não semanas, nas primeiras semanas depois de qualquer lançamento — comunica projeto vivo, pesa mais na decisão de confiar do que qualquer texto de marketing.
 - Zero prova social fabricada, sempre: nenhum logo de cliente que não existe, nenhum número arredondado pra cima, nenhuma citação inventada. Uma mentira pequena descoberta destrói mais confiança do que cem verdades constroem.
+
+---
+
+## 7. Canal de aquisição — antes do lançamento, sem investimento pago
+
+Todo o resto deste documento resolve "o produto está pronto" (Seções 1–3) e "como provar isso" (Seções 4 e 6). Falta a pergunta que nenhuma seção anterior responde: como alguém chega na landing page pra comprar. Sem isso, o preço (Seção 2.3) e o onboarding automatizado (Seção 3) não têm o que processar.
+
+Restrição deliberada desta seção: **zero mídia paga**. Não por princípio — porque o produto ainda não tem taxa de conversão medida pra justificar gasto, e pagar por tráfego antes de saber quanto dele vira venda é queimar caixa no escuro que o projeto não tem. Cada tática abaixo custa tempo, não dinheiro.
+
+### 7.1 Conteúdo é o único ativo que o projeto já tem de graça
+
+O banco de ambientes da Seção 4 já é, por desenho, uma fábrica de conteúdo verificável — cada execução contra CloudGoat/IAM Vulnerable/TerraGoat gera um caso concreto ("achamos X em Y minutos, aqui está o audit trail completo"). Não é marketing escrito depois do fato: é o mesmo artefato técnico que a Seção 4 já planeja gerar pra estatística pública, reaproveitado como prova antes mesmo do número agregado estar pronto.
+
+Cada chain provado contra um lab de terceiro (não construído pelo autor) vira um post técnico curto: ambiente, hipótese, execução real, rollback, evidência. É o tipo de conteúdo que profissional de segurança lê e compartilha porque é verificável — qualquer um pode baixar o mesmo lab e reproduzir — ao contrário de "top 10 dicas de cloud security".
+
+### 7.2 Canais comunitários existentes — audiência emprestada, custo zero
+
+Nenhum canal aqui pertence ao Rastro; todos já têm audiência formada, o trabalho é merecer o espaço:
+
+- **r/netsec, r/aws, r/devsecops, r/cybersecurity** — post técnico com link pro repositório, nunca "compre meu produto". A régua da comunidade é ferramenta/pesquisa, não anúncio, e ela pune quem tenta vender direto.
+- **Show HN** — um único lançamento bem preparado, não recorrente (ver 7.5), timed pra quando o gate comercial da Seção 1.1 estiver fechado e o showcase tiver pelo menos um lab de terceiro provado, não só `acme_showcase` próprio.
+- **Awesome-lists do GitHub** (`awesome-cloud-security`, `awesome-pentest`, `awesome-incident-response`) — PR de inclusão é gratuito e gera descoberta orgânica de cauda longa, ao contrário do pico de um lançamento único.
+- **Newsletters de segurança com curadoria editorial** (tl;dr sec, Last Week in AWS, newsletters de cloud security) — não são canal pago; aceitam submissão de ferramenta por critério editorial do curador. Ser citado ali é prova social genuína porque quem inclui não recebe nada por isso.
+
+### 7.3 Seeding direto — dar de graça pra quem constrói confiança de volta
+
+Antes do checkout automatizado cobrar de um estranho, oferecer um número pequeno (5–10) de execuções gratuitas do Attack Path Snapshot pra pessoas com credibilidade já estabelecida na comunidade de cloud security, em troca de feedback público — não de pagamento. Custo real: tempo de suporte e compute de algumas execuções, não dinheiro. Resolve direto o que a Seção 6 já nomeia como princípio ("zero prova social fabricada, sempre"): cada feedback vem de alguém que existe e pode ser verificado, mesma disciplina que rejeita logo de cliente fictício.
+
+### 7.4 Mercado doméstico primeiro — vantagem que o autor já tem e o plano ainda não usa
+
+O autor fala português e tem acesso natural à comunidade de segurança brasileira (BSides locais, encontros de comunidade, CFPs de conferência regional) — um mercado onde a concorrência direta (Wiz, Pentera, Horizon3) disputa menos agressivamente que nos EUA, e onde uma apresentação presencial custa zero além do tempo e gera confiança que nenhum post online replica sozinho. Validar com uma fatia de early adopters domésticos antes do lançamento internacional dá uma segunda tentativa com o aprendizado do primeiro ciclo, em vez de apostar tudo num único lançamento em inglês.
+
+### 7.5 O único evento de pico — lançamento coordenado, não recorrente
+
+Show HN + Product Hunt + post técnico em LinkedIn/X + submissão às newsletters da 7.2, todos no mesmo dia, uma vez. Expectativa honesta: pico de tráfego alto, conversão baixa — segurança é decisão lenta, e pedir `sts:AssumeRole` de um projeto solo é fricção real mesmo com preço baixo. O valor do pico não é a venda do dia — é o link permanente que continua sendo achado via busca e via awesome-lists (7.2) meses depois. Não repetir o lançamento; reforçar com conteúdo novo (7.1) sempre que o banco de ambientes produzir um caso novo.
+
+### 7.6 O que fica de fora, deliberadamente
+
+- Mídia paga (Google Ads, LinkedIn Ads, patrocínio de newsletter) — sem dado de conversão pra justificar, é gasto às cegas.
+- Growth hacking (cold DM em massa, automação de outreach) — quebra a mesma credibilidade que a Seção 6 constrói, e é o tipo de tática que profissional de segurança reconhece e penaliza.
+- Venda ativa fria — já é a Frente 2 (consultoria), tratada em outro documento; misturar os dois funis confunde o posicionamento "self-serve, sem call".
+
+### 7.7 Métricas honestas — mesma régua da Seção 6
+
+Medir sem inflar: visitas → cliques em "iniciar checkout" → checkouts completos → verificação de acesso bem-sucedida (Etapa 4 da Seção 3) → relatório entregue. A maior queda esperada é entre visita e checkout — é aí que a fricção de confiança age. Não comparar contra benchmark de SaaS genérico (produto de segurança pedindo acesso de conta converte estruturalmente pior); comparar mês contra mês do próprio produto.
+
+### 7.8 Quando isso começa
+
+Não depende de Bloco 11/16 fechados. A 7.1 (conteúdo) pode e deve começar durante a validação contínua do Bloco 16.2 — cada lab novo testado já é matéria-prima de post, mesmo antes do checkout existir. 7.2–7.4 (relação com comunidades, seeding, mercado doméstico) também correm em paralelo à engenharia. Só a 7.5 (lançamento de pico) espera o gate comercial completo (Seção 1.1) — lançar cedo demais gasta o único pico disponível num produto que ainda não sustenta a promessa.
