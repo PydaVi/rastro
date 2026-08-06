@@ -150,6 +150,8 @@ def _build_generated_success_criteria(candidate: dict) -> dict:
         mode = "assume_role_proved"
     elif profile_family == "aws-iam-attach-role-policy-privesc":
         mode = "policy_mutation_proved"
+    elif profile_family == "aws-iam-compute-iam":
+        mode = "compute_pivot_proved"
     elif profile_family == "aws-iam-pass-role-privesc":
         mode = "policy_probe_proved"
     elif profile_family == "aws-iam-create-policy-version-privesc":

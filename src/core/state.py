@@ -222,6 +222,22 @@ class StateManager:
                     continue
                 return True
             return False
+        if mode == "compute_pivot_proved" and target:
+            # Bloco 16.3: prova que o executor alcançou a role via instance profile
+            # (ec2_instance_profile_pivot) — reached_role tem que bater com o alvo.
+            # Não aceita target_observed frouxo: exige a tool certa e a role reached.
+            canonical_target = self._fixture.canonicalize(target)
+            for action, observation in zip(self._actions_taken, self._observations):
+                if not observation.success:
+                    continue
+                if action.tool != "ec2_instance_profile_pivot":
+                    continue
+                reached = observation.details.get("reached_role") or (
+                    observation.details.get("evidence") or {}
+                ).get("reached_role")
+                if reached and self._fixture.canonicalize(reached) == canonical_target:
+                    return True
+            return False
         if target:
             canonical_target = self._fixture.canonicalize(target)
             for action, observation in zip(self._actions_taken, self._observations):

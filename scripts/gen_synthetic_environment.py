@@ -164,8 +164,135 @@ def generate_environment(scale: int, seed: int = 1337) -> dict:
     }
 
 
+def generate_ec2_environment(scale: int, seed: int = 4242) -> dict:
+    """Camada C — ambiente com pivot de EC2 instance profile (Bloco 16.3).
+
+    n_instances instâncias, cada uma com um instance profile que concede uma role;
+    uma fração dos users tem `ssm:SendCommand` sobre instâncias → compute_pivot.
+    Anota via `_compute_capability_graph` real.
+    """
+    rng = random.Random(seed)
+    n_users = scale
+    n_instances = scale
+    resources: list[dict] = []
+
+    user_arns = [_arn("user", f"ec2-user-{i:04d}") for i in range(n_users)]
+    role_arns = [_arn("role", f"ec2-app-role-{i:04d}") for i in range(n_instances)]
+    profile_arns = [
+        f"arn:aws:iam::{ACCOUNT}:instance-profile/ec2-profile-{i:04d}" for i in range(n_instances)
+    ]
+    instance_arns = [
+        f"arn:aws:ec2:{REGION}:{ACCOUNT}:instance/i-{i:016x}" for i in range(n_instances)
+    ]
+
+    # cada user pode rodar comando em k instâncias
+    k_cmd = 2
+    for uarn in user_arns:
+        cmd_targets = rng.sample(instance_arns, min(k_cmd, len(instance_arns)))
+        resources.append({
+            "service": "iam", "resource_type": "identity.user", "identifier": uarn,
+            "region": REGION,
+            "metadata": {"user_name": uarn.split("/")[-1], "policy_permissions": [{
+                "source": "inline",
+                "statements": [{"Effect": "Allow", "Action": ["ssm:SendCommand"], "Resource": cmd_targets}],
+            }]},
+            "source": "synthetic",
+        })
+
+    for i, (rarn, parn, iarn) in enumerate(zip(role_arns, profile_arns, instance_arns)):
+        # roles de instância de alto valor em 1 a cada 5 (pra exercitar priorização)
+        hv = (i % 5 == 0)
+        resources.append({
+            "service": "iam", "resource_type": "identity.role", "identifier": rarn,
+            "region": REGION,
+            "metadata": {"role_name": rarn.split("/")[-1],
+                         "is_high_value_target": hv, "privilege_score": 8000 if hv else 100},
+            "source": "synthetic",
+        })
+        resources.append({
+            "service": "iam", "resource_type": "compute.instance_profile", "identifier": parn,
+            "region": REGION, "metadata": {"role": rarn, "name": parn.split("/")[-1]},
+            "source": "synthetic",
+        })
+        resources.append({
+            "service": "ec2", "resource_type": "compute.ec2_instance", "identifier": iarn,
+            "region": REGION,
+            "metadata": {"instance_id": iarn.split("/")[-1], "instance_profile": parn,
+                         "state": "running"},
+            "source": "synthetic",
+        })
+
+    _compute_capability_graph(resources)
+    return {
+        "target": f"synthetic-ec2-scale-{scale}",
+        "bundle": "aws-advanced",
+        "caller_identity": {"Account": ACCOUNT, "Arn": user_arns[0]},
+        "services_scanned": ["iam", "ec2", "ssm"],
+        "regions_scanned": [REGION],
+        "resources": resources,
+        "summary": {"resource_count": len(resources)},
+    }
+
+
+def generate_secure_baseline(scale: int, seed: int = 7) -> dict:
+    """Camada B — baseline seguro: recursos existem, mas NENHUM caminho de ataque.
+
+    Users só têm permissões inócuas (List/Describe/GetCallerIdentity); roles não
+    têm trust pra esses users; secrets não são legíveis por eles. O engine deve
+    gerar ZERO hipóteses — mede falso positivo. Anota via código de produção.
+    """
+    rng = random.Random(seed)
+    resources: list[dict] = []
+    user_arns = [_arn("user", f"safe-user-{i:04d}") for i in range(scale)]
+    role_arns = [_arn("role", f"safe-role-{i:04d}") for i in range(scale)]
+    secret_arns = [_arn("secret", f"prod/safe-{i:04d}") for i in range(scale)]
+
+    for uarn in user_arns:
+        resources.append({
+            "service": "iam", "resource_type": "identity.user", "identifier": uarn,
+            "region": REGION,
+            "metadata": {"user_name": uarn.split("/")[-1], "policy_permissions": [{
+                "source": "inline",
+                "statements": [{
+                    "Effect": "Allow",
+                    "Action": ["s3:ListBucket", "ec2:DescribeInstances", "sts:GetCallerIdentity"],
+                    "Resource": "*",
+                }],
+            }]},
+            "source": "synthetic",
+        })
+    for rarn in role_arns:
+        resources.append({
+            "service": "iam", "resource_type": "identity.role", "identifier": rarn,
+            "region": REGION,
+            # trust só pra um serviço AWS, nenhum dos safe-users — não assumível
+            "metadata": {"role_name": rarn.split("/")[-1], "trust_principals": [],
+                         "policy_permissions": []},
+            "source": "synthetic",
+        })
+    for sarn in secret_arns:
+        resources.append({
+            "service": "secretsmanager", "resource_type": "secret.secrets_manager",
+            "identifier": sarn, "region": REGION,
+            "metadata": {"name": sarn.split(":secret:")[-1]}, "source": "synthetic",
+        })
+
+    _compute_capability_graph(resources)
+    return {
+        "target": f"synthetic-secure-baseline-scale-{scale}",
+        "bundle": "aws-iam-heavy",
+        "caller_identity": {"Account": ACCOUNT, "Arn": user_arns[0]},
+        "services_scanned": ["iam", "secretsmanager", "s3", "ec2"],
+        "regions_scanned": [REGION],
+        "resources": resources,
+        "summary": {"resource_count": len(resources)},
+    }
+
+
 if __name__ == "__main__":
     import json
-    scale = int(sys.argv[1]) if len(sys.argv) > 1 else 100
-    snap = generate_environment(scale)
-    print(json.dumps(snap, indent=2))
+    mode = sys.argv[1] if len(sys.argv) > 1 else "iam"
+    scale = int(sys.argv[2]) if len(sys.argv) > 2 else 100
+    fn = {"iam": generate_environment, "ec2": generate_ec2_environment,
+          "baseline": generate_secure_baseline}[mode]
+    print(json.dumps(fn(scale), indent=2))

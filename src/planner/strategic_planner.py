@@ -15,7 +15,7 @@ class PathStep(BaseModel):
     create_key/mutate); tool é o nome exato do YAML em tools/aws/ que executa
     esse passo — o mesmo nome que o executor e o ToolRegistry já conhecem.
     """
-    step_type: Literal["assume", "read", "create_key", "mutate"]
+    step_type: Literal["assume", "read", "create_key", "mutate", "compute_pivot"]
     actor: str
     target: str
     tool: str

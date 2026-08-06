@@ -150,6 +150,16 @@ _ASSUMEROLE_ACTIONS = frozenset({
     "*",
 })
 
+# Bloco 16.3 (EC2): rodar comando numa instância → roubar as credenciais do role
+# do instance profile via IMDS. Entrada IAM-grounded do compute pivot no grafo de
+# capacidades (reachability de rede é uma superfície SEPARADA — external_entry).
+_SSM_COMMAND_ACTIONS = frozenset({
+    "ssm:sendcommand",
+    "ssm:startsession",
+    "ssm:*",
+    "*",
+})
+
 # IAM mutation actions on identity.role — tracked separately in mutable_by dict.
 # Key = canonical action name stored in mutable_by; value = frozenset that matches it.
 _ROLE_MUTATION_ACTIONS: dict[str, frozenset] = {
@@ -290,6 +300,55 @@ def _compute_capability_graph(resources: list[dict]) -> None:
                 mutable_by[action_name] = mutators
         if mutable_by:
             _set_resource_meta(role_res, "mutable_by", mutable_by)
+
+    # --- compute_pivot_by em identity.role (Bloco 16.3 — EC2 instance profile) ---
+    # Quem pode rodar comando numa instância cujo instance profile concede a role
+    # ganha, na modelagem, as credenciais dessa role via IMDS. Junta
+    # instância --(metadata.instance_profile)--> instance_profile --(metadata.role)--> role.
+    def _role_arn_of_profile(profile_res: dict) -> str:
+        rmeta = profile_res.get("metadata") or {}
+        role = rmeta.get("role")
+        if isinstance(role, dict):
+            return role.get("Arn", "")
+        if isinstance(role, str):
+            return role
+        roles = rmeta.get("roles") or []
+        first = next(iter(roles), None)
+        if isinstance(first, dict):
+            return first.get("Arn", "")
+        return first or ""
+
+    profile_to_role = {
+        pr.get("identifier", ""): _role_arn_of_profile(pr)
+        for pr in resources
+        if pr.get("resource_type") == "compute.instance_profile"
+    }
+    role_pivot: dict[str, dict] = {}
+    for inst in resources:
+        if inst.get("resource_type") != "compute.ec2_instance":
+            continue
+        inst_arn = inst.get("identifier", "")
+        profile_arn = (inst.get("metadata") or {}).get("instance_profile")
+        role_arn = profile_to_role.get(profile_arn)
+        if not role_arn:
+            continue
+        commanders = [
+            p["identifier"] for p in principals
+            if _principal_has_capability(p, _SSM_COMMAND_ACTIONS, inst_arn)
+        ]
+        if not commanders:
+            continue
+        entry = role_pivot.setdefault(role_arn, {"principals": set(), "profile": profile_arn})
+        entry["principals"].update(commanders)
+        entry["profile"] = profile_arn
+    if role_pivot:
+        for role_res in resources:
+            if role_res.get("resource_type") != "identity.role":
+                continue
+            entry = role_pivot.get(role_res.get("identifier", ""))
+            if entry and entry["principals"]:
+                _set_resource_meta(role_res, "compute_pivot_by", sorted(entry["principals"]))
+                _set_resource_meta(role_res, "compute_pivot_profile", entry["profile"])
 
 
 def _set_resource_meta(resource: dict, key: str, value: object) -> None:

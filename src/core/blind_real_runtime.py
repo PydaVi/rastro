@@ -225,6 +225,23 @@ class BlindRealRuntime:
                 tool=tool,
                 technique=_policy_probe_technique(tool),
             )
+        if tool == "ec2_instance_profile_pivot":
+            # Bloco 16.3: target = instance profile ARN (o executor enumera a role
+            # anexada e rouba as credenciais via IMDS). service=ec2 (o executor
+            # também chama iam:GetInstanceProfile — o scope precisa dos dois).
+            return Action(
+                action_type=ActionType.ACCESS_RESOURCE,
+                actor=actor,
+                target=target,
+                parameters={
+                    "service": "ec2",
+                    "region": region,
+                    "resource_arn": target,
+                    "instance_profile_arn": target,
+                },
+                tool=tool,
+                technique=_technique("T1552.005", "Cloud Instance Metadata API"),
+            )
         raise ValueError(f"BlindRealRuntime: sem mapeamento de execução para a tool {tool!r} do path")
 
     def _enumeration_actions(self, actor: str, region: str) -> list[Action]:

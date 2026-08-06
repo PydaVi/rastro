@@ -1682,6 +1682,63 @@ conta quando os quatro itens fecham juntos — nenhum sozinho basta:
    serviço especificamente, achando e corrigindo o que aparecer antes de
    declarar fechado
 
+#### EC2 instance-profile pivot — fatia offline (FEITO, 2026-08-06; NÃO fechado — falta condição 4)
+
+**Decisão de modelagem (registrada pra revisão do autor):** o compute pivot entra
+no `CapabilityGraph` como capacidade IAM-grounded — um principal com
+`ssm:SendCommand`/`ssm:StartSession` sobre uma instância rouba as credenciais do
+role do instance profile via IMDS. Reachability de rede (instância pública, ALB,
+SSRF) é uma superfície SEPARADA (external_entry, já existente) e continua fora
+deste caminho de propósito: o `CapabilityGraph` é principal→capacidade, e uma
+permissão IAM concreta é o sinal certo pra ele; reachability de rede não é
+principal-específica. Se o autor preferir modelar o pivot por reachability aqui
+também, é um fork a decidir — mas os dois não conflitam (são superfícies
+distintas), então esta escolha não fecha porta nenhuma.
+
+**Condições 1–3 da Definition of Done: FECHADAS, testadas offline (13 testes
+novos em `tests/test_ec2_compute_pivot.py`, 452 no total).**
+
+1. `CapabilityGraph` computa aresta real (`can_pivot_compute`): `_compute_capability_graph`
+   (`discovery.py`) junta instância --(`metadata.instance_profile`)--> instance_profile
+   --(`metadata.role`)--> role e anota o role com `compute_pivot_by`/`compute_pivot_profile`
+   pra cada principal com capacidade de comando (reusa `_principal_has_capability`,
+   então respeita precedência de Deny e boundary do Bloco 11). Não é anotação
+   manual de fixture — deriva das policies reais, mesma disciplina do Bloco 7.
+2. Path-driven: `_step_tool` mapeia o passo `compute_pivot` → `ec2_instance_profile_pivot`;
+   `_build_structured_path` monta o `PathStep` com target = instance profile (o que
+   o executor age) enquanto a hipótese mantém target = role (o alvo lógico);
+   `BlindRealRuntime._step_to_action` ganhou o branch que constrói a `Action` ec2
+   real (service=ec2, resource_arn/instance_profile_arn = profile).
+3. Executor completo já existia (`_execute_ec2_instance_profile_pivot`, Bloco 16.0
+   decidiu mantê-lo). Novo modo de sucesso honesto `compute_pivot_proved`
+   (`state.py`): exige a tool `ec2_instance_profile_pivot` E `reached_role` batendo
+   com o alvo — NÃO o `target_observed` frouxo que a REGUA condena.
+   `campaign_synthesis` roteia `aws-iam-compute-iam` → `compute_pivot_proved`.
+
+**Prática de ambientes (16.2) aplicada nesta fatia:** o gerador da Camada C ganhou
+`generate_ec2_environment` (instâncias + instance profiles + roles + users com
+`ssm:SendCommand`, roles de alto valor 1-em-5 pra exercitar a priorização do teto
+de fan-out da 16.1). E `generate_secure_baseline` (Camada B) — recursos existem
+mas nenhum caminho de ataque; o teste confirma **zero hipóteses geradas** (falso
+positivo = 0). Held-out continua inegociável quando a estatística final (16.5) for
+calculada.
+
+**Condição 4: PENDENTE — não é "coberto" ainda.** Falta validação contra AWS real
+(Camada A com um lab externo tipo CloudGoat `ec2_ssrf`/`iam_privesc_by_rollback`,
+e um lab próprio ao vivo) achando e corrigindo o que aparecer — exatamente onde os
+bugs de execução aparecem (o Bloco 10 achou o `service_not_allowed` só rodando ao
+vivo). Isso exige `terraform apply` real, que o classificador desta sessão exige
+que o autor rode à mão. **Então EC2 NÃO está declarado fechado** — a fatia offline
+está sólida e testada, mas a barra de 4 condições da 16.3 só fecha com a validação
+ao vivo. Registrado honestamente pra não repetir o padrão de "andaime que parece
+cobertura" que a 16.0 acabou de limpar.
+
+**Escopo deixado de fora de propósito:** avaliação estática do passo compute_pivot
+(fica sempre `structural` — o sucesso depende de comportamento IMDS em runtime, não
+de política estática, então promover a `evaluated` seria desonesto); e a associação
+credencial-extraída→principal-real pro segundo salto (mesma limitação de todos os
+pivots, registrada no Bloco 12).
+
 ### 16.4 — Modelo de ranking (reaproveita a ideia de ML da Seção 4.4 do doc de produto)
 
 A motivação original ("reduzir custo de execução pro self-serve") continua

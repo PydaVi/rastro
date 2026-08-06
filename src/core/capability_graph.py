@@ -95,6 +95,9 @@ class CapabilityGraph:
     can_create_key: dict[str, list[str]] = field(default_factory=lambda: defaultdict(list))
     # identity_arn → [role_arns] assumable by that identity
     can_assume: dict[str, list[str]] = field(default_factory=lambda: defaultdict(list))
+    # identity_arn → [(role_arn, instance_profile_arn)] reachable via EC2 compute pivot
+    # (Bloco 16.3): rodar comando numa instância cujo profile concede a role.
+    can_pivot_compute: dict[str, list[tuple[str, str]]] = field(default_factory=lambda: defaultdict(list))
     # arn → resource_type
     resource_types: dict[str, str] = field(default_factory=dict)
     # all non-service role ARNs in the environment
@@ -164,6 +167,12 @@ class CapabilityGraph:
                     for principal in principals:
                         g.can_mutate[principal].append((arn, action))
 
+            # compute_pivot_by → CanPivotCompute edges (Bloco 16.3, only on roles)
+            if rtype == "identity.role":
+                profile_arn = meta.get("compute_pivot_profile", "")
+                for principal in meta.get("compute_pivot_by", []):
+                    g.can_pivot_compute[principal].append((arn, profile_arn))
+
         return g
 
     def derive_all_hypotheses(
@@ -224,6 +233,13 @@ class CapabilityGraph:
             # CanAssume: current → role (terminal — gerou uma hipótese)
             for role_arn in self.can_assume.get(current_arn, []):
                 full_path = path + [("assume", current_arn, role_arn, None)]
+                hyp = self._path_to_hypothesis(entry_arn, role_arn, full_path)
+                if hyp is not None:
+                    hypotheses.append(hyp)
+
+            # CanPivotCompute: current → role via EC2 instance profile (terminal, Bloco 16.3)
+            for (role_arn, profile_arn) in self.can_pivot_compute.get(current_arn, []):
+                full_path = path + [("compute_pivot", current_arn, role_arn, profile_arn)]
                 hyp = self._path_to_hypothesis(entry_arn, role_arn, full_path)
                 if hyp is not None:
                     hypotheses.append(hyp)
@@ -318,6 +334,9 @@ class CapabilityGraph:
                 else:
                     attack_class = "role_chain"
 
+        elif last_type == "compute_pivot":
+            attack_class = "compute_pivot"
+
         elif last_type == "mutate":
             action = last_step[3]
             attack_class = _MUTATE_ACTION_TO_CLASS.get(action, "iam_mutation_privesc")
@@ -347,6 +366,11 @@ class CapabilityGraph:
                 )
             elif stype == "mutate":
                 attack_steps.append(f"Call {extra} on {to_a} to escalate privileges")
+            elif stype == "compute_pivot":
+                attack_steps.append(
+                    f"Run commands on an EC2 instance via instance profile {extra} "
+                    f"to steal the credentials of role {to_a} from IMDS"
+                )
 
         # ---------- Confiança e reasoning ----------
         confidence = "high" if len(path) == 1 else "medium"
@@ -375,6 +399,8 @@ class CapabilityGraph:
             return "iam_passrole"
         if stype == "create_key":
             return "iam_create_access_key"
+        if stype == "compute_pivot":
+            return "ec2_instance_profile_pivot"
         if stype == "mutate":
             return _MUTATE_ACTION_TO_TOOL.get(extra)
         if stype == "read":
@@ -395,7 +421,10 @@ class CapabilityGraph:
             tool = self._step_tool((stype, from_a, to_a, extra))
             if tool is None:
                 return []
-            steps.append(PathStep(step_type=stype, actor=from_a, target=to_a, tool=tool))
+            # compute_pivot: o executor age sobre o instance profile (extra),
+            # não sobre a role (to_a, que é o alvo lógico da hipótese).
+            step_target = extra if stype == "compute_pivot" else to_a
+            steps.append(PathStep(step_type=stype, actor=from_a, target=step_target, tool=tool))
         return steps
 
     def _step_action(self, step: _Step) -> str | None:
