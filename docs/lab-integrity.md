@@ -35,10 +35,20 @@ Limites conhecidos que continuam plants permanentes (não some com o fix): chain
 cross-account (`challenge_cross_account` — discovery single-account não vê a role
 alvo) e chain de role acima de `max_depth=3` (`heldout_multihop_4` h4).
 
-### 3. Controles negativos
+### 3. Controles negativos e falsos positivos declarados
 Todo suite tem labs seguros (`true_paths: []`, Camada B). A resposta certa é
 **zero achado**. Qualquer hipótese que o engine gere ali é **falso positivo**
 medido. Sem negativos, não dá pra saber se o engine acha ataque ou só acha coisa.
+
+Simétrico aos plants fora-de-cobertura (misses conhecidos), o ground truth pode
+declarar `false_paths`: caminhos que o engine **erradamente reporta por limite
+conhecido**. Exemplo real (`challenge_scp_denied`): uma SCP nega `sts:AssumeRole`,
+então o caminho não existe (a AWS bloqueia), mas o engine é SCP-cego no grafo
+(`assumable_by` não cruza com SCP Deny) e gera o `role_chain` = FP. Declarar como
+`false_path` classifica isso como **FP esperado** (limite documentado), separado
+do FP **inesperado** (bug). O eixo de falso positivo fica tão honesto quanto o de
+miss — nenhum dos dois é mascarado, e um FP novo não-declarado ainda aparece como
+bug.
 
 ### 4. Held-out
 Labs `held_out: true` **nunca** são usados pra ajustar o engine. O scorer os

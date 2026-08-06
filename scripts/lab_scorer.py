@@ -50,7 +50,8 @@ class LabResult:
     covered_missed: list = field(default_factory=list)     # in_coverage NÃO achado (RUIM)
     ooc_missed: list = field(default_factory=list)         # out-of-coverage não achado (esperado)
     ooc_found: list = field(default_factory=list)          # out-of-coverage achado (surpresa boa)
-    false_positives: list = field(default_factory=list)    # hipótese sem caminho verdadeiro
+    false_positives: list = field(default_factory=list)    # hipótese sem caminho verdadeiro (BUG)
+    expected_fp: list = field(default_factory=list)         # FP por limite conhecido, declarado em false_paths
 
     @property
     def recall(self) -> float:
@@ -67,6 +68,9 @@ def score_lab(lab_dir: Path) -> LabResult:
     env = json.loads((lab_dir / "env.discovery.json").read_text())
     gt = json.loads((lab_dir / "ground_truth.json").read_text())
     true_paths = gt.get("true_paths", [])
+    # false_paths: caminhos que o engine ERRADAMENTE reporta por limite conhecido
+    # (ex.: SCP-cego no grafo). FP esperado e declarado — simétrico ao in_coverage:false.
+    false_paths = gt.get("false_paths", [])
 
     graph = CapabilityGraph.build(env)
     entries = sorted(
@@ -75,6 +79,7 @@ def score_lab(lab_dir: Path) -> LabResult:
     hyps = graph.derive_all_hypotheses(entries)
     engine_pairs = {_pair(h.entry_identity, h.target) for h in hyps}
     truth_pairs = {_pair(p["entry"], p["target"]) for p in true_paths}
+    false_pairs = {_pair(p["entry"], p["target"]) for p in false_paths}
 
     res = LabResult(name=meta["name"], layer=meta.get("layer", "C"),
                     challenge=bool(meta.get("challenge", False)))
@@ -87,9 +92,14 @@ def score_lab(lab_dir: Path) -> LabResult:
             (res.ooc_found if found else res.ooc_missed).append(p)
 
     for h in hyps:
-        if _pair(h.entry_identity, h.target) not in truth_pairs:
-            res.false_positives.append({"entry": h.entry_identity, "target": h.target,
-                                        "class": h.attack_class})
+        pair = _pair(h.entry_identity, h.target)
+        if pair in truth_pairs:
+            continue
+        entry = {"entry": h.entry_identity, "target": h.target, "class": h.attack_class}
+        if pair in false_pairs:
+            res.expected_fp.append(entry)   # FP conhecido/declarado — não é bug
+        else:
+            res.false_positives.append(entry)  # FP inesperado — bug
     return res
 
 
@@ -135,7 +145,11 @@ def main() -> None:
     for r in results:
         for p in r.covered_missed:
             print(f"  [MISS INESPERADO] {r.name}: {p.get('id','?')} {p['entry']} → {p['target']} — o engine devia achar")
-    # Falsos positivos
+    # FPs esperados (limite conhecido, declarado em false_paths) — registrados, não bug
+    for r in results:
+        for fp in r.expected_fp:
+            print(f"  [FP esperado] {r.name}: {fp['entry']} → {fp['target']} [{fp['class']}] — limite conhecido (SCP-cego etc.)")
+    # Falsos positivos INESPERADOS = bug
     if total_fp:
         for r in results:
             for fp in r.false_positives:

@@ -36,15 +36,18 @@ def _allow(actions, res):
     return {"Effect": "Allow", "Action": actions, "Resource": res}
 
 
-def _snapshot(name, resources):
+def _snapshot(name, resources, governance=None):
     _compute_capability_graph(resources)
-    return {
+    snap = {
         "target": name, "bundle": "aws-iam-heavy",
         "caller_identity": {"Account": ACCT, "Arn": resources[0]["identifier"]},
         "services_scanned": ["iam", "secretsmanager", "ec2", "lambda"],
         "regions_scanned": [REGION], "resources": resources,
         "summary": {"resource_count": len(resources)},
     }
+    if governance is not None:
+        snap["governance"] = governance
+    return snap
 
 
 def _write(name, meta, snapshot, true_paths):
@@ -180,6 +183,35 @@ def build_challenge_cross_account():
              "limitation": "discovery single-account: a role da conta B não está no snapshot, sem aresta"}])
 
 
+def build_challenge_scp_denied():
+    # DESAFIO (eixo FALSO POSITIVO, não miss): user→role permitido por
+    # permission+trust, MAS uma SCP nega sts:AssumeRole na conta. O caminho real
+    # NÃO existe (a AWS bloquearia). O engine é SCP-cego no grafo → gera o
+    # role_chain assim mesmo = FP. Declarado em false_paths (FP esperado/conhecido).
+    user, role = _u("scp-user"), _r("scp-blocked-admin")
+    resources = [
+        {"resource_type": "identity.user", "identifier": user, "metadata": {"policy_permissions": [
+            {"source": "i", "statements": [_allow(["sts:AssumeRole"], [role])]}]}},
+        {"resource_type": "identity.role", "identifier": role, "metadata": {
+            "trust_principals": [user], "policy_permissions": []}},
+    ]
+    governance = {"scp_visibility": "directly_attached_only",
+                  "scp_policies": [{"statements": [
+                      {"Effect": "Deny", "Action": ["sts:AssumeRole"], "Resource": "*"}]}]}
+    d = LABS / "challenge_scp_denied"
+    d.mkdir(parents=True, exist_ok=True)
+    snap = _snapshot("challenge_scp_denied", resources, governance=governance)
+    _write("challenge_scp_denied",
+           {"name": "challenge_scp_denied", "layer": "C", "held_out": False, "challenge": True,
+            "description": "SCP nega o assume; o engine (SCP-cego no grafo) reporta o caminho = FP conhecido."},
+           snap, [])
+    # o caminho verdadeiro é vazio; o que o engine gera é um FP ESPERADO, declarado:
+    gt = {"lab": "challenge_scp_denied", "true_paths": [],
+          "false_paths": [{"entry": user, "target": role, "class": "role_chain",
+                           "limitation": "engine SCP-cego no grafo: assumable_by não cruza com SCP Deny, então reporta um caminho que a AWS bloquearia"}]}
+    (d / "ground_truth.json").write_text(json.dumps(gt, indent=2))
+
+
 def build_heldout_ec2_variant():
     # HELD-OUT: nunca usar pra ajustar o engine; medido só na estatística final.
     user, role = _u("ho-ops"), _r("ho-role")
@@ -237,6 +269,7 @@ if __name__ == "__main__":
     build_challenge_multihop_chain()
     build_challenge_role_then_read()
     build_challenge_cross_account()
+    build_challenge_scp_denied()
     build_heldout_ec2_variant()
     build_heldout_multihop_4()
     print("pronto.")

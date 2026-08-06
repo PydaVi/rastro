@@ -86,3 +86,38 @@ def test_negative_control_flags_false_positive(tmp_path):
     res = score_lab(d)
     assert res.false_positives
     assert any(fp["target"] == ROLE for fp in res.false_positives)
+
+
+def _write_lab_with_false_paths(tmp_path, resources, true_paths, false_paths):
+    _compute_capability_graph(resources)
+    snap = {"target": "t", "resources": resources,
+            "caller_identity": {"Account": ACCT, "Arn": USER}}
+    d = tmp_path / "lab"
+    d.mkdir()
+    (d / "lab.yaml").write_text("name: lab\nlayer: C\nchallenge: true\n")
+    (d / "env.discovery.json").write_text(json.dumps(snap))
+    (d / "ground_truth.json").write_text(json.dumps(
+        {"lab": "lab", "true_paths": true_paths, "false_paths": false_paths}))
+    return d
+
+
+def test_declared_false_path_is_expected_fp_not_unexpected(tmp_path):
+    # o engine gera user→ROLE; declarado como false_path (limite conhecido) →
+    # vira FP ESPERADO, não conta como falso positivo inesperado (bug).
+    d = _write_lab_with_false_paths(
+        tmp_path, _assumable_role_env(), [],
+        [{"entry": USER, "target": ROLE, "limitation": "limite conhecido"}])
+    res = score_lab(d)
+    assert res.expected_fp and res.expected_fp[0]["target"] == ROLE
+    assert not res.false_positives  # não vira bug
+
+
+def test_undeclared_fp_still_flagged_when_false_paths_present(tmp_path):
+    # false_paths cobre OUTRO alvo; o FP real (ROLE) continua inesperado.
+    other = f"arn:aws:iam::{ACCT}:role/unrelated"
+    d = _write_lab_with_false_paths(
+        tmp_path, _assumable_role_env(), [],
+        [{"entry": USER, "target": other, "limitation": "outro"}])
+    res = score_lab(d)
+    assert any(fp["target"] == ROLE for fp in res.false_positives)
+    assert not res.expected_fp
