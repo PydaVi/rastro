@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -235,6 +236,8 @@ class AwsRealExecutor:
                 details = self._execute_ssm_read_parameter(client, action)
             elif action.tool == "ec2_instance_profile_pivot":
                 details = self._execute_ec2_instance_profile_pivot(client, action)
+            elif action.tool == "lambda_read_env":
+                details = self._execute_lambda_read_env(client, action)
             elif action.tool == "iam_create_policy_version":
                 details = self._execute_iam_policy_abuse_probe(client, action, "iam:CreatePolicyVersion")
             elif action.tool == "iam_attach_role_policy":
@@ -643,6 +646,47 @@ class AwsRealExecutor:
             "evidence": {"parameter": name, "accessed_via": action.actor},
             "aws_region": region,
             "request_summary": {"api_calls": ["ssm:GetParameter"], "name": name},
+            "response_summary": response_summary,
+        }
+
+    def _execute_lambda_read_env(self, client: AwsClient, action: Action) -> dict:
+        # Bloco 16.3 (Lambda): lê a configuração da função e trata as env vars como
+        # fonte de credencial — mesmo padrão de pivot que Secrets/SSM/S3. Credencial
+        # embutida → produces (Bloco 8) registra a identidade extraída.
+        region = _required_parameter(action, "region")
+        function_name = action.parameters.get("function_name") or action.target
+        if not function_name:
+            raise ValueError("lambda_read_env requires function_name or target")
+        response = client.get_function_configuration(
+            region=region,
+            function_name=function_name,
+            credentials=self._credentials_for_actor(action.actor),
+        )
+        env = response.get("Environment") or {}
+        # serializa as env vars como JSON pra reusar o detector/extrator de
+        # credenciais (reconhece aws_access_key_id/aws_secret_access_key nas chaves).
+        env_blob = json.dumps(env)
+        credential_info = _detect_aws_credentials(env_blob)
+
+        function_arn = response.get("FunctionArn") or action.target or function_name
+        response_summary: dict = {
+            "function_arn": function_arn,
+            "function_name": response.get("FunctionName"),
+            "execution_role": response.get("Role"),
+            "env_var_names": sorted(env.keys()),
+            "resource_arn": function_arn,  # Bloco 8: produces.resource_arn_field
+            **credential_info,
+        }
+        if credential_info.get("credential_extracted"):
+            full_creds = _extract_full_aws_credentials(env_blob)
+            if full_creds is not None:
+                response_summary["credentials"] = full_creds  # Bloco 8: produces.credentials_field
+
+        return {
+            "details": f"Executed lambda:GetFunctionConfiguration against {function_name}.",
+            "evidence": {"function": function_name, "accessed_via": action.actor},
+            "aws_region": region,
+            "request_summary": {"api_calls": ["lambda:GetFunctionConfiguration"], "function_name": function_name},
             "response_summary": response_summary,
         }
 

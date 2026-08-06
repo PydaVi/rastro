@@ -1669,7 +1669,20 @@ não só na medição final).
 
 ### 16.3 — Expansão serviço por serviço, cada um com Definition of Done própria
 
-Ordem sugerida: EC2 instance-profile pivot primeiro (já tem meio-caminho
+**Decisão de sequenciamento (autor, 2026-08-06):** as condições 1–3 (offline:
+aresta no grafo + path-driven + executor com teste sintético) de TODOS os
+serviços da 16.3 vêm primeiro, em sequência (EC2 → Lambda → KMS → RDS), deixando
+só os testes sintéticos. A condição 4 (labs A/B/C + validação ao vivo + correção
+dos bugs que aparecerem) vira uma FASE DEDICADA depois que a expansão offline
+fechar — "criar todos os labs, testar o máximo possível, e aí ir ajustando os
+bugs que vão existir". Racional: os bugs de execução ao vivo (tipo o
+`service_not_allowed` do Bloco 10) aparecem em lote quando se roda tudo junto
+contra AWS real; concentrar essa validação numa fase própria é mais eficiente
+que intercalar apply/destroy manual a cada serviço. Enquanto isso, NENHUM
+serviço é declarado "coberto" (condição 4 pendente pra todos) — a fase de labs
+é que fecha a barra das 4 condições.
+
+Ordem: EC2 instance-profile pivot primeiro (já tem meio-caminho
 andado no executor), depois Lambda (execution role + env vars como fonte de
 credencial, mesmo padrão de pivot que Secrets/SSM/S3 já usam), depois KMS
 (grants/key policy como aresta), depois RDS. Pra cada serviço, "coberto" só
@@ -1738,6 +1751,30 @@ cobertura" que a 16.0 acabou de limpar.
 de política estática, então promover a `evaluated` seria desonesto); e a associação
 credencial-extraída→principal-real pro segundo salto (mesma limitação de todos os
 pivots, registrada no Bloco 12).
+
+#### Lambda env-var pivot — fatia offline (FEITO, 2026-08-06; condições 1-3, falta 4)
+
+Modelo: a função Lambda é uma **fonte de credencial** (as env vars), reusando a
+MESMA máquina de read-pivot que Secrets/SSM/S3 — não código novo de pivot. Um
+principal com `lambda:GetFunctionConfiguration`/`GetFunction` lê a config, extrai
+credencial embutida nas env vars, e assume roles com ela (attack_class
+`lambda_pivot`, 2 hops: `lambda_read_env` → `iam_passrole`).
+
+Reuso máximo (a razão de escolher este modelo): `compute.lambda_function` entrou
+em `_DATA_READ_ACTIONS` (discovery computa `readable_by` via as lambda-read
+actions, respeitando Deny/boundary), em `_CREDENTIAL_RESOURCE_TYPES` +
+`_READ_ACTION_BY_RESOURCE_TYPE` + `_READ_TOOL_BY_RESOURCE_TYPE` (o BFS de
+credential-pivot já existente cuida do resto, inclusive o teto de fan-out da 16.1).
+Novo: tool `lambda_read_env` (YAML + executor `_execute_lambda_read_env` que lê as
+env vars como JSON e reusa `_detect_aws_credentials`/`_extract_full_aws_credentials`
++ o `produces` do Bloco 8 pra registrar a identidade extraída); client
+`get_function_configuration` + `list_functions`; coleta best-effort de
+`compute.lambda_function` no discovery (getattr-defensivo, fakes sem `list_functions`
+degradam pra vazio); branch `lambda_read_env` no `BlindRealRuntime._step_to_action`.
+`lambda_pivot` roteia pro perfil `aws-credential-pivot` (mesma semântica; o ARN da
+função no `intermediate_resource` distingue no finding). 9 testes novos
+(`tests/test_lambda_env_pivot.py`), 461 no total. Condição 4 (AWS real) na fase
+de labs, junto com os outros serviços.
 
 ### 16.4 — Modelo de ranking (reaproveita a ideia de ML da Seção 4.4 do doc de produto)
 

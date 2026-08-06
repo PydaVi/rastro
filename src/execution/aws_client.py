@@ -121,6 +121,21 @@ class AwsClient(Protocol):
     ) -> Dict[str, Any]:
         ...
 
+    def get_function_configuration(
+        self,
+        region: str,
+        function_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> Dict[str, Any]:
+        ...
+
+    def list_functions(
+        self,
+        region: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[Dict[str, Any]]:
+        ...
+
     def list_instance_profile_associations(
         self,
         region: str,
@@ -631,6 +646,39 @@ class Boto3AwsClient:
             "InstanceProfileName": profile.get("InstanceProfileName"),
             "Roles": roles,
         }
+
+    def get_function_configuration(
+        self,
+        region: str,
+        function_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> Dict[str, Any]:
+        client = self._session(credentials).client("lambda", region_name=region)
+        response = client.get_function_configuration(FunctionName=function_name)
+        env = (response.get("Environment") or {}).get("Variables") or {}
+        return {
+            "FunctionArn": response.get("FunctionArn"),
+            "FunctionName": response.get("FunctionName"),
+            "Role": response.get("Role"),
+            "Environment": env,
+        }
+
+    def list_functions(
+        self,
+        region: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[Dict[str, Any]]:
+        client = self._session(credentials).client("lambda", region_name=region)
+        functions: list[Dict[str, Any]] = []
+        paginator = client.get_paginator("list_functions")
+        for page in paginator.paginate():
+            for fn in page.get("Functions", []):
+                functions.append({
+                    "FunctionArn": fn.get("FunctionArn"),
+                    "FunctionName": fn.get("FunctionName"),
+                    "Role": fn.get("Role"),
+                })
+        return functions
 
     def list_instance_profile_associations(
         self,

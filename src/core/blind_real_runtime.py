@@ -225,6 +225,18 @@ class BlindRealRuntime:
                 tool=tool,
                 technique=_policy_probe_technique(tool),
             )
+        if tool == "lambda_read_env":
+            # Bloco 16.3: lê a config da função (env vars). function_name derivado
+            # do ARN (arn:aws:lambda:region:acct:function:NAME) ou o próprio target.
+            function_name = target.split(":function:", 1)[1] if ":function:" in target else target
+            return Action(
+                action_type=ActionType.ACCESS_RESOURCE,
+                actor=actor,
+                target=target,
+                parameters={"service": "lambda", "region": region, "function_name": function_name},
+                tool=tool,
+                technique=_technique("T1552", "Unsecured Credentials"),
+            )
         if tool == "ec2_instance_profile_pivot":
             # Bloco 16.3: target = instance profile ARN (o executor enumera a role
             # anexada e rouba as credenciais via IMDS). service=ec2 (o executor

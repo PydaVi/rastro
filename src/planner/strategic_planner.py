@@ -32,6 +32,7 @@ class AttackHypothesis(BaseModel):
         "credential_pivot",                    # entry reads secret → extracted identity assumes role
         "ssm_pivot",                           # entry reads SSM param → extracted identity assumes role
         "s3_pivot",                            # entry reads S3 object → extracted identity assumes role
+        "lambda_pivot",                        # entry reads Lambda env vars → extracted identity assumes role
         "iam_create_access_key_pivot",         # entry calls CreateAccessKey → extracted identity assumes role
         "iam_attach_role_policy_privesc",      # entry calls AttachRolePolicy on role
         "iam_put_role_policy_privesc",         # entry calls PutRolePolicy on role

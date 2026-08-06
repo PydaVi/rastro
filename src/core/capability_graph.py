@@ -27,6 +27,7 @@ _CREDENTIAL_RESOURCE_TYPES = {
     "secret.secrets_manager",
     "secret.ssm_parameter",
     "data_store.s3_object",
+    "compute.lambda_function",  # Bloco 16.3: env vars como fonte de credencial
 }
 
 # Mutation action → attack_class
@@ -46,6 +47,7 @@ _READ_ACTION_BY_RESOURCE_TYPE: dict[str, str] = {
     "secret.ssm_parameter":   "ssm:GetParameter",
     "data_store.s3_object":   "s3:GetObject",
     "data_store.s3_bucket":   "s3:GetObject",
+    "compute.lambda_function": "lambda:GetFunctionConfiguration",
 }
 
 # Bloco 10: resource_type do alvo de um passo "read" → tool de tools/aws/*.yaml
@@ -56,6 +58,7 @@ _READ_TOOL_BY_RESOURCE_TYPE: dict[str, str] = {
     "secret.secrets_manager": "secretsmanager_read_secret",
     "secret.ssm_parameter":   "ssm_read_parameter",
     "data_store.s3_object":   "s3_read_sensitive",
+    "compute.lambda_function": "lambda_read_env",
 }
 
 # Bloco 16.1: teto de fan-out do pivot. Uma credencial extraída (de um secret,
@@ -327,6 +330,8 @@ class CapabilityGraph:
                         attack_class = "ssm_pivot"
                     elif "s3" in first_to or rtype == "data_store.s3_object":
                         attack_class = "s3_pivot"
+                    elif ":lambda:" in first_to or rtype == "compute.lambda_function":
+                        attack_class = "lambda_pivot"
                     else:
                         attack_class = "credential_pivot"
                 elif first_type == "create_key":

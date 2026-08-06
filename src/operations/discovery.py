@@ -81,6 +81,14 @@ _S3_READ_ACTIONS = frozenset({
     "s3:*",
     "*",
 })
+# Bloco 16.3 (Lambda): ler a config da função expõe as env vars — fonte de
+# credencial, mesmo padrão de leitura que secret/SSM/S3.
+_LAMBDA_READ_ACTIONS = frozenset({
+    "lambda:getfunction",
+    "lambda:getfunctionconfiguration",
+    "lambda:*",
+    "*",
+})
 
 # resource_type → set of actions that grant read
 _DATA_READ_ACTIONS: dict[str, frozenset] = {
@@ -88,6 +96,7 @@ _DATA_READ_ACTIONS: dict[str, frozenset] = {
     "secret.ssm_parameter":   _SSM_READ_ACTIONS,
     "data_store.s3_bucket":   _S3_READ_ACTIONS,
     "data_store.s3_object":   _S3_READ_ACTIONS,
+    "compute.lambda_function": _LAMBDA_READ_ACTIONS,
 }
 
 
@@ -1101,6 +1110,10 @@ def run_foundation_discovery(
     load_balancers = aws_client.list_load_balancers(region=region)
     rest_apis = aws_client.list_rest_apis(region=region)
     target_groups = aws_client.list_target_groups(region=region)
+    # Bloco 16.3 (Lambda): best-effort — clientes/fakes sem list_functions degradam
+    # pra lista vazia, nunca quebram (mesma disciplina do boundary do Bloco 11).
+    _list_functions = getattr(aws_client, "list_functions", None)
+    lambda_functions = _list_functions(region=region) if callable(_list_functions) else []
     services_scanned.append("ec2")
     evidence.append(
         {
@@ -1522,6 +1535,33 @@ def run_foundation_discovery(
                         "type": "integrates_with_instance",
                     }
                 )
+
+    # Bloco 16.3 (Lambda): funções como recurso de primeira classe. env vars são
+    # lidas só na execução (lambda_read_env) — o discovery só precisa do ARN + role.
+    if lambda_functions:
+        services_scanned.append("lambda")
+        evidence.append({"service": "lambda", "api_calls": ["lambda:ListFunctions"]})
+        for fn in lambda_functions:
+            fn_arn = fn.get("FunctionArn")
+            if not fn_arn:
+                continue
+            resources.append({
+                "service": "lambda",
+                "resource_type": "compute.lambda_function",
+                "identifier": fn_arn,
+                "region": region,
+                "metadata": {
+                    "name": fn.get("FunctionName"),
+                    "execution_role": fn.get("Role"),
+                },
+                "source": "aws_api",
+            })
+            if fn.get("Role"):
+                relationships.append({
+                    "source": fn_arn,
+                    "target": fn.get("Role"),
+                    "type": "uses_execution_role",
+                })
 
     _compute_privilege_scores(resources)
     _derive_attack_targets(resources)

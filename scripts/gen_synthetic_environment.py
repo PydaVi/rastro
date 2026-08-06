@@ -234,6 +234,60 @@ def generate_ec2_environment(scale: int, seed: int = 4242) -> dict:
     }
 
 
+def generate_lambda_environment(scale: int, seed: int = 909) -> dict:
+    """Camada C — ambiente com pivot por env var de Lambda (Bloco 16.3).
+
+    n_functions funções, cada uma com uma execution role; uma fração dos users
+    tem `lambda:GetFunctionConfiguration` sobre funções cujas env vars carregam
+    credencial → lambda_pivot. Anota via `_compute_capability_graph` real.
+    """
+    rng = random.Random(seed)
+    resources: list[dict] = []
+    user_arns = [_arn("user", f"lam-user-{i:04d}") for i in range(scale)]
+    role_arns = [_arn("role", f"lam-exec-role-{i:04d}") for i in range(scale)]
+    fn_arns = [f"arn:aws:lambda:{REGION}:{ACCOUNT}:function:worker-{i:04d}" for i in range(scale)]
+
+    k_read = 2
+    for uarn in user_arns:
+        read_fns = rng.sample(fn_arns, min(k_read, len(fn_arns)))
+        resources.append({
+            "service": "iam", "resource_type": "identity.user", "identifier": uarn,
+            "region": REGION,
+            "metadata": {"user_name": uarn.split("/")[-1], "policy_permissions": [{
+                "source": "inline",
+                "statements": [{"Effect": "Allow", "Action": ["lambda:GetFunctionConfiguration"],
+                                "Resource": read_fns}],
+            }]},
+            "source": "synthetic",
+        })
+    for i, (rarn, farn) in enumerate(zip(role_arns, fn_arns)):
+        hv = (i % 5 == 0)
+        resources.append({
+            "service": "iam", "resource_type": "identity.role", "identifier": rarn,
+            "region": REGION,
+            "metadata": {"role_name": rarn.split("/")[-1],
+                         "is_high_value_target": hv, "privilege_score": 8000 if hv else 100},
+            "source": "synthetic",
+        })
+        resources.append({
+            "service": "lambda", "resource_type": "compute.lambda_function", "identifier": farn,
+            "region": REGION,
+            "metadata": {"name": farn.split(":function:")[-1], "execution_role": rarn},
+            "source": "synthetic",
+        })
+
+    _compute_capability_graph(resources)
+    return {
+        "target": f"synthetic-lambda-scale-{scale}",
+        "bundle": "aws-advanced",
+        "caller_identity": {"Account": ACCOUNT, "Arn": user_arns[0]},
+        "services_scanned": ["iam", "lambda"],
+        "regions_scanned": [REGION],
+        "resources": resources,
+        "summary": {"resource_count": len(resources)},
+    }
+
+
 def generate_secure_baseline(scale: int, seed: int = 7) -> dict:
     """Camada B — baseline seguro: recursos existem, mas NENHUM caminho de ataque.
 
@@ -294,5 +348,6 @@ if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "iam"
     scale = int(sys.argv[2]) if len(sys.argv) > 2 else 100
     fn = {"iam": generate_environment, "ec2": generate_ec2_environment,
+          "lambda": generate_lambda_environment,
           "baseline": generate_secure_baseline}[mode]
     print(json.dumps(fn(scale), indent=2))

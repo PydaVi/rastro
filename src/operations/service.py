@@ -408,6 +408,10 @@ def _attack_class_to_profile(attack_class: str, target_arn: str, attack_steps: l
         return "aws-credential-pivot-ssm"
     if attack_class == "s3_pivot":
         return "aws-credential-pivot-s3"
+    if attack_class == "lambda_pivot":
+        # Bloco 16.3: mesma semântica de pivot (lê fonte de credencial → assume role);
+        # o intermediate_resource (ARN da função) distingue no finding.
+        return "aws-credential-pivot"
     if attack_class == "iam_create_access_key_pivot":
         return "aws-iam-create-access-key-pivot"
     if attack_class == "data_exfil":

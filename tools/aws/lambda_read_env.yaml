@@ -1,0 +1,17 @@
+name: lambda_read_env
+description: Read a Lambda function's configuration and extract credentials from its environment variables
+phase: credential-access
+mitre_id: T1552
+platform: AWS Lambda
+preconditions:
+  - privileged_identity_active
+postconditions:
+  - lambda_env_compromised
+implementation: tools/aws/lambda_read_env.py
+safe_simulation: true
+produces:
+  - effect: credential_pivot
+    condition: credential_extracted
+    actor_key_template: "extracted://{resource_arn}"
+    resource_arn_field: "response_summary.resource_arn"
+    credentials_field: "response_summary.credentials"
