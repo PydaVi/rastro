@@ -1813,6 +1813,33 @@ real (não erra, só não restringe). Enriquecer a coleta de secret/S3 com o Key
 trabalho da fase de labs, onde há recurso cifrado real pra validar. O mecanismo
 está pronto e testado; ativa quando a relação de cifragem for coletada.
 
+#### RDS — avaliado e NÃO implementado como pivot (decisão honesta, 2026-08-06)
+
+Rastreado: o engine/discovery não toca RDS hoje. Analisando o serviço, **RDS não
+é superfície de pivot-pra-identidade** — todo o valor de ataque é ACESSO A DADO,
+não escalação de identidade AWS:
+- creds de master do RDS em Secrets Manager → já coberto pelo read-pivot de secret
+  (o secret carrega credencial de DB, não credencial AWS — é data access);
+- `rds-db:connect` (IAM auth) → acesso ao banco, não identidade AWS;
+- `rds:CreateDBSnapshot` + share/restore → exfil de dado, não identidade.
+
+Forçar uma aresta RDS de pivot-pra-role seria inventar cobertura que não existe —
+exatamente o "sinal de confiança inflada" que a REGUA marca como alerta. Então RDS
+**não entra** na expansão de pivot da 16.3. Seu lugar honesto é o item já previsto
+em "O que fica para depois dos Blocos 7–10": **Objetivos Não-IAM — exfiltrar dado
+específico como objetivo final (novo tipo de nó destino no traversal)**. Quando
+esse bloco for feito, RDS entra junto com S3-exfil/snapshot como alvo de dado, com
+sua própria prova (acesso ao banco), não como role-chaining.
+
+#### Estado da expansão offline da 16.3 (2026-08-06)
+
+Fechadas as condições 1-3 (offline, testadas sinteticamente) dos serviços com
+modelo de identidade real: **EC2** (compute pivot via ssm:SendCommand), **Lambda**
+(env-var pivot), **KMS** (read-gate — refinamento, não pivot). **RDS** avaliado e
+roteado pro bloco de Objetivos Não-IAM (acima). A condição 4 (labs A/B/C +
+validação ao vivo + correção dos bugs) é a FASE DEDICADA seguinte — nenhum serviço
+declarado "coberto" até lá. 468 testes, todos offline.
+
 ### 16.4 — Modelo de ranking (reaproveita a ideia de ML da Seção 4.4 do doc de produto)
 
 A motivação original ("reduzir custo de execução pro self-serve") continua
