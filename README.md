@@ -16,7 +16,7 @@ o teto do produto. Ver [Visão de longo prazo](#visão-de-longo-prazo).
 
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
 ![Python](https://img.shields.io/badge/python-3.12-blue)
-![Tests](https://img.shields.io/badge/tests-430%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-437%20passing-brightgreen)
 ![Status](https://img.shields.io/badge/status-engine%20R%26D-orange)
 
 ---
@@ -215,7 +215,7 @@ pip install -e ".[dev]"
 **Testes (sem LLM, sem AWS):**
 
 ```bash
-pytest                 # 430 testes, sem dependências externas
+pytest                 # 437 testes, sem dependências externas
 pytest -m integration  # requer AWS ou Ollama
 ```
 
@@ -282,8 +282,10 @@ mas SCP ainda não entra no cálculo de capacidade — isso depende do avaliador
 (SCP tem semântica de baseline "Allow all" diferente de boundary, que não dá pra tratar como uma
 extensão pontual). Permission boundary já é resolvida tanto em `identity.role` quanto em
 `identity.user`, com sinal honesto de três estados (`resolved` / `no_boundary` / `unresolved` —
-nunca assume "sem boundary" por omissão). SCP herdado de OUs/root, `Condition` de trust policy
-e cross-account real seguem pendentes dentro do próprio Bloco 11 (ver PLAN.md).
+nunca assume "sem boundary" por omissão). `Condition` de trust policy (ex. `sts:ExternalId`,
+`aws:PrincipalOrgID`) também já é avaliada via `PolicyEvaluator` — um trust externo gated por
+segredo não vira mais confiança incondicional. SCP herdado de OUs/root e cross-account real
+seguem pendentes dentro do próprio Bloco 11 (ver PLAN.md).
 
 O Bloco 12 (`src/core/policy_evaluator.py`) já existe e já está plugado: cada `AttackHypothesis`
 carrega `evaluation_tier` (`structural` — achado por BFS sobre classes de action, ou `evaluated` —

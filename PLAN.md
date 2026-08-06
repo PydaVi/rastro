@@ -1008,6 +1008,45 @@ primeiro teste a rodar antes de declarar Bloco 11 fechado.
 
 ---
 
+### Bloco 11 (continuação) — `Condition` em trust policy (FEITO, 2026-08-05)
+
+**Direção**: gap de falso positivo real — trust externo gated por `sts:ExternalId`
+ou `aws:PrincipalOrgID` era tratado como confiança incondicional.
+
+**O que foi implementado**
+
+Com o Bloco 12 já fechado, `Condition` de trust policy deixou de precisar de
+lógica nova — reaproveita `_condition_matches` do `PolicyEvaluator` direto.
+`_extract_trust_statements` (`src/operations/discovery.py`) preserva `Condition`
+por statement (a extração antiga, `_extract_trust_principals`, colapsava tudo
+numa lista plana de principals, descartando `Condition`). `_trust_policy_allows_principal`
+ganhou um parâmetro opcional `trust_statements`: quando presente, cada statement
+é checado individualmente — `Principal` precisa bater E, se houver `Condition`,
+ela precisa ser satisfeita pelo contexto que dá pra saber estaticamente
+(`aws:PrincipalAccount`, derivado do próprio ARN candidato). Contexto que não
+dá pra saber sem executar (`sts:ExternalId`, `aws:MultiFactorAuthPresent`,
+IP de origem) nunca é inventado — ausência da chave faz a condition falhar
+"fechado" (não concede trust), mesma semântica conservadora que o
+`PolicyEvaluator` já usa pra identity/boundary/SCP.
+
+`trust_statements=None` (chave ausente — fixture parcial ou snapshot antigo)
+cai no comportamento anterior via `trust_principals`, sem quebrar nada
+existente — mesma disciplina de fallback honesto do resto do Bloco 11.
+
+**Critérios de saída**
+
+1. ~~`_extract_trust_statements` preserva Condition por statement~~ DONE
+2. ~~`_trust_policy_allows_principal` avalia Condition via PolicyEvaluator,
+   com fallback pro comportamento antigo quando `trust_statements` ausente~~ DONE
+3. ~~7 testes novos (ExternalId não concede sem contexto, PrincipalAccount
+   concede quando derivável do ARN, wildcard `*` continua gated por Condition,
+   múltiplos statements, compat com dado antigo)~~ DONE
+4. ~~437 testes passando, sem regressão~~ DONE
+5. Herança de OU/root pra SCP e cross-account real — ainda pendentes, maior
+   escopo (discovery multi-conta / `organizations:ListParents`)
+
+---
+
 ### Bloco 12 — PolicyEvaluator: avaliação determinística de política (INICIADO, 2026-08-04)
 
 **Direcao**: camada de prova graduada — nem toda hipótese precisa de mutação real

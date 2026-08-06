@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, UTC
 from pathlib import Path
 
+from core.policy_evaluator import _condition_matches
 from execution.aws_client import AwsClient, Boto3AwsClient
 from operations.catalog import resolve_bundle
 from operations.models import AuthorizationConfig, TargetConfig
@@ -266,11 +267,15 @@ def _compute_capability_graph(resources: list[dict]) -> None:
             continue
         role_arn = role_res.get("identifier", "")
 
-        role_trust_principals = (role_res.get("metadata") or {}).get("trust_principals")
+        role_meta_for_trust = role_res.get("metadata") or {}
+        role_trust_principals = role_meta_for_trust.get("trust_principals")
+        role_trust_statements = role_meta_for_trust.get("trust_statements")
         assumable_by = [
             p["identifier"] for p in principals
             if _principal_has_capability(p, _ASSUMEROLE_ACTIONS, role_arn)
-            and _trust_policy_allows_principal(role_trust_principals, p["identifier"])
+            and _trust_policy_allows_principal(
+                role_trust_principals, p["identifier"], trust_statements=role_trust_statements,
+            )
         ]
         if assumable_by:
             _set_resource_meta(role_res, "assumable_by", assumable_by)
@@ -904,6 +909,7 @@ def run_foundation_discovery(
         role_name = role_arn.rsplit("/", 1)[-1]
         role_details = aws_client.get_role_details(region=region, role_name=role_name)
         trust_principals = _extract_trust_principals(role_details.get("AssumeRolePolicyDocument"))
+        trust_statements = _extract_trust_statements(role_details.get("AssumeRolePolicyDocument"))
         attached_policies = role_details.get("AttachedPolicies", [])
         inline_policy_names = role_details.get("InlinePolicyNames", [])
         role_attached_arns = [policy.get("PolicyArn") for policy in attached_policies if policy.get("PolicyArn")]
@@ -924,6 +930,7 @@ def run_foundation_discovery(
             "is_service_linked": False,
             "role_name": role_name,
             "trust_principals": trust_principals,
+            "trust_statements": trust_statements,
             "trust_is_broad": any(principal == "*" for principal in trust_principals),
             "attached_policy_arns": role_attached_arns,
             "attached_policy_names": [policy.get("PolicyName") for policy in attached_policies if policy.get("PolicyName")],
@@ -1600,7 +1607,23 @@ def _account_id_from_arn(arn: str) -> str | None:
     return None
 
 
-def _trust_policy_allows_principal(trust_principals: list[str] | None, principal_arn: str) -> bool:
+def _principal_matches_trust_statement(principals: list[str], principal_arn: str, principal_account: str | None) -> bool:
+    if "*" in principals:
+        return True
+    if principal_arn in principals:
+        return True
+    if principal_account:
+        root_arn = f"arn:aws:iam::{principal_account}:root"
+        if root_arn in principals or principal_account in principals:
+            return True
+    return False
+
+
+def _trust_policy_allows_principal(
+    trust_principals: list[str] | None,
+    principal_arn: str,
+    trust_statements: list[dict] | None = None,
+) -> bool:
     """True se o trust policy (Principal.AWS de statements Allow) permite principal_arn.
 
     trust_principals=None (chave ausente do metadata) significa que dados de
@@ -1612,7 +1635,35 @@ def _trust_policy_allows_principal(trust_principals: list[str] | None, principal
     rodou e nao encontrou nenhum Principal.AWS em statement Allow do trust
     policy (ex.: role so-servico) — nesse caso nenhum principal IAM pode
     assumir via trust, mesmo tendo sts:AssumeRole na propria identity policy.
+
+    trust_statements (Bloco 11, Condition-aware): quando presente, cada
+    statement e checado individualmente — Principal precisa bater E, se o
+    statement tiver Condition (ex. sts:ExternalId, aws:PrincipalOrgID), ela
+    precisa ser satisfeita pelo contexto que sabemos de verdade
+    (aws:PrincipalAccount, derivado do proprio ARN candidato). Contexto que
+    nao temos como saber estaticamente (ExternalId, MFA, IP de origem) nunca
+    e inventado — a ausencia da chave faz StringEquals/ArnLike & Cia falhar
+    "fechado" (nao concede trust), mesma semantica conservadora do
+    PolicyEvaluator. Sem isso, um trust externo gated por ExternalId secreto
+    seria tratado como confianca incondicional — falso positivo real.
     """
+    if trust_statements is not None:
+        principal_account = _account_id_from_arn(principal_arn)
+        context: dict = {}
+        if principal_account:
+            context["aws:PrincipalAccount"] = principal_account
+        context["aws:PrincipalArn"] = principal_arn
+        for stmt in trust_statements:
+            if not _principal_matches_trust_statement(stmt.get("_principals", []), principal_arn, principal_account):
+                continue
+            condition_block = stmt.get("Condition")
+            if not condition_block:
+                return True
+            _supported, matches = _condition_matches(condition_block, context)
+            if matches:
+                return True
+        return False
+
     if trust_principals is None:
         return True
     if "*" in trust_principals:
@@ -1652,3 +1703,40 @@ def _extract_trust_principals(policy_document) -> list[str]:
         elif isinstance(aws_principal, list):
             principals.update(item for item in aws_principal if isinstance(item, str))
     return sorted(principals)
+
+
+def _extract_trust_statements(policy_document) -> list[dict]:
+    """Statements Allow do trust policy com Condition preservada, no formato
+    que _trust_policy_allows_principal consome pra avaliar Condition via
+    PolicyEvaluator. _principals e o Principal.AWS ja normalizado pra lista
+    de strings — nao e um campo real de policy IAM, so um helper interno.
+    """
+    if not policy_document:
+        return []
+    statements = policy_document.get("Statement", [])
+    if isinstance(statements, dict):
+        statements = [statements]
+    result: list[dict] = []
+    for statement in statements:
+        if statement.get("Effect", "Allow") != "Allow":
+            continue
+        principal = statement.get("Principal")
+        principals: list[str] = []
+        if principal == "*":
+            principals = ["*"]
+        elif isinstance(principal, dict):
+            aws_principal = principal.get("AWS")
+            if aws_principal == "*":
+                principals = ["*"]
+            elif isinstance(aws_principal, str):
+                principals = [aws_principal]
+            elif isinstance(aws_principal, list):
+                principals = [p for p in aws_principal if isinstance(p, str)]
+        if not principals:
+            continue
+        result.append({
+            "Action": statement.get("Action", "sts:AssumeRole"),
+            "Condition": statement.get("Condition"),
+            "_principals": principals,
+        })
+    return result

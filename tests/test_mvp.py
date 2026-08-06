@@ -46,6 +46,7 @@ from operations.discovery import (
     _trust_policy_allows_principal,
     _account_id_from_arn,
     _extract_trust_principals,
+    _extract_trust_statements,
 )
 from operations.campaign_synthesis import synthesize_foundation_campaigns
 from operations.synthetic_catalog import get_mixed_synthetic_profile, get_synthetic_profile
@@ -5106,6 +5107,87 @@ def test_trust_policy_allows_principal_account_root_covers_any_principal_in_acco
 def test_account_id_from_arn() -> None:
     assert _account_id_from_arn("arn:aws:iam::123456789012:role/x") == "123456789012"
     assert _account_id_from_arn("not-an-arn") is None
+
+
+# ---------------------------------------------------------------------------
+# Bloco 11 (continuacao) — Condition em trust policy, via PolicyEvaluator
+# ---------------------------------------------------------------------------
+
+def test_extract_trust_statements_preserves_condition() -> None:
+    arn = "arn:aws:iam::123:role/broker"
+    doc = {"Statement": [{
+        "Effect": "Allow",
+        "Principal": {"AWS": arn},
+        "Action": "sts:AssumeRole",
+        "Condition": {"StringEquals": {"sts:ExternalId": "secret-123"}},
+    }]}
+    statements = _extract_trust_statements(doc)
+    assert len(statements) == 1
+    assert statements[0]["_principals"] == [arn]
+    assert statements[0]["Condition"] == {"StringEquals": {"sts:ExternalId": "secret-123"}}
+
+
+def test_extract_trust_statements_ignores_deny():
+    doc = {"Statement": [{
+        "Effect": "Deny", "Principal": {"AWS": "arn:aws:iam::123:role/x"}, "Action": "sts:AssumeRole",
+    }]}
+    assert _extract_trust_statements(doc) == []
+
+
+def test_trust_policy_allows_principal_no_condition_still_works_with_statements() -> None:
+    """Statement sem Condition continua concedendo trust normalmente (compat)."""
+    arn = "arn:aws:iam::123:role/broker"
+    statements = [{"Action": "sts:AssumeRole", "Condition": None, "_principals": [arn]}]
+    assert _trust_policy_allows_principal(None, arn, trust_statements=statements)
+    assert not _trust_policy_allows_principal(None, "arn:aws:iam::123:role/other", trust_statements=statements)
+
+
+def test_trust_policy_allows_principal_external_id_condition_not_satisfied_without_context() -> None:
+    """Trust gated por sts:ExternalId nao concede — nao inventamos o valor que
+    um atacante forneceria. Sem isso, um external-id secreto viraria
+    confianca incondicional (falso positivo real)."""
+    arn = "arn:aws:iam::123:role/broker"
+    statements = [{
+        "Action": "sts:AssumeRole",
+        "Condition": {"StringEquals": {"sts:ExternalId": "super-secret"}},
+        "_principals": [arn],
+    }]
+    assert not _trust_policy_allows_principal(None, arn, trust_statements=statements)
+
+
+def test_trust_policy_allows_principal_account_condition_satisfied_from_arn() -> None:
+    """aws:PrincipalAccount e derivavel do proprio ARN do candidato — condition
+    satisfeita de verdade, nao contexto inventado."""
+    arn = "arn:aws:iam::999888777666:role/broker"
+    statements = [{
+        "Action": "sts:AssumeRole",
+        "Condition": {"StringEquals": {"aws:PrincipalAccount": "999888777666"}},
+        "_principals": ["*"],
+    }]
+    assert _trust_policy_allows_principal(None, arn, trust_statements=statements)
+
+    other_account_arn = "arn:aws:iam::111222333444:role/broker"
+    assert not _trust_policy_allows_principal(None, other_account_arn, trust_statements=statements)
+
+
+def test_trust_policy_allows_principal_multiple_statements_any_match_wins() -> None:
+    """Se um statement nao bate (principal errado) mas outro bate e sem Condition, concede."""
+    arn = "arn:aws:iam::123:role/broker"
+    statements = [
+        {"Action": "sts:AssumeRole", "Condition": {"StringEquals": {"sts:ExternalId": "x"}}, "_principals": [arn]},
+        {"Action": "sts:AssumeRole", "Condition": None, "_principals": [arn]},
+    ]
+    assert _trust_policy_allows_principal(None, arn, trust_statements=statements)
+
+
+def test_trust_policy_allows_principal_wildcard_still_gated_by_condition() -> None:
+    """Principal=* nao vira carta branca se houver Condition nao satisfeita."""
+    statements = [{
+        "Action": "sts:AssumeRole",
+        "Condition": {"StringEquals": {"sts:ExternalId": "secret"}},
+        "_principals": ["*"],
+    }]
+    assert not _trust_policy_allows_principal(None, "arn:aws:iam::999:role/anyone", trust_statements=statements)
 
 
 def test_capability_graph_assumable_by_requires_trust_policy_match() -> None:
