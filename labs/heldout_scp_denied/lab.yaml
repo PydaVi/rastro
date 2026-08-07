@@ -1,0 +1,5 @@
+name: heldout_scp_denied
+layer: C
+held_out: true
+challenge: true
+description: HELD-OUT — SCP Deny respeitada; valida generalização da supressão.

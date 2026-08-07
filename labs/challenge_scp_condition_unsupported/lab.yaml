@@ -1,0 +1,5 @@
+name: challenge_scp_condition_unsupported
+layer: C
+held_out: false
+challenge: true
+description: SCP Deny com Condition não-avaliável → engine não suprime (fail-open) = FP conhecido.

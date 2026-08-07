@@ -183,33 +183,61 @@ def build_challenge_cross_account():
              "limitation": "discovery single-account: a role da conta B não está no snapshot, sem aresta"}])
 
 
-def build_challenge_scp_denied():
-    # DESAFIO (eixo FALSO POSITIVO, não miss): user→role permitido por
-    # permission+trust, MAS uma SCP nega sts:AssumeRole na conta. O caminho real
-    # NÃO existe (a AWS bloquearia). O engine é SCP-cego no grafo → gera o
-    # role_chain assim mesmo = FP. Declarado em false_paths (FP esperado/conhecido).
-    user, role = _u("scp-user"), _r("scp-blocked-admin")
+def _scp_deny_env(user_name, role_name, condition=None):
+    user, role = _u(user_name), _r(role_name)
     resources = [
         {"resource_type": "identity.user", "identifier": user, "metadata": {"policy_permissions": [
             {"source": "i", "statements": [_allow(["sts:AssumeRole"], [role])]}]}},
         {"resource_type": "identity.role", "identifier": role, "metadata": {
             "trust_principals": [user], "policy_permissions": []}},
     ]
-    governance = {"scp_visibility": "directly_attached_only",
-                  "scp_policies": [{"statements": [
-                      {"Effect": "Deny", "Action": ["sts:AssumeRole"], "Resource": "*"}]}]}
-    d = LABS / "challenge_scp_denied"
-    d.mkdir(parents=True, exist_ok=True)
-    snap = _snapshot("challenge_scp_denied", resources, governance=governance)
+    stmt = {"Effect": "Deny", "Action": ["sts:AssumeRole"], "Resource": "*"}
+    if condition:
+        stmt["Condition"] = condition
+    governance = {"scp_visibility": "directly_attached_only", "scp_policies": [{"statements": [stmt]}]}
+    return user, role, resources, governance
+
+
+def build_challenge_scp_denied():
+    # CORRIGIDO na fase de labs (2026-08-06): a SCP nega sts:AssumeRole, o caminho
+    # não existe (AWS bloqueia), e o engine agora SUPRIME a aresta (Deny de SCP
+    # diretamente anexada é autoritativo). Resposta certa = zero achado. Antes era
+    # um FP conhecido; virou demonstração de que a SCP Deny é respeitada.
+    user, role, resources, governance = _scp_deny_env("scp-user", "scp-blocked-admin")
     _write("challenge_scp_denied",
            {"name": "challenge_scp_denied", "layer": "C", "held_out": False, "challenge": True,
-            "description": "SCP nega o assume; o engine (SCP-cego no grafo) reporta o caminho = FP conhecido."},
-           snap, [])
-    # o caminho verdadeiro é vazio; o que o engine gera é um FP ESPERADO, declarado:
-    gt = {"lab": "challenge_scp_denied", "true_paths": [],
+            "description": "SCP nega o assume; o engine suprime a aresta (Deny autoritativo). Zero achado = certo."},
+           _snapshot("challenge_scp_denied", resources, governance=governance), [])
+
+
+def build_challenge_scp_condition_unsupported():
+    # DESAFIO (FP remanescente honesto): SCP nega sts:AssumeRole MAS com uma
+    # Condition de operador não-suportado (DateGreaterThan). O engine não consegue
+    # avaliar com certeza → NÃO suprime (fail-open, pra não inventar falso
+    # negativo) → gera o role_chain = FP ESPERADO. Declarado em false_paths.
+    user, role, resources, governance = _scp_deny_env(
+        "scp-cond-user", "scp-cond-admin",
+        condition={"DateGreaterThan": {"aws:CurrentTime": "2020-01-01T00:00:00Z"}})
+    d = LABS / "challenge_scp_condition_unsupported"
+    d.mkdir(parents=True, exist_ok=True)
+    _write("challenge_scp_condition_unsupported",
+           {"name": "challenge_scp_condition_unsupported", "layer": "C", "held_out": False, "challenge": True,
+            "description": "SCP Deny com Condition não-avaliável → engine não suprime (fail-open) = FP conhecido."},
+           _snapshot("challenge_scp_condition_unsupported", resources, governance=governance), [])
+    gt = {"lab": "challenge_scp_condition_unsupported", "true_paths": [],
           "false_paths": [{"entry": user, "target": role, "class": "role_chain",
-                           "limitation": "engine SCP-cego no grafo: assumable_by não cruza com SCP Deny, então reporta um caminho que a AWS bloquearia"}]}
+                           "limitation": "SCP Deny com operador de Condition não-suportado: o engine não avalia com certeza e não suprime (fail-open honesto), reportando um caminho que a SCP provavelmente bloqueia"}]}
     (d / "ground_truth.json").write_text(json.dumps(gt, indent=2))
+
+
+def build_heldout_scp_denied():
+    # HELD-OUT: valida que a supressão de SCP Deny GENERALIZA (ARNs diferentes,
+    # nunca usados no fix). Zero achado = certo.
+    user, role, resources, governance = _scp_deny_env("ho-scp-user", "ho-scp-admin")
+    _write("heldout_scp_denied",
+           {"name": "heldout_scp_denied", "layer": "C", "held_out": True, "challenge": True,
+            "description": "HELD-OUT — SCP Deny respeitada; valida generalização da supressão."},
+           _snapshot("heldout_scp_denied", resources, governance=governance), [])
 
 
 def build_heldout_ec2_variant():
@@ -270,6 +298,8 @@ if __name__ == "__main__":
     build_challenge_role_then_read()
     build_challenge_cross_account()
     build_challenge_scp_denied()
+    build_challenge_scp_condition_unsupported()
     build_heldout_ec2_variant()
     build_heldout_multihop_4()
+    build_heldout_scp_denied()
     print("pronto.")

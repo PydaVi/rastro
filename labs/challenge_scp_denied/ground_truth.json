@@ -1,12 +1,4 @@
 {
   "lab": "challenge_scp_denied",
-  "true_paths": [],
-  "false_paths": [
-    {
-      "entry": "arn:aws:iam::123456789012:user/scp-user",
-      "target": "arn:aws:iam::123456789012:role/scp-blocked-admin",
-      "class": "role_chain",
-      "limitation": "engine SCP-cego no grafo: assumable_by n\u00e3o cruza com SCP Deny, ent\u00e3o reporta um caminho que a AWS bloquearia"
-    }
-  ]
+  "true_paths": []
 }

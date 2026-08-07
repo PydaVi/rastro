@@ -2,4 +2,4 @@ name: challenge_scp_denied
 layer: C
 held_out: false
 challenge: true
-description: SCP nega o assume; o engine (SCP-cego no grafo) reporta o caminho = FP conhecido.
+description: SCP nega o assume; o engine suprime a aresta (Deny autoritativo). Zero achado = certo.

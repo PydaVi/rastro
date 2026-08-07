@@ -17,7 +17,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Any
 
-from core.policy_evaluator import evaluate_effective_access
+from core.policy_evaluator import evaluate_effective_access, evaluate_scope
 
 # (action_type, from_arn, to_arn, extra)
 _Step = tuple[str, str, str, Any]
@@ -149,17 +149,19 @@ class CapabilityGraph:
             rtype = r.get("resource_type", "")
             meta = r.get("metadata") or {}
 
-            # readable_by → CanRead edges
-            for principal in meta.get("readable_by", []):
-                g.can_read[principal].append(arn)
+            # readable_by → CanRead edges (SCP Deny suprime — ver _scp_denies)
+            read_action = _READ_ACTION_BY_RESOURCE_TYPE.get(rtype)
+            if not (read_action and g._scp_denies(read_action, arn)):
+                for principal in meta.get("readable_by", []):
+                    g.can_read[principal].append(arn)
 
             # createkey_by → CanCreateKey edges (only on users)
-            if rtype == "identity.user":
+            if rtype == "identity.user" and not g._scp_denies("iam:CreateAccessKey", arn):
                 for principal in meta.get("createkey_by", []):
                     g.can_create_key[principal].append(arn)
 
             # assumable_by → CanAssume edges (only on roles)
-            if rtype == "identity.role":
+            if rtype == "identity.role" and not g._scp_denies("sts:AssumeRole", arn):
                 for principal in meta.get("assumable_by", []):
                     g.can_assume[principal].append(arn)
 
@@ -167,6 +169,8 @@ class CapabilityGraph:
             if rtype == "identity.role":
                 mutable_by: dict[str, list[str]] = meta.get("mutable_by", {})
                 for action, principals in mutable_by.items():
+                    if g._scp_denies(action, arn):
+                        continue
                     for principal in principals:
                         g.can_mutate[principal].append((arn, action))
 
@@ -198,6 +202,18 @@ class CapabilityGraph:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    def _scp_denies(self, action: str, resource_arn: str) -> bool:
+        """Fase de labs: um Deny de SCP diretamente anexada é AUTORITATIVO,
+        independente da hierarquia de OU (diferente do baseline Allow-all, que o
+        Bloco 11/12 adiou por exigir a hierarquia). Então suprimir aresta que uma
+        SCP Deny visível bloqueia é correto e reduz falso positivo. Só suprime
+        quando o Deny é CERTO (operador de Condition não-suportado → não suprime,
+        pra não inventar falso negativo)."""
+        if not self._scp_statements:
+            return False
+        result = evaluate_scope(self._scp_statements, action, resource_arn, {})
+        return result.decision == "Deny" and result.certain
 
     def _pivot_target_roles(self) -> list[str]:
         """Bloco 16.1: top-N roles-alvo do pivot, priorizados por valor de alvo.

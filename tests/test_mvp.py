@@ -12088,8 +12088,10 @@ def test_b12_evaluation_tier_stays_structural_when_boundary_caps_it():
     assert chain.evaluation_tier == "structural"
 
 
-def test_b12_evaluation_tier_uses_scp_from_governance():
-    """governance.scp_policies no snapshot participa da avaliacao do primeiro passo."""
+def test_b12_scp_deny_suppresses_edge_from_governance():
+    """Fase de labs (2026-08-06): um Deny de SCP diretamente anexada é autoritativo
+    e SUPRIME a aresta (antes o hypothesis saía structural; agora nem é gerado —
+    um caminho que a AWS bloquearia não é prova, é erro de modelagem, ver REGUA)."""
     user_arn = "arn:aws:iam::123:user/u"
     role_arn = "arn:aws:iam::123:role/r"
     snapshot = _make_snapshot_b9([
@@ -12106,8 +12108,30 @@ def test_b12_evaluation_tier_uses_scp_from_governance():
     }
     g = CapabilityGraph.build(snapshot)
     hyps = g.derive_all_hypotheses([user_arn])
-    chain = next(h for h in hyps if h.attack_class == "role_chain")
-    assert chain.evaluation_tier == "structural"
+    assert not any(h.attack_class == "role_chain" for h in hyps)
+
+
+def test_b12_scp_deny_with_unsupported_condition_does_not_suppress():
+    """Fail-open honesto: SCP Deny com operador de Condition não-suportado não
+    dá certeza, então NÃO suprime (não inventa falso negativo) — a aresta fica."""
+    user_arn = "arn:aws:iam::123:user/u"
+    role_arn = "arn:aws:iam::123:role/r"
+    snapshot = _make_snapshot_b9([
+        _user(user_arn, policy_permissions=[{"source": "p", "statements": [
+            {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": role_arn},
+        ]}]),
+        _role(role_arn, assumable_by=[user_arn]),
+    ])
+    snapshot["governance"] = {
+        "scp_visibility": "directly_attached_only",
+        "scp_policies": [{"source": "scp:guardrail", "statements": [
+            {"Effect": "Deny", "Action": "sts:AssumeRole", "Resource": "*",
+             "Condition": {"DateGreaterThan": {"aws:CurrentTime": "2020-01-01T00:00:00Z"}}},
+        ]}],
+    }
+    g = CapabilityGraph.build(snapshot)
+    hyps = g.derive_all_hypotheses([user_arn])
+    assert any(h.attack_class == "role_chain" for h in hyps)
 
 
 def test_b12_evaluation_tier_only_evaluates_first_step_of_pivot_path():

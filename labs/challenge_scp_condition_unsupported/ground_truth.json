@@ -1,0 +1,12 @@
+{
+  "lab": "challenge_scp_condition_unsupported",
+  "true_paths": [],
+  "false_paths": [
+    {
+      "entry": "arn:aws:iam::123456789012:user/scp-cond-user",
+      "target": "arn:aws:iam::123456789012:role/scp-cond-admin",
+      "class": "role_chain",
+      "limitation": "SCP Deny com operador de Condition n\u00e3o-suportado: o engine n\u00e3o avalia com certeza e n\u00e3o suprime (fail-open honesto), reportando um caminho que a SCP provavelmente bloqueia"
+    }
+  ]
+}

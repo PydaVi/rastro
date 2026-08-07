@@ -42,13 +42,23 @@ medido. Sem negativos, não dá pra saber se o engine acha ataque ou só acha co
 
 Simétrico aos plants fora-de-cobertura (misses conhecidos), o ground truth pode
 declarar `false_paths`: caminhos que o engine **erradamente reporta por limite
-conhecido**. Exemplo real (`challenge_scp_denied`): uma SCP nega `sts:AssumeRole`,
-então o caminho não existe (a AWS bloqueia), mas o engine é SCP-cego no grafo
-(`assumable_by` não cruza com SCP Deny) e gera o `role_chain` = FP. Declarar como
-`false_path` classifica isso como **FP esperado** (limite documentado), separado
-do FP **inesperado** (bug). O eixo de falso positivo fica tão honesto quanto o de
-miss — nenhum dos dois é mascarado, e um FP novo não-declarado ainda aparece como
-bug.
+conhecido**. Declarar como `false_path` classifica como **FP esperado** (limite
+documentado), separado do FP **inesperado** (bug). O eixo de falso positivo fica
+tão honesto quanto o de miss — nenhum mascarado, e um FP novo não-declarado ainda
+aparece como bug.
+
+Esse eixo já rendeu uma segunda correção de núcleo (2026-08-06): o primeiro plant
+de FP (`challenge_scp_denied`) mostrou que o engine era SCP-cego no grafo —
+`assumable_by` não cruzava com SCP Deny, então reportava um `role_chain` que a AWS
+bloquearia. Fix: um Deny de SCP diretamente anexada é AUTORITATIVO (independe da
+hierarquia de OU, diferente do baseline Allow-all adiado no Bloco 11/12), então
+`CapabilityGraph.build` agora suprime a aresta que uma SCP Deny CERTA bloqueia
+(`_scp_denies`). `challenge_scp_denied` virou demonstração de supressão correta
+(zero achado), e o held-out `heldout_scp_denied` confirmou que generaliza. O
+limite remanescente honesto virou plant próprio (`challenge_scp_condition_unsupported`):
+SCP Deny com operador de Condition não-suportado → o engine não tem certeza e
+**não suprime** (fail-open, pra não inventar falso negativo) → FP esperado
+declarado.
 
 ### 4. Held-out
 Labs `held_out: true` **nunca** são usados pra ajustar o engine. O scorer os
