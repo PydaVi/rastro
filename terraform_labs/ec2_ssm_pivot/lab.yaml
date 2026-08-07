@@ -1,0 +1,5 @@
+name: ec2_ssm_pivot
+layer: C
+held_out: false
+challenge: false
+description: EC2 compute pivot via ssm:SendCommand — o engine deve gerar a hipótese compute_pivot entry-user -> target-role.

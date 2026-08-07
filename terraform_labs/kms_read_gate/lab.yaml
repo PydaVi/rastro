@@ -1,0 +1,5 @@
+name: kms_read_gate
+layer: C
+held_out: false
+challenge: true
+description: Secret cifrado com CMK; só quem tem kms:Decrypt deve ser reportado. Testa redução de falso positivo (e expõe o gap do kms_key_id capture até ele ser feito).

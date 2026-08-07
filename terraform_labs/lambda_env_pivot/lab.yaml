@@ -1,0 +1,5 @@
+name: lambda_env_pivot
+layer: C
+held_out: false
+challenge: false
+description: Lambda com credenciais embutidas nas env vars — o engine deve gerar lambda_pivot entry-user -> target-role.

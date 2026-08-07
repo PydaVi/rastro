@@ -1,0 +1,9 @@
+# terraform artefatos — não versionar
+**/.terraform/
+**/.terraform.lock.hcl
+**/terraform.tfstate
+**/terraform.tfstate.*
+**/*.tfvars
+**/handler.zip
+**/_run/
+_shared_versions.tf.txt
