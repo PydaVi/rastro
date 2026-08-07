@@ -320,6 +320,25 @@ def build_challenge_resource_wildcard():
              "in_coverage": True, "note": "coberto desde o fix de glob em _resource_covers_arn (2026-08-06)"}])
 
 
+def build_challenge_notresource_excludes():
+    # FIX de FP (fase de labs): Allow GetSecretValue NotResource:[o próprio secret]
+    # concede em TUDO menos esse secret → NÃO deve conceder acesso a ele. Antes o
+    # engine ignorava NotResource (Resource caía no default "*") e reportava = FP.
+    # Agora suprime. Resposta certa = zero achado sobre o secret.
+    user = _u("notres-user")
+    secret = f"arn:aws:secretsmanager:{REGION}:{ACCT}:secret:prod/excluded"
+    resources = [
+        {"resource_type": "identity.user", "identifier": user, "metadata": {"policy_permissions": [
+            {"source": "i", "statements": [
+                {"Effect": "Allow", "Action": ["secretsmanager:GetSecretValue"], "NotResource": [secret]}]}]}},
+        {"resource_type": "secret.secrets_manager", "identifier": secret, "metadata": {"name": "prod/excluded"}},
+    ]
+    _write("challenge_notresource_excludes",
+           {"name": "challenge_notresource_excludes", "layer": "C", "held_out": False, "challenge": True,
+            "description": "Allow NotResource exclui o próprio secret; o engine agora suprime (era FP)."},
+           _snapshot("challenge_notresource_excludes", resources), [])
+
+
 def build_heldout_ec2_variant():
     # HELD-OUT: nunca usar pra ajustar o engine; medido só na estatística final.
     user, role = _u("ho-ops"), _r("ho-role")
@@ -381,6 +400,7 @@ if __name__ == "__main__":
     build_challenge_scp_condition_unsupported()
     build_challenge_midwildcard_read()
     build_challenge_resource_wildcard()
+    build_challenge_notresource_excludes()
     build_challenge_notaction_read()
     build_heldout_ec2_variant()
     build_heldout_multihop_4()

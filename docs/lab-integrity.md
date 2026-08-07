@@ -142,6 +142,11 @@ regressão é travada.
    `arn:…:*:secret:prod/creds` / `…:secret:*creds` (falso negativo). Agora delega
    pro `_resource_pattern_matches` do PolicyEvaluator (glob completo + tolerância
    do sufixo Secrets Manager), sem over-match.
+6. **NotResource no matcher grosso** — era ignorado (Resource caía no default
+   `*`), então `Allow …:GetSecretValue NotResource:[o próprio secret]` concedia no
+   secret (falso POSITIVO). Corrigido SIMÉTRICO (Allow E Deny) em
+   `_stmt_covers_resource` — cobre o target se ele não casar com nenhum padrão do
+   NotResource. Completa o conjunto Action/NotAction/Resource/NotResource.
 
 Limites remanescentes documentados (plants, não corrigidos ainda): cross-account
 (discovery single-account), chain > `max_depth`=3, SCP Deny com Condition de

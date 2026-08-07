@@ -192,14 +192,30 @@ def _statements_grant(
         for stmt in perm.get("statements", []):
             if stmt.get("Effect") != effect:
                 continue
-            resource_field = stmt.get("Resource", "*")
-            if isinstance(resource_field, str):
-                resource_field = [resource_field]
             if not _stmt_covers_capability(stmt, capability_actions):
                 continue
-            if _resource_covers_arn(resource_field, target_arn):
+            if _stmt_covers_resource(stmt, target_arn):
                 return True
     return False
+
+
+def _stmt_covers_resource(stmt: dict, target_arn: str) -> bool:
+    """A parte de recurso (Resource ou NotResource) do statement cobre o target?
+
+    Simétrico ao NotAction (Allow E Deny): NotResource cobre tudo MENOS o listado,
+    então cobre o target se ele não casar com nenhum padrão do NotResource. Antes
+    NotResource era ignorado (Resource caía no default "*"), gerando falso positivo
+    (Allow NotResource:[target] concedia no target).
+    """
+    if "NotResource" in stmt:
+        not_res = stmt.get("NotResource", [])
+        if isinstance(not_res, str):
+            not_res = [not_res]
+        return not any(_resource_pattern_matches(p, target_arn) for p in not_res)
+    resource_field = stmt.get("Resource", "*")
+    if isinstance(resource_field, str):
+        resource_field = [resource_field]
+    return _resource_covers_arn(resource_field, target_arn)
 
 
 def _stmt_covers_capability(stmt: dict, capability_actions: frozenset) -> bool:

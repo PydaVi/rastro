@@ -1,0 +1,5 @@
+name: challenge_notresource_excludes
+layer: C
+held_out: false
+challenge: true
+description: Allow NotResource exclui o próprio secret; o engine agora suprime (era FP).
