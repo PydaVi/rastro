@@ -1153,6 +1153,68 @@ class Boto3AwsClient:
         user = client.get_user(UserName=user_name)["User"]
         return (user.get("PermissionsBoundary") or {}).get("PermissionsBoundaryArn")
 
+    def list_groups_for_user(
+        self,
+        region: str,
+        user_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[str]:
+        try:
+            client = self._session(credentials).client("iam", region_name=region)
+            paginator = client.get_paginator("list_groups_for_user")
+            names: list[str] = []
+            for page in paginator.paginate(UserName=user_name):
+                names.extend(g.get("GroupName") for g in page.get("Groups", []) if g.get("GroupName"))
+            return names
+        except Exception:
+            return []
+
+    def list_attached_group_policies(
+        self,
+        region: str,
+        group_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[Dict[str, Any]]:
+        try:
+            client = self._session(credentials).client("iam", region_name=region)
+            paginator = client.get_paginator("list_attached_group_policies")
+            policies: list[Dict[str, Any]] = []
+            for page in paginator.paginate(GroupName=group_name):
+                policies.extend(page.get("AttachedPolicies", []))
+            return policies
+        except Exception:
+            return []
+
+    def list_group_inline_policies(
+        self,
+        region: str,
+        group_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> list[str]:
+        try:
+            client = self._session(credentials).client("iam", region_name=region)
+            paginator = client.get_paginator("list_group_policies")
+            names: list[str] = []
+            for page in paginator.paginate(GroupName=group_name):
+                names.extend(page.get("PolicyNames", []))
+            return names
+        except Exception:
+            return []
+
+    def get_group_inline_policy(
+        self,
+        region: str,
+        group_name: str,
+        policy_name: str,
+        credentials: Optional[AwsCredentials] = None,
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            client = self._session(credentials).client("iam", region_name=region)
+            resp = client.get_group_policy(GroupName=group_name, PolicyName=policy_name)
+            return resp.get("PolicyDocument")
+        except Exception:
+            return None
+
     def list_user_inline_policies(
         self,
         region: str,

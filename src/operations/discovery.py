@@ -852,6 +852,7 @@ def _fetch_policy_permissions(
     _get_policy_doc = getattr(aws_client, "get_policy_default_version", None)
     _get_role_inline = getattr(aws_client, "get_role_inline_policy", None)
     _get_user_inline = getattr(aws_client, "get_user_inline_policy", None)
+    _get_group_inline = getattr(aws_client, "get_group_inline_policy", None)
 
     permissions: list[dict] = []
     count = 0
@@ -879,6 +880,8 @@ def _fetch_policy_permissions(
             doc = _get_role_inline(region=region, role_name=principal_name, policy_name=policy_name)
         elif principal_type == "user" and _get_user_inline is not None:
             doc = _get_user_inline(region=region, user_name=principal_name, policy_name=policy_name)
+        elif principal_type == "group" and _get_group_inline is not None:
+            doc = _get_group_inline(region=region, group_name=principal_name, policy_name=policy_name)
         if doc:
             statements = _compact_policy_doc(doc)
             if statements:
@@ -886,6 +889,52 @@ def _fetch_policy_permissions(
                 count += 1
 
     return permissions
+
+
+def _fetch_group_policy_permissions(
+    *,
+    aws_client: "AwsClient",
+    region: str,
+    user_name: str,
+    max_policies: int,
+) -> list[dict]:
+    """Statements herdados dos grupos IAM do usuário. Best-effort (cliente sem os
+    métodos → vazio). Cada source é prefixado `group:<GroupName>:...` pra deixar a
+    origem explícita no snapshot."""
+    _list_groups = getattr(aws_client, "list_groups_for_user", None)
+    if _list_groups is None:
+        return []
+    try:
+        group_names = _list_groups(region=region, user_name=user_name) or []
+    except Exception:
+        return []
+    _list_attached = getattr(aws_client, "list_attached_group_policies", None)
+    _list_inline = getattr(aws_client, "list_group_inline_policies", None)
+
+    merged: list[dict] = []
+    for group_name in group_names:
+        attached: list[dict] = []
+        inline_names: list[str] = []
+        if _list_attached is not None:
+            try:
+                attached = _list_attached(region=region, group_name=group_name) or []
+            except Exception:
+                attached = []
+        if _list_inline is not None:
+            try:
+                inline_names = _list_inline(region=region, group_name=group_name) or []
+            except Exception:
+                inline_names = []
+        group_perms = _fetch_policy_permissions(
+            aws_client=aws_client, region=region,
+            attached_policy_arns=[p.get("PolicyArn") for p in attached if p.get("PolicyArn")],
+            inline_policy_names=inline_names,
+            principal_type="group", principal_name=group_name, max_policies=max_policies,
+        )
+        for perm in group_perms:
+            perm["source"] = f"group:{group_name}:{perm.get('source', '')}"
+            merged.append(perm)
+    return merged
 
 
 def _fetch_boundary_policy_permissions(
@@ -990,6 +1039,16 @@ def run_foundation_discovery(
             principal_type="user",
             principal_name=user_name,
             max_policies=effective_limits.max_policies_per_principal,
+        )
+        # Permissões herdadas de grupos IAM — comuns em contas reais; sem isso um
+        # user com acesso só via grupo tem policy_permissions incompleto (falso
+        # negativo estrutural). Best-effort: cliente sem os métodos degrada pra
+        # nada, mesma disciplina do resto.
+        policy_permissions.extend(
+            _fetch_group_policy_permissions(
+                aws_client=aws_client, region=region, user_name=user_name,
+                max_policies=effective_limits.max_policies_per_principal,
+            )
         )
 
         _get_user_boundary = getattr(aws_client, "get_user_permissions_boundary", None)
