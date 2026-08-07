@@ -138,6 +138,10 @@ regressão é travada.
    negativo). Corrigido SIMÉTRICO pra Allow E Deny (`_stmt_covers_capability`) —
    um `Deny NotAction` perdido viraria falso positivo. Held-out valida o lado
    Deny (crítico).
+5. **Glob no lado RESOURCE** — `_resource_covers_arn` só via prefixo, perdia
+   `arn:…:*:secret:prod/creds` / `…:secret:*creds` (falso negativo). Agora delega
+   pro `_resource_pattern_matches` do PolicyEvaluator (glob completo + tolerância
+   do sufixo Secrets Manager), sem over-match.
 
 Limites remanescentes documentados (plants, não corrigidos ainda): cross-account
 (discovery single-account), chain > `max_depth`=3, SCP Deny com Condition de

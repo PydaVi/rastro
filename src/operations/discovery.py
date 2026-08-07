@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, UTC
 from pathlib import Path
 
-from core.policy_evaluator import _condition_matches, _glob_match
+from core.policy_evaluator import _condition_matches, _glob_match, _resource_pattern_matches
 from execution.aws_client import AwsClient, Boto3AwsClient
 from operations.catalog import resolve_bundle
 from operations.models import AuthorizationConfig, TargetConfig
@@ -123,25 +123,12 @@ def _action_grants_read(action_lower: str, read_actions: frozenset) -> bool:
 def _resource_covers_arn(resource_field: list[str], target_arn: str) -> bool:
     """Verifica se o campo Resource de um statement IAM cobre o target ARN.
 
-    Suporta Resource=* (curinga total), prefixos com * (e.g. arn:aws:s3:::bucket/*)
-    e match exato.
-
-    Tratamento especial: Secrets Manager adiciona sufixo aleatório ao ARN do secret
-    (e.g. arn:...:secret:foo-aF57cq).  A policy usa o ARN com sufixo, mas o snapshot
-    de discovery armazena o ARN sem sufixo.  Verificamos os dois sentidos:
-      policy_arn.startswith(target_arn + "-")  →  target sem sufixo ⊂ policy com sufixo
+    Fase de labs (2026-08-06): delega pro `_resource_pattern_matches` do
+    PolicyEvaluator (Bloco 12) — glob completo em qualquer posição (antes só
+    prefixo, o que perdia `arn:...:*:secret:prod/creds` e `...:secret:*creds`,
+    falso negativo) + a mesma tolerância ao sufixo aleatório do Secrets Manager.
     """
-    for res in resource_field:
-        if res == "*":
-            return True
-        if res.endswith("*") and target_arn.startswith(res[:-1]):
-            return True
-        if res == target_arn:
-            return True
-        # Secrets Manager: policy ARN tem sufixo aleatório; target não tem
-        if "secretsmanager" in res and res.startswith(target_arn + "-"):
-            return True
-    return False
+    return any(_resource_pattern_matches(res, target_arn) for res in resource_field)
 
 
 # ---------------------------------------------------------------------------

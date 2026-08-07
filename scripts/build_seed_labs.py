@@ -299,6 +299,27 @@ def build_challenge_notaction_read():
              "note": "coberto desde o fix simétrico de NotAction em _statements_grant (2026-08-06)"}])
 
 
+def build_challenge_resource_wildcard():
+    # DEMONSTRA o fix de glob no lado RESOURCE: policy concede com wildcard no meio
+    # do ARN (arn:...:*:secret:prod/creds). Antes o matcher só via prefixo → perdia
+    # a aresta (falso negativo). Agora casa → in_coverage.
+    user = _u("resglob-user")
+    secret = f"arn:aws:secretsmanager:{REGION}:{ACCT}:secret:prod/creds"
+    res_pattern = f"arn:aws:secretsmanager:*:{ACCT}:secret:prod/creds"
+    resources = [
+        {"resource_type": "identity.user", "identifier": user, "metadata": {"policy_permissions": [
+            {"source": "i", "statements": [
+                {"Effect": "Allow", "Action": ["secretsmanager:GetSecretValue"], "Resource": [res_pattern]}]}]}},
+        {"resource_type": "secret.secrets_manager", "identifier": secret, "metadata": {"name": "prod/creds"}},
+    ]
+    _write("challenge_resource_wildcard",
+           {"name": "challenge_resource_wildcard", "layer": "C", "held_out": False, "challenge": True,
+            "description": "Read concedido por wildcard no meio do Resource ARN. Coberto desde o fix de glob no resource."},
+           _snapshot("challenge_resource_wildcard", resources),
+           [{"id": "resglob_read", "entry": user, "target": secret, "class": "credential_access_direct",
+             "in_coverage": True, "note": "coberto desde o fix de glob em _resource_covers_arn (2026-08-06)"}])
+
+
 def build_heldout_ec2_variant():
     # HELD-OUT: nunca usar pra ajustar o engine; medido só na estatística final.
     user, role = _u("ho-ops"), _r("ho-role")
@@ -359,6 +380,7 @@ if __name__ == "__main__":
     build_challenge_scp_denied()
     build_challenge_scp_condition_unsupported()
     build_challenge_midwildcard_read()
+    build_challenge_resource_wildcard()
     build_challenge_notaction_read()
     build_heldout_ec2_variant()
     build_heldout_multihop_4()

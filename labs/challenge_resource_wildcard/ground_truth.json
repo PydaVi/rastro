@@ -1,0 +1,13 @@
+{
+  "lab": "challenge_resource_wildcard",
+  "true_paths": [
+    {
+      "id": "resglob_read",
+      "entry": "arn:aws:iam::123456789012:user/resglob-user",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/creds",
+      "class": "credential_access_direct",
+      "in_coverage": true,
+      "note": "coberto desde o fix de glob em _resource_covers_arn (2026-08-06)"
+    }
+  ]
+}
