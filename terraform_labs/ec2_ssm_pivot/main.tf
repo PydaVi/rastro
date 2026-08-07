@@ -89,7 +89,7 @@ resource "aws_iam_instance_profile" "target" {
 # --- a instância ---
 resource "aws_security_group" "lab" {
   name        = "${var.prefix}-sg"
-  description = "rastro ec2 pivot lab — egress only (SSM)"
+  description = "rastro ec2 pivot lab - egress only (SSM)"
   vpc_id      = data.aws_vpc.default.id
   egress {
     from_port   = 0

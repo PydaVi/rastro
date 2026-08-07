@@ -24,7 +24,7 @@ locals {
 }
 
 resource "aws_kms_key" "cmk" {
-  description             = "rastro lab CMK — read-gate"
+  description             = "rastro lab CMK - read-gate"
   deletion_window_in_days = 7
   policy = jsonencode({
     Version = "2012-10-17"
