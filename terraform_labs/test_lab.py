@@ -95,10 +95,19 @@ def main() -> None:
     (run_dir / "ground_truth.json").write_text(json.dumps(ground_truth, indent=2))
     shutil.copy(lab_dir / "lab.yaml", run_dir / "lab.yaml")
 
-    res = score_lab(run_dir)
+    # escopo do lab = todos os ARNs que o terraform criou (conta pode ter outros
+    # recursos/labs; hipóteses fora do escopo não são FP deste lab)
+    scope_arns: set[str] = set()
+    for v in outputs.values():
+        for a in (v if isinstance(v, list) else [v]):
+            if isinstance(a, str) and a.startswith("arn:aws:"):
+                scope_arns.add(a)
+
+    res = score_lab(run_dir, scope_arns=scope_arns)
     print("\n=== integridade (cobertura de hipótese) ===")
     print(f"  lab: {res.name}  recall: {res.recall:.2f}  "
-          f"FP inesperado: {len(res.false_positives)}  FP esperado: {len(res.expected_fp)}")
+          f"FP inesperado: {len(res.false_positives)}  FP esperado: {len(res.expected_fp)}  "
+          f"fora-de-escopo (outros recursos da conta): {len(res.out_of_scope)}")
     for p in res.covered_missed:
         print(f"  [MISS INESPERADO] {p.get('id','?')} {p['entry']} → {p['target']} — o engine devia achar")
     for p in res.ooc_missed:
@@ -107,8 +116,11 @@ def main() -> None:
         print(f"  [FP esperado] {fp['entry']} → {fp['target']} — limite conhecido declarado")
     for fp in res.false_positives:
         print(f"  [FALSO POSITIVO] {fp['entry']} → {fp['target']} [{fp['class']}]")
+    if res.out_of_scope:
+        print(f"  (info: {len(res.out_of_scope)} hipóteses sobre recursos fora do lab — ignoradas; "
+              "rode em conta limpa ou destrua outros labs pra zerar)")
     if not res.covered_missed and not res.false_positives:
-        print("  ✓ o engine enxergou os caminhos reais e não inventou nenhum — cobertura íntegra")
+        print("  ✓ o engine enxergou os caminhos reais do lab e não inventou nenhum — cobertura íntegra")
 
 
 if __name__ == "__main__":

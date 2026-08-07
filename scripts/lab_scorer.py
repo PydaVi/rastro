@@ -52,6 +52,7 @@ class LabResult:
     ooc_found: list = field(default_factory=list)          # out-of-coverage achado (surpresa boa)
     false_positives: list = field(default_factory=list)    # hipótese sem caminho verdadeiro (BUG)
     expected_fp: list = field(default_factory=list)         # FP por limite conhecido, declarado em false_paths
+    out_of_scope: list = field(default_factory=list)        # hipótese sobre recurso fora do lab (conta compartilhada)
 
     @property
     def recall(self) -> float:
@@ -59,15 +60,38 @@ class LabResult:
         return len(self.covered_found) / denom if denom else 1.0
 
 
+import re as _re
+
+_SM_SUFFIX = _re.compile(r"^(arn:aws:secretsmanager:[^:]*:[^:]*:secret:.+)-[A-Za-z0-9]{6}$")
+
+
+def _norm(arn: str) -> str:
+    """Normaliza o sufixo aleatório de 6 chars que o Secrets Manager anexa ao ARN:
+    o terraform/policy usa COM sufixo, o discovery guarda SEM. Sem isso os pares
+    (entry, secret) não casariam entre ground_truth e saída do engine."""
+    m = _SM_SUFFIX.match(arn)
+    return m.group(1) if m else arn
+
+
 def _pair(entry: str, target: str) -> tuple[str, str]:
-    return (entry, target)
+    return (_norm(entry), _norm(target))
 
 
-def score_lab(lab_dir: Path) -> LabResult:
+def score_lab(lab_dir: Path, scope_arns: set[str] | None = None) -> LabResult:
     meta = yaml.safe_load((lab_dir / "lab.yaml").read_text())
     env = json.loads((lab_dir / "env.discovery.json").read_text())
     gt = json.loads((lab_dir / "ground_truth.json").read_text())
     true_paths = gt.get("true_paths", [])
+    # Escopo de conta compartilhada: num account com outros recursos (outros labs),
+    # o discovery vê tudo. Uma hipótese cujo entry OU target está FORA do escopo do
+    # lab não é FP deste lab — é outro caminho da conta. scope_arns (os ARNs que o
+    # lab criou) restringe a contagem de FP; ausente = comportamento antigo (conta
+    # limpa). Os caminhos do ground_truth entram no escopo automaticamente.
+    scope_norm: set[str] | None = None
+    if scope_arns is not None:
+        scope_norm = {_norm(a) for a in scope_arns}
+        for p in true_paths + gt.get("false_paths", []):
+            scope_norm.add(_norm(p["entry"])); scope_norm.add(_norm(p["target"]))
     # false_paths: caminhos que o engine ERRADAMENTE reporta por limite conhecido
     # (ex.: SCP-cego no grafo). FP esperado e declarado — simétrico ao in_coverage:false.
     false_paths = gt.get("false_paths", [])
@@ -94,6 +118,10 @@ def score_lab(lab_dir: Path) -> LabResult:
     for h in hyps:
         pair = _pair(h.entry_identity, h.target)
         if pair in truth_pairs:
+            continue
+        # fora do escopo do lab (outro recurso da conta) → nem TP nem FP deste lab
+        if scope_norm is not None and (_norm(h.entry_identity) not in scope_norm or _norm(h.target) not in scope_norm):
+            res.out_of_scope.append({"entry": h.entry_identity, "target": h.target, "class": h.attack_class})
             continue
         entry = {"entry": h.entry_identity, "target": h.target, "class": h.attack_class}
         if pair in false_pairs:
