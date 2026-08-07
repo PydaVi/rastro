@@ -1,0 +1,13 @@
+{
+  "lab": "challenge_notaction_read",
+  "true_paths": [
+    {
+      "id": "notaction_read",
+      "entry": "arn:aws:iam::123456789012:user/notaction-user",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/na-creds",
+      "class": "credential_access_direct",
+      "in_coverage": false,
+      "limitation": "matcher grosso do discovery n\u00e3o modela NotAction: Allow NotAction concede tudo menos o listado, mas readable_by n\u00e3o computa a aresta"
+    }
+  ]
+}

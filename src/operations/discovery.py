@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, UTC
 from pathlib import Path
 
-from core.policy_evaluator import _condition_matches
+from core.policy_evaluator import _condition_matches, _glob_match
 from execution.aws_client import AwsClient, Boto3AwsClient
 from operations.catalog import resolve_bundle
 from operations.models import AuthorizationConfig, TargetConfig
@@ -101,21 +101,22 @@ _DATA_READ_ACTIONS: dict[str, frozenset] = {
 
 
 def _action_grants_read(action_lower: str, read_actions: frozenset) -> bool:
-    """Verifica se uma ação IAM concede leitura para o tipo de recurso.
+    """Verifica se uma ação IAM (padrão da policy) concede leitura para o tipo de recurso.
 
-    Cobre três casos:
-    1. Exact match: action_lower in read_actions (e.g. secretsmanager:getsecretvalue)
-    2. Policy wildcard: action_lower termina com * (e.g. secretsmanager:Get*)
-       → verifica se alguma ação concreta de read_actions começa com o prefixo.
-    3. Ação na policy é * → coberta pelo exact match ("*" está em read_actions).
+    A ação da policy (`action_lower`) é o PADRÃO — pode ter `*`/`?` em qualquer
+    posição, não só sufixo. Concede se casar (glob completo) com alguma ação
+    CONCRETA que dá read pra esse recurso. Fase de labs (2026-08-06): antes só
+    sufixo, o que perdia `secretsmanager:*Value`, `Get*Value`, `secret*:...` —
+    falso negativo real. Usa o mesmo `_glob_match` do PolicyEvaluator (Bloco 12),
+    sem custo quadrático (é só o predicado de match, não o avaliador inteiro).
     """
     if action_lower in read_actions:
         return True
-    if action_lower.endswith("*"):
-        prefix = action_lower[:-1]
-        for ta in read_actions:
-            if ta != "*" and not ta.endswith("*") and ta.startswith(prefix):
-                return True
+    for concrete in read_actions:
+        if "*" in concrete or "?" in concrete:
+            continue  # entradas wildcard do set (svc:* / *) já cobertas pelo exact
+        if _glob_match(concrete, action_lower, case_insensitive=True):
+            return True
     return False
 
 

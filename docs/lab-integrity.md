@@ -116,8 +116,24 @@ regressão é travada.
   `iam_privesc_by_rollback`, `ec2_ssrf`) e derivar `ground_truth` da descrição do
   próprio lab, sem olhar a saída do Rastro. Exige `terraform apply` (autor roda).
 - **Métrica de prova** — segunda coluna no scorer, sobre execução real.
-- **Enriquecer o `challenge` set** — mais limites conhecidos como plants: SCP
-  não-enforçado, Condition de trust não avaliada em 2º salto, cadeia de credencial
-  de 3 saltos (read→assume→read — o extracted identity não é re-atravessado de
-  propósito, pra não compor especulação). Cross-account e chain > max_depth já
-  estão plantados.
+- **Enriquecer o `challenge` set** — mais limites conhecidos como plants:
+  Condition de trust não avaliada em 2º salto, cadeia de credencial de 3 saltos
+  (read→assume→read — o extracted identity não é re-atravessado de propósito, pra
+  não compor especulação). Já plantados/tratados: cross-account, chain > max_depth,
+  SCP Deny (enforçado), SCP Deny c/ Condition não-suportada (FP esperado),
+  wildcard não-sufixo no matcher (CORRIGIDO — glob completo), NotAction no matcher
+  grosso (miss remanescente plantado).
+
+## Correções de núcleo que a fase de labs já rendeu (o mecanismo não é teatro)
+
+1. **BFS multi-level** — o BFS era single-level; role-chain multi-hop e role→read
+   não eram cobertos. Corrigido, held-out validou generalização.
+2. **SCP Deny enforçado no grafo** — aresta que uma SCP Deny certa bloqueia agora
+   é suprimida (era falso positivo). Fail-open honesto em Condition não-suportada.
+3. **Glob completo no matcher grosso** — `_action_grants_read` só via sufixo,
+   perdia `secretsmanager:*Value`/`Get*Value`/`secret*:...` (falso negativo).
+   Agora usa o mesmo `_glob_match` do PolicyEvaluator.
+
+Limites remanescentes documentados (plants, não corrigidos ainda): cross-account
+(discovery single-account), chain > `max_depth`=3, `NotAction` no matcher grosso,
+SCP Deny com Condition de operador não-suportado.

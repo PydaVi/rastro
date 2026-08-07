@@ -1,0 +1,5 @@
+name: challenge_midwildcard_read
+layer: C
+held_out: false
+challenge: true
+description: Read concedido por wildcard não-sufixo (Get*Value). Coberto desde o fix de glob.

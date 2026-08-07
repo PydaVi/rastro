@@ -240,6 +240,45 @@ def build_heldout_scp_denied():
            _snapshot("heldout_scp_denied", resources, governance=governance), [])
 
 
+def build_challenge_midwildcard_read():
+    # DEMONSTRA o fix de glob (fase de labs): policy concede com wildcard NÃO-sufixo
+    # (secretsmanager:Get*Value). Antes o matcher grosso só via sufixo → perdia a
+    # aresta (falso negativo). Agora casa → in_coverage.
+    user = _u("glob-user")
+    secret = f"arn:aws:secretsmanager:{REGION}:{ACCT}:secret:prod/glob-creds"
+    resources = [
+        {"resource_type": "identity.user", "identifier": user, "metadata": {"policy_permissions": [
+            {"source": "i", "statements": [_allow(["secretsmanager:Get*Value"], [secret])]}]}},
+        {"resource_type": "secret.secrets_manager", "identifier": secret, "metadata": {"name": "prod/glob-creds"}},
+    ]
+    _write("challenge_midwildcard_read",
+           {"name": "challenge_midwildcard_read", "layer": "C", "held_out": False, "challenge": True,
+            "description": "Read concedido por wildcard não-sufixo (Get*Value). Coberto desde o fix de glob."},
+           _snapshot("challenge_midwildcard_read", resources),
+           [{"id": "glob_read", "entry": user, "target": secret, "class": "credential_access_direct",
+             "in_coverage": True, "note": "coberto desde o fix de glob no matcher grosso (2026-08-06)"}])
+
+
+def build_challenge_notaction_read():
+    # DESAFIO (falso negativo remanescente honesto): Allow NotAction:[s3:GetObject]
+    # concede GetSecretValue na AWS, mas o matcher grosso não modela NotAction →
+    # perde a aresta. Miss ESPERADO (in_coverage: false), documentado.
+    user = _u("notaction-user")
+    secret = f"arn:aws:secretsmanager:{REGION}:{ACCT}:secret:prod/na-creds"
+    resources = [
+        {"resource_type": "identity.user", "identifier": user, "metadata": {"policy_permissions": [
+            {"source": "i", "statements": [{"Effect": "Allow", "NotAction": ["s3:GetObject"], "Resource": "*"}]}]}},
+        {"resource_type": "secret.secrets_manager", "identifier": secret, "metadata": {"name": "prod/na-creds"}},
+    ]
+    _write("challenge_notaction_read",
+           {"name": "challenge_notaction_read", "layer": "C", "held_out": False, "challenge": True,
+            "description": "Allow NotAction concede o read mas o matcher grosso não modela NotAction (miss conhecido)."},
+           _snapshot("challenge_notaction_read", resources),
+           [{"id": "notaction_read", "entry": user, "target": secret, "class": "credential_access_direct",
+             "in_coverage": False,
+             "limitation": "matcher grosso do discovery não modela NotAction: Allow NotAction concede tudo menos o listado, mas readable_by não computa a aresta"}])
+
+
 def build_heldout_ec2_variant():
     # HELD-OUT: nunca usar pra ajustar o engine; medido só na estatística final.
     user, role = _u("ho-ops"), _r("ho-role")
@@ -299,6 +338,8 @@ if __name__ == "__main__":
     build_challenge_cross_account()
     build_challenge_scp_denied()
     build_challenge_scp_condition_unsupported()
+    build_challenge_midwildcard_read()
+    build_challenge_notaction_read()
     build_heldout_ec2_variant()
     build_heldout_multihop_4()
     build_heldout_scp_denied()

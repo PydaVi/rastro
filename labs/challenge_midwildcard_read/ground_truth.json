@@ -1,0 +1,13 @@
+{
+  "lab": "challenge_midwildcard_read",
+  "true_paths": [
+    {
+      "id": "glob_read",
+      "entry": "arn:aws:iam::123456789012:user/glob-user",
+      "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/glob-creds",
+      "class": "credential_access_direct",
+      "in_coverage": true,
+      "note": "coberto desde o fix de glob no matcher grosso (2026-08-06)"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+name: challenge_notaction_read
+layer: C
+held_out: false
+challenge: true
+description: Allow NotAction concede o read mas o matcher grosso não modela NotAction (miss conhecido).
