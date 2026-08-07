@@ -6,8 +6,8 @@
       "entry": "arn:aws:iam::123456789012:user/notaction-user",
       "target": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/na-creds",
       "class": "credential_access_direct",
-      "in_coverage": false,
-      "limitation": "matcher grosso do discovery n\u00e3o modela NotAction: Allow NotAction concede tudo menos o listado, mas readable_by n\u00e3o computa a aresta"
+      "in_coverage": true,
+      "note": "coberto desde o fix sim\u00e9trico de NotAction em _statements_grant (2026-08-06)"
     }
   ]
 }

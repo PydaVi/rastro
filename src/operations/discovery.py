@@ -194,22 +194,44 @@ def _statements_grant(
     target_arn: str,
     effect: str,
 ) -> bool:
-    """Retorna True se algum statement com o Effect dado cobre capability_actions sobre target_arn."""
+    """Retorna True se algum statement com o Effect dado cobre capability_actions sobre target_arn.
+
+    Trata Action E NotAction (fase de labs, 2026-08-06) — simétrico pra Allow e
+    Deny, senão um `Deny NotAction` perdido viraria falso positivo. NotAction
+    concede/nega tudo MENOS o listado, então cobre a capability se alguma ação
+    concreta do set NÃO casar com o NotAction.
+    """
     for perm in permission_list:
         for stmt in perm.get("statements", []):
             if stmt.get("Effect") != effect:
                 continue
-            actions = stmt.get("Action", [])
-            if isinstance(actions, str):
-                actions = [actions]
             resource_field = stmt.get("Resource", "*")
             if isinstance(resource_field, str):
                 resource_field = [resource_field]
-            for action in actions:
-                if _action_grants_read(action.lower(), capability_actions):
-                    if _resource_covers_arn(resource_field, target_arn):
-                        return True
+            if not _stmt_covers_capability(stmt, capability_actions):
+                continue
+            if _resource_covers_arn(resource_field, target_arn):
+                return True
     return False
+
+
+def _stmt_covers_capability(stmt: dict, capability_actions: frozenset) -> bool:
+    """A parte de ação (Action ou NotAction) do statement cobre a capability?"""
+    if "NotAction" in stmt:
+        not_actions = stmt.get("NotAction", [])
+        if isinstance(not_actions, str):
+            not_actions = [not_actions]
+        not_lower = [na.lower() for na in not_actions]
+        # concede uma ação concreta C do set se C não casar com nenhum NotAction
+        concretes = [a for a in capability_actions if "*" not in a and "?" not in a]
+        return any(
+            not any(_glob_match(c, na, case_insensitive=True) for na in not_lower)
+            for c in concretes
+        )
+    actions = stmt.get("Action", [])
+    if isinstance(actions, str):
+        actions = [actions]
+    return any(_action_grants_read(a.lower(), capability_actions) for a in actions)
 
 
 def _principal_has_capability(

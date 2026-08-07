@@ -1,0 +1,5 @@
+name: heldout_notaction_deny
+layer: C
+held_out: true
+challenge: true
+description: HELD-OUT — Deny NotAction nega o read; valida a simetria (sem FP).

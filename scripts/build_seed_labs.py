@@ -230,6 +230,26 @@ def build_challenge_scp_condition_unsupported():
     (d / "ground_truth.json").write_text(json.dumps(gt, indent=2))
 
 
+def build_heldout_notaction_deny():
+    # HELD-OUT (lado crítico: FP): Allow * MAS Deny NotAction:[s3:GetObject] nega
+    # tudo menos s3:GetObject → nega GetSecretValue. O engine tem que NÃO gerar a
+    # aresta de read (senão FP). Valida a simetria do fix de NotAction em dado
+    # nunca usado. Zero achado sobre o secret = certo.
+    user = _u("ho-na-user")
+    secret = f"arn:aws:secretsmanager:{REGION}:{ACCT}:secret:prod/ho-na"
+    resources = [
+        {"resource_type": "identity.user", "identifier": user, "metadata": {"policy_permissions": [
+            {"source": "i", "statements": [
+                {"Effect": "Allow", "Action": ["*"], "Resource": "*"},
+                {"Effect": "Deny", "NotAction": ["s3:GetObject"], "Resource": "*"}]}]}},
+        {"resource_type": "secret.secrets_manager", "identifier": secret, "metadata": {"name": "prod/ho-na"}},
+    ]
+    _write("heldout_notaction_deny",
+           {"name": "heldout_notaction_deny", "layer": "C", "held_out": True, "challenge": True,
+            "description": "HELD-OUT — Deny NotAction nega o read; valida a simetria (sem FP)."},
+           _snapshot("heldout_notaction_deny", resources), [])
+
+
 def build_heldout_scp_denied():
     # HELD-OUT: valida que a supressão de SCP Deny GENERALIZA (ARNs diferentes,
     # nunca usados no fix). Zero achado = certo.
@@ -272,11 +292,11 @@ def build_challenge_notaction_read():
     ]
     _write("challenge_notaction_read",
            {"name": "challenge_notaction_read", "layer": "C", "held_out": False, "challenge": True,
-            "description": "Allow NotAction concede o read mas o matcher grosso não modela NotAction (miss conhecido)."},
+            "description": "Allow NotAction concede o read; coberto desde o fix de NotAction no matcher grosso."},
            _snapshot("challenge_notaction_read", resources),
            [{"id": "notaction_read", "entry": user, "target": secret, "class": "credential_access_direct",
-             "in_coverage": False,
-             "limitation": "matcher grosso do discovery não modela NotAction: Allow NotAction concede tudo menos o listado, mas readable_by não computa a aresta"}])
+             "in_coverage": True,
+             "note": "coberto desde o fix simétrico de NotAction em _statements_grant (2026-08-06)"}])
 
 
 def build_heldout_ec2_variant():
@@ -342,5 +362,6 @@ if __name__ == "__main__":
     build_challenge_notaction_read()
     build_heldout_ec2_variant()
     build_heldout_multihop_4()
+    build_heldout_notaction_deny()
     build_heldout_scp_denied()
     print("pronto.")

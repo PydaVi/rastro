@@ -133,7 +133,13 @@ regressão é travada.
 3. **Glob completo no matcher grosso** — `_action_grants_read` só via sufixo,
    perdia `secretsmanager:*Value`/`Get*Value`/`secret*:...` (falso negativo).
    Agora usa o mesmo `_glob_match` do PolicyEvaluator.
+4. **NotAction no matcher grosso** — `_statements_grant` só lia `Action`, então
+   `Allow NotAction:[…]` (concede tudo menos o listado) perdia a aresta (falso
+   negativo). Corrigido SIMÉTRICO pra Allow E Deny (`_stmt_covers_capability`) —
+   um `Deny NotAction` perdido viraria falso positivo. Held-out valida o lado
+   Deny (crítico).
 
 Limites remanescentes documentados (plants, não corrigidos ainda): cross-account
-(discovery single-account), chain > `max_depth`=3, `NotAction` no matcher grosso,
-SCP Deny com Condition de operador não-suportado.
+(discovery single-account), chain > `max_depth`=3, SCP Deny com Condition de
+operador não-suportado, cadeia de credencial de 3 saltos (read→assume→read, não
+atravessado de propósito).
